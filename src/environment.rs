@@ -1,43 +1,37 @@
+//contents of environment.rs
 use std::collections::HashMap;
 use crate::value::Value;
-
-
+#[derive(Clone)]
 pub struct Environment {
-
-    variables: HashMap<String, Value>,
-
+    scopes: Vec<HashMap<String, Value>>,
 }
-
-
 impl Environment {
-
     pub fn new() -> Self {
-
         Self {
-            variables: HashMap::new(),
+            scopes: vec![HashMap::new()],
         }
-
     }
-
-
+    pub fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+    pub fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
     pub fn set(
         &mut self,
         name: String,
-        value: Value
+        value: Value,
     ) {
-
-        self.variables.insert(name, value);
-
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name, value);
+        }
     }
-
-
-    pub fn get(
-        &self,
-        name: &String
-    ) -> Option<Value> {
-
-        self.variables.get(name).cloned()
-
+    pub fn get(&self,name: &str,) -> Option<&Value> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(value) = scope.get(name) {
+                return Some(value);
+            }
+        }
+        None
     }
-
 }
