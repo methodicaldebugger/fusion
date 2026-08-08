@@ -77,3 +77,96 @@ Fusion Roadmap
 [ ] Rust
 [ ] C++
 [ ] ...
+
+
+
+
+
+Roadmap
+Fusion 0.x — Foundation
+Current development focuses on building the foundations:
+
+language syntax
+parser
+interpreter
+compiler architecture
+type system
+runtime
+standard library foundations
+diagnostics
+tests
+developer tooling
+
+
+
+
+
+TO RECAP:
+
+
+Fusion 1.0 — Core language
+Planned language capabilities include:
+
+Python-inspired syntax
+indentation-based syntax
+optional braces
+static typing
+type inference
+strong typing
+algebraic data types
+pattern matching
+match
+iterators
+structs
+traits
+generics
+properties
+modules
+async/await
+automatic memory management
+package management
+standard library
+native compilation
+
+
+
+
+
+
+Fusion 2.0 — Complete developer platform
+Potential goals include:
+
+built-in UI framework
+JIT compilation
+AOT compilation
+SQLite support
+formatter
+debugger
+language server
+documentation generator
+package registry
+cloud builds
+expanded standard library
+improved IDE integration
+
+The long-term ambition is for Fusion to become a complete software-development platform.
+
+
+
+
+Fusion 3.0 and beyond — Ecosystem interoperability
+Potential integrations include:
+
+C
+C++
+Rust
+Swift
+Go
+Zig
+Dart
+Kotlin/Native
+C#
+Java
+additional ecosystems
+
+The exact order and implementation mechanisms will depend on community contributions and technical feasibility.
