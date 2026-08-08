@@ -43,6 +43,15 @@ main {
 The parser determines the chosen style at the beginning of the file and maintains that choice consistently.
 The goal is to minimize boilerplate while allowing developers to use a familiar structural style.
 
+Comments may be written like in C and python with:
+<//> <- single line comment
+<#> <- single line comment
+</*>
+multiline comment
+<*/>
+<""">
+multiline comment
+<""">
 
 Type system: Fusion is intended to be statically and strongly typed with type inference.
 For example:
