@@ -5,7 +5,13 @@ Fusion is intended to be:
 easy to learn, strongly typed, statically typed, type-inferred, expressive, practical
 interoperable, native, garbage-collected, suitable for both beginners and experienced developers.
 
+It will have both indentation and brackets:
+main: #<-- this means indentation will be used  
+main{ //<-- this means brackets will be used
+}
 
+It will have a modern rust debugger, rust iterators(for loops), rust match statements.
+No classes or pointers, instead use structs and traits.
 
 
 The language takes inspiration from several ecosystems without attempting to reproduce them exactly.
@@ -152,6 +158,24 @@ Fusion intentionally does not plan to use traditional class inheritance.
 The goal is to favor composition and explicit relationships.
 
 
+What Fusion intentionally does not try to be
+Fusion is not intended to replace every programming language.
+
+The project does not initially aim to provide:
+
+ownership/borrow checking
+lifetime annotations
+complex macros
+header files
+preprocessor directives
+class inheritance
+traditional classes
+arbitrary loop constructs
+manual pointer-based programming as a primary abstraction
+
+Fusion is intentionally making different tradeoffs.
+
+
 Concurrency
 Fusion plans to support:
 async and await.
@@ -183,53 +207,23 @@ Interpreter-first, compiler-first architecture
 
 Fusion may initially use an interpreter because it provides a fast development cycle.
 
+
+
+
+
+
+
 However:
 Build the interpreter first, but design the architecture around the compiler.
 This allows language experimentation without locking the project into an interpreter-only execution model.
-
-
-
-
-
 
 JIT and AOT
 A long-term goal is to support both:
 JIT. Just-in-Time compilation can optimize code based on how it actually runs.
 AOT. Ahead-of-Time compilation can produce native executables with:
 
-fast startup
-smaller deployment requirements
-native operating-system integration
+repl + jupyiter
 
-A possible future architecture is:
-
-Fusion
-  │
-  ├── Interpreter
-  │
-  ├── JIT
-  │
-  └── AOT
-        │
-        ▼
-   Native executable
-
-
-
-
-What Fusion intentionally does not try to be
-Fusion is not intended to replace every programming language.
-
-The project does not initially aim to provide:
-
-ownership/borrow checking
-lifetime annotations
-complex macros
-header files
-preprocessor directives
-class inheritance
-traditional classes
-arbitrary loop constructs
-manual pointer-based programming as a primary abstraction
-
-Fusion is intentionally making different tradeoffs.
+And of course language interoperability, this means the user should be able to
+install the C plugin and write C code, install the rust plugin and write rust code...
+as well as use foreign libraries without any additional installation.

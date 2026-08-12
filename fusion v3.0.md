@@ -1,15 +1,4 @@
-Version 0.x(built with the help of the github community)
-will be easy to learn(python inspired)
-have modern features(rust debugger, rust match statements, rust for-loop iterators)
-
-
-Version 1.x(at this point fusion is a usable language, build with the github community + major companies)
-achieve self-hosting
-Will have JIT + AOT (BUILD INTERPRETER-FIRST INTERNALLY, BUT DESIGN COMPILER-FIRST ARCHITECTURALLY!)
-Also have both Jupyter + REPL.
-Interoperability with at least one language(C for example)
-
-Version 2.x(at this point we are talking about a very ambitious project)
+Version 3.x(at this point we are talking about a very ambitious project)
 maintenance will become a problem(as new versions of other languages come out)
 plugins with other languages are owned, built, maintained by the community(are downloaded separately by need)
 fusion will become gigantic and the use of cloud builds becomes an advantage
@@ -20,6 +9,7 @@ Interoperability is the defining long-term goal of Fusion.
 The project intends to explore integration with ecosystems including:
 C, C++, Rust, Swift, Go, Zig, Dart, Kotlin/Native, C#, Java.
 
+Using foreign libraries should not require downloading language plugins.
 
 
 This does not mean Fusion will simply copy every feature of these languages.
@@ -35,103 +25,11 @@ WebAssembly
 runtime embedding
 language-specific bridges
 Examples of possible integration strategies
-C
 
 
 
 
 
-
-
-
-C is relatively attractive for interoperability because of its mature ABI and widespread use.
-
-Challenges include:
-pointers
-manual memory management
-unsafe operations
-data layout
-C++
-
-C++ is significantly more difficult.
-Challenges include:
-templates
-operator overloading
-exceptions
-name mangling
-ABI instability
-complex type systems
-
-A realistic approach may prioritize stable C++ APIs and generated bindings rather than attempting to expose every C++ feature directly.
-
-
-
-Rust presents a different challenge because of:
-ownership
-borrowing
-lifetimes
-traits
-generics
-
-Fusion may eventually expose Rust libraries through generated interfaces or carefully designed ABI boundaries.
-
-
-
-Java
-A possible approach is JVM integration:
-
-Fusion application
-       │
-       ▼
-      JVM
-       │
-       ▼
-Java libraries
-
-This provides access to a massive ecosystem but introduces considerations such as:
-
-startup time
-memory usage
-deployment complexity
-JVM integration
-C#
-
-Possible strategies include:
-Option A
-
-Embed the .NET runtime.
-
-Fusion
-  │
-  ▼
-.NET runtime
-  │
-  ▼
-C# libraries
-
-
-Option B
-Generate C# bindings.
-
-Both approaches have different tradeoffs.
-
-
-
-
-
-Dart
-
-One possible future architecture is:
-
-Fusion
-   │
-   ▼
-Dart runtime
-   │
-   ▼
-Native executable
-
-The exact design remains experimental.
 Universal interoperability
 A particularly ambitious long-term goal is a Universal Binding Generator.
 The idea would be to automatically generate interoperability layers for supported ecosystems.
@@ -256,5 +154,3 @@ The programmer should eventually think:
 
 rather than:
 "Should I rewrite my entire application in another language?"
-
-The other language should ideally become an implementation detail behind an interoperable interface.

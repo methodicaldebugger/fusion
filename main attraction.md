@@ -13,19 +13,6 @@ A beginner learns fusion masters gain capabilities originating from many ecosyst
 Fusion could have another advantage over Python: Native application development.
 Fusion doesn't replace Python. It complements it.
 If Fusion succeeds, it might look like: “People stopped caring which language their dependency was written in.”
-Tutorials and knowledge in many/all programing languages will become useful to a fusion developer.
+Tutorials and knowledge in many/all programing languages will become useful to a fusion developer.                       
 
-
-
-That is a genuinely interesting abstraction.
-
-|                   | Python                                                       | Fusion                                                |
-| ----------------- | ------------------------------------------------------------ | ----------------------------------------------------- |
-| Main attraction   | Extremely productive programming                             | Extremely productive interoperability                 |
-| Typical strength  | Prototyping, scripting, automation, data/AI                  | Building larger native applications across ecosystems |
-| Execution         | Interpreter + increasingly sophisticated compilation options | Managed runtime + JIT + AOT                           |
-| Ecosystem         | Python packages                                              | Potentially *multiple ecosystems*                     |
-| Native deployment | Possible, but not Python's original strength                 | Intended as a major goal                              |
-| Learning          | Very approachable                                            | Python-inspired, but statically typed                 |
-| Existing code     | Huge Python ecosystem                                        | Existing C/Rust/.NET/JVM/etc. ecosystems              |
-| Philosophy        | “Make programming easy”                                      | “Make ecosystems cooperate”                           |
+To a developer, he chooses which plugins he will download(if any) and then writes the program in fusion(+ other languages with plugins). This means fusion can call many foreign libraries and embeed other languages via plugins. For example the C plugin will enable the developer to write half the program in fusion and the other half in fusion.

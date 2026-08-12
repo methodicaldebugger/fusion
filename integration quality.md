@@ -1,4 +1,4 @@
-The integration quality may vary:
+The integration quality of foreign languages and foreign libraries may vary:
 
 Tier 1 — Native integration
 C, C++, Rust
@@ -29,19 +29,23 @@ We are developing: syntax, parser, type system, interpreter, compiler, Fusion IR
 
 2. Fusion the interoperability platform(version 1.0-2.0):
 THIS IS WHERE THINGS GET BIGGER
-That means dealing with: C/C++, ABIs, Rust, JVM/Java, .NET/C#, Swift/Objective-C, Go, Dart, Kotlin/Native, Zig, WebAssembly, different runtimes, different memory models, different build systems, package distribution, licensing, security, debugging, cross-platform deployment. 
+That means dealing with: JIT + AOT, repl + jupyiter, C interoperability.
+
+3. THIS IS TRUE AMBITION(version 2.0-3.0)
+Now we implement more languages and foreign libraries(the developer can use foreign libraries, but may only write the foreign language itself, if there is a plugin available).
+
+We implement many plugins, that allow the developer write other programing languages inside of fusion itself: C++, ABIs, Rust, JVM/Java, .NET/C#, Swift/Objective-C, Go, Dart, Kotlin/Native, Zig, WebAssembly, different runtimes, different memory models, different build systems, package distribution, licensing, security, debugging, cross-platform deployment.
 
 We don't necessarily need the companies behind every language to participate initially, but their ecosystems become important.
 
 What large companies could contribute: Companies could contribute things that an individual open-source project would struggle to provide: Infrastructure, Runtime engineering, Interoperability, Hardware, Tooling, Funding, Credibility.
 
-3. Fusion the ecosystem itself(2.0-infinity): 
+3. Fusion the ecosystem itself(3.0-infinity): 
 THIS IS TRUE AMBITION
 If Fusion eventually wants: "Install Fusion once and gain access to the world's software ecosystems." then you're effectively proposing infrastructure. We could eventually need cooperation from organizations surrounding things like: LLVM .NET JVM Rust Swift WebAssembly.
 Major operating systems cloud platforms package registries major libraries IDEs GPU ecosystems And that's where large companies, foundations, universities, and major open-source projects could become extremely valuable.
 
 At this point languages are just libraries to fusion
 "Fusion lets you consume capabilities implemented in 10+ different languages."
-here are the languages: C, C++, Rust, Java, C#, Swift, Go, Dart, Zig Kotlin/Native. 
 But Fusion should be designed so that 10 doesn't become a ceiling.
 Not all of those need equal integration quality.
