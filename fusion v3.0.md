@@ -8,6 +8,8 @@ Interoperability is the defining long-term goal of Fusion.
 
 The project intends to explore integration with ecosystems including:
 C, C++, Rust, Swift, Go, Zig, Dart, Kotlin/Native, C#, Java.
+Execution environments:
+Native ABI, WASM, JVM, .NET, Python, JavaScript/TypeScript, RPC/process, eventually other runtimes.
 
 Using foreign libraries should not require downloading language plugins.
 
@@ -30,7 +32,7 @@ Examples of possible integration strategies
 
 
 
-Universal interoperability
+Universal ecosystem interoperability
 A particularly ambitious long-term goal is a Universal Binding Generator.
 The idea would be to automatically generate interoperability layers for supported ecosystems.
 
