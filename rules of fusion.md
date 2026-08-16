@@ -69,6 +69,7 @@ const version = 1
 
 Explicit types can also be written:
 int x = 42
+float y
 string name = "Fusion"
 char initial = 'F'
 int[] numbers = [1, 2, 3]
@@ -77,16 +78,49 @@ int[] numbers = [1, 2, 3]
 Variables are mutable by default.
 Use const for values that should not change.
 
-Collections
-Arrays are intended to be simple and practical:
-int[] numbers = [1, 2, 3]
-numbers.push(4)
-numbers[0] = 10
-print(numbers[0])
-print(numbers.length)
+Instead of a array, vector, list, linked list, slice, dynamic array. We only have a growable array!!
+A Fusion programmer doesn't need to learn five different collection types just to store a sequence of things.
 
-Planned built-in operations include:
-push, pop, clear, contains, sort, reverse, Pattern matching.
+int[] numbers = [1, 2, 3]
+string[] names = [
+    "Alice",
+    "Bob",
+    "Charlie"
+]
+print(numbers[0])
+numbers[2] = 42
+x = numbers[i]
+length: numbers.length
+
+                                                                                                               
+
+Built-in methods: numbers.push(5), numbers.pop(), numbers.clear(), numbers.contains(42), numbers.sort(), numbers.reverse(), length: numbers.length
+Printing variables: print(x), print("Hello"), print("{name} is {age} years old.")
+debug(person) // debug always shows the full structural representation.
+Fusion is statically typed, it can automatically call the appropriate formatting code
+
+
+Fusion is like zig it lets you write conceptually: 
+file = open("data.txt") 
+defer file.close() 
+process(file) 
+The meaning is: When this scope exits, execute file.close(). You don't have to remember to put: file.close() at every possible exit point.
+
+
+Fusion will have:
+GC → automatically manages memory
+defer → deterministically releases resources
+scopes → let programmers control when deferred cleanup happens
+
+That's much simpler than importing C++'s entire RAII/ownership system.
+When file leaves scope, its destructor runs. This makes resource management deterministic.
+Fusion takeaway: Even with GC, deterministic resource cleanup is extremely valuable for things like files, sockets, GPU resources, database connections, and foreign handles.
+
+
+Make Option and Result foundational:
+Option instead of null "Option<int>" This eliminates a huge class of null-pointer bugs.
+Result for errors "Result<T, E>" Instead of throwing exceptions everywhere.
+
 
 Fusion intends to provide Rust-style algebraic data types and pattern matching.
 The goals include: exhaustive matching, nested patterns, destructuring
