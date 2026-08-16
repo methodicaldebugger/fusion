@@ -53,6 +53,18 @@ The interoperability layer makes the platform valuable.
 And the adapters/bridges allow the platform to grow without requiring the Fusion core team to personally implement every programming ecosystem in existence.
 
 
+The following projects may be built independently, isolated and replacable by the user:
+| Project                               | Difficulty | Relative size | What you're actually building                                                   |
+| ------------------------------------- | ---------: | ------------: | ------------------------------------------------------------------------------- |
+| 🟢 **REPL**                           |       3/10 |         Small | Interactive Fusion execution environment                                        |
+
+| 🟢 **Jupyter integration**            |       4/10 |  Small–medium | Fusion kernel that speaks Jupyter's protocol                                    |
+
+| 🟡 **Fusion UI on existing renderer** |     6–7/10 |         Large | Widgets, layout, events, state, accessibility, platform integration             |
+
+| 🔴 **Actor system**                   |       7/10 |  Medium–large | Actors, mailboxes, scheduler, supervision, concurrency, eventually distribution |
+
+
 Fusion 2.0 can be used to make CLI applications, Backend services, Developer tools, Desktop applications(once UI framework exists), Data processing, Scientific computing, Games and graphics, Cloud applications, Distributed systems.
 
 | Capability          | Fusion 2.0 alone | What it needs                              |
