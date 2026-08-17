@@ -26,7 +26,7 @@ pub enum Token {
     EqualEqual,NotEqual,Less,LessEqual,Greater,GreaterEqual,
     AndAnd,OrOr,Bang,LeftParen,RightParen,LeftBracket,
     RightBracket,Comma,Colon,Dot,DotDot,Arrow,Indent,
-    Dedent,NewLine,Eof,Struct,Class,Trait,Impl,
+    Dedent,NewLine,Eof,Struct,Trait,Impl,
     Match,Import,From,Async,Await,
 }
 
@@ -348,7 +348,6 @@ else if spaces < current {
                         "break" => Ok(Token::Break),
                         "continue" => Ok(Token::Continue),
                         "struct" => Ok(Token::Struct),
-                        "class" => Ok(Token::Class),
                         "trait" => Ok(Token::Trait),
                         "impl" => Ok(Token::Impl),
                         "match" => Ok(Token::Match),
