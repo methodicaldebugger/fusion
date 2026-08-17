@@ -68,17 +68,17 @@ const version = 1
 
 
 Explicit types can also be written:
-int x = 42
-float y
+num x = 42
+float y = 3.4
+bool z = true
 string name = "Fusion"
-char initial = 'F'
 int[] numbers = [1, 2, 3]
 
 
 Variables are mutable by default.
 Use const for values that should not change.
 
-Instead of a array, vector, list, linked list, slice, dynamic array. We only have a growable array!!
+We only have a growable array!! Instead of: an array, vector, list, linked list, slice, dynamic array.
 A Fusion programmer doesn't need to learn five different collection types just to store a sequence of things.
 
 int[] numbers = [1, 2, 3]
