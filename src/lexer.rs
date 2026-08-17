@@ -18,9 +18,9 @@ pub struct LexError {
 impl std::error::Error for LexError {}
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    Integer(i64),Float(f64),Boolean(bool),
-    Character(char),String(String),Identifier(String),
-    Int,FloatType,Bool,Char,StringType,Const,
+    Num(i64),Float(f64),Boolean(bool),
+    String(String),Identifier(String),
+    FloatType,Bool,StringType,Const,
     Fn,Return,If,Else,While,For,In,
     Break,Continue,And,Or,Not,Plus,Minus,Star,Slash,Equal,
     EqualEqual,NotEqual,Less,LessEqual,Greater,GreaterEqual,
@@ -129,29 +129,7 @@ else if spaces < current {
         }
         value
     }
-    fn read_character(&mut self) -> Result<char, LexError> {
-    self.advance(); // consume opening '
-    let ch = match self.advance() {
-        Some(c) => c,
-        None => {
-            return Err(LexError {
-                message: "Unterminated character literal".into(),
-                position: self.position,
-                line: self.line,
-                column: self.column,
-            });
-        }
-    };
-    if self.advance() != Some('\'') {
-        return Err(LexError {
-            message: "Expected closing quote for character literal".into(),
-            position: self.position,
-            line: self.line,
-            column: self.column,
-        });
-    }
-    Ok(ch)
-}
+
     fn read_string(&mut self) -> Result<String, LexError> {
     let mut value = String::new();
     self.advance(); // consume opening quote
@@ -240,9 +218,6 @@ else if spaces < current {
     }
             '"' => {
                 Ok(Token::String(self.read_string()?))
-            }
-            '\'' => {
-                Ok(Token::Character(self.read_character()?))
             }
             '[' => {
                 self.advance();
@@ -352,12 +327,7 @@ else if spaces < current {
         self.advance();
         Ok(Token::NotEqual)
     } else {
-        Err(LexError {
-            message: "Unexpected '!'".into(),
-            position: self.position,
-            line: self.line,
-            column: self.column,
-        })
+        Ok(Token::Bang)
     }
 }
             c if c.is_ascii_digit() => {
@@ -456,9 +426,9 @@ else if spaces < current {
     }
     else {
         match value.parse::<i64>() {
-            Ok(v) => Ok(Token::Integer(v)),
+            Ok(v) => Ok(Token::Num(v)),
             Err(_) => Err(LexError {
-                message: "Invalid integer literal".into(),
+                message: "Invalid number literal".into(),
                 position: self.position,
                 line: self.line,
                 column: self.column,

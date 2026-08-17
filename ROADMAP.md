@@ -170,3 +170,30 @@ Java
 additional ecosystems
 
 The exact order and implementation mechanisms will depend on community contributions and technical feasibility.
+
+
+0.1  Lexer + parser + AST + interpreter
+ ↓
+0.2  Type system + language semantics
+ ↓
+0.3  HIR + name resolution
+ ↓
+0.4  Fusion IR
+ ↓
+0.5  LLVM/native compilation
+ ↓
+0.6  Runtime + GC
+ ↓
+0.7  Modules + generics + structs/enums/traits
+ ↓
+0.8  Standard library + compiler tooling
+ ↓
+0.9  Fusion compiler rewritten in Fusion
+ ↓
+1.0  SELF-HOSTING FUSION
+ ↓
+1.x  Package manager / LSP / debugger / formatter
+ ↓
+2.0  JIT + AOT + UI + REPL/Jupyter + cloud builds
+ ↓
+3.x  Deep ecosystem interoperability

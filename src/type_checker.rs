@@ -99,9 +99,8 @@ fn convert_type(&self,name:&String)-> Result<Type,FusionError>
 {
     match name.as_str()
     {
-        "int" =>Ok(Type::Int),
+        "num" =>Ok(Type::Num),
         "float" =>Ok(Type::Float),
-        "char" => Ok(Type::Char),
         "bool" =>Ok(Type::Bool),
         "string" =>Ok(Type::String),
         _ =>
@@ -152,9 +151,9 @@ match expression {
                 Operator::Multiply |
                 Operator::Divide =>
                 {
-                    if left_type == Type::Int&& right_type == Type::Int
+                    if left_type == Type::Num&& right_type == Type::Num
                     {
-                        Ok(Type::Int)
+                        Ok(Type::Num)
                     }
                     else if left_type == Type::Float&& right_type == Type::Float
                     {
@@ -197,9 +196,7 @@ Operator::LessEqual |
 Operator::Greater |
 Operator::GreaterEqual =>
 {
-    if (left_type == Type::Int && right_type == Type::Int)
-        ||
-       (left_type == Type::Float && right_type == Type::Float)
+    if (left_type == Type::Num && right_type == Type::Num)
     {
         Ok(Type::Bool)
     }
@@ -243,7 +240,7 @@ Operator::Or =>
 }
 }
 }
-Expression::Integer(_) =>Ok(Type::Int),
+Expression::Number(_) =>Ok(Type::Num),
 Expression::Float(_) =>Ok(Type::Float),
 Expression::String(_) =>Ok(Type::String),
 Expression::Boolean(_) =>Ok(Type::Bool),
@@ -263,7 +260,7 @@ Expression::Unary {
         self.infer_expression(expression)?;
     match operator {
         UnaryOperator::Negate => {
-            if inner_type == Type::Int
+            if inner_type == Type::Num
             || inner_type == Type::Float
             {
                 Ok(inner_type)
@@ -339,8 +336,6 @@ Expression::Call {
     None => Ok(Type::Void),
 }
 }
-Expression::Character(_) =>
-Ok(Type::Char),
 Expression::Array(values) => {
     if values.is_empty() {
         return Ok(Type::Array(Box::new(Type::Unknown)));
@@ -371,10 +366,10 @@ Expression::Index {
         self.infer_expression(array)?;
     let index_type =
         self.infer_expression(index)?;
-    if index_type != Type::Int {
+    if index_type != Type::Num {
         return Err(
             FusionError::TypeMismatch {
-                expected:"int index".into(),
+                expected:"num index".into(),
                 found:format!("{:?}", index_type),
             }
         );
@@ -516,12 +511,12 @@ Statement::For {
         self.infer_expression(start)?;
     let end_type =
         self.infer_expression(end)?;
-    if start_type != Type::Int
-        || end_type != Type::Int
+    if start_type != Type::Num
+        || end_type != Type::Num
     {
         return Err(
             FusionError::TypeMismatch {
-                expected:"int range".into(),
+                expected:"num range".into(),
                 found:format!("{:?}..{:?}",start_type,end_type),
             }
         );
@@ -529,7 +524,7 @@ Statement::For {
     self.push_scope();
     self.declare_variable(
         variable.clone(),
-        Type::Int,);
+        Type::Num,);
     for statement in body {
         self.check_statement(statement)?;
     }

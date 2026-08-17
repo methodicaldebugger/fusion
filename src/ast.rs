@@ -53,7 +53,7 @@ pub enum Statement {
 }
 #[derive(Debug, Clone)]
 pub enum Expression {
-    Integer(i64),Float(f64),Boolean(bool),Character(char),
+    Number(i64),Float(f64),Boolean(bool),
     String(String),Array(Vec<Expression>),Identifier(String),
 
     Index {

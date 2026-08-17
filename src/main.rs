@@ -15,7 +15,7 @@ use interpreter::*;
 fn main() {
     println!("Fusion Compiler 0.1");
 let source = r#"
-fn add(a:int,b:int)->int:
+fn add(a:num,b:num)->num:
     return a+b
 "#;
     let mut lexer = Lexer::new(source);

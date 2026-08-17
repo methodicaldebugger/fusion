@@ -394,11 +394,6 @@ fn parse_unary(&mut self) -> Option<Expression> {
 }
 fn parse_primary(&mut self) -> Option<Expression> {
     match self.current() {
-        Token::Character(value) => {
-            let value = *value;
-            self.advance();
-            Some(Expression::Character(value))
-        }
         Token::LeftParen => {
             self.advance();
             let expr = self.parse_expression()?;
@@ -424,10 +419,10 @@ fn parse_primary(&mut self) -> Option<Expression> {
     )
 
 }
-        Token::Integer(value) => {
+        Token::Num(value) => {
             let value = *value;
             self.advance();
-            Some(Expression::Integer(value))
+            Some(Expression::Number(value))
         }
         Token::Float(value) => {
             let value = *value;

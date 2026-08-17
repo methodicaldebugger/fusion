@@ -239,11 +239,11 @@ Statement::Continue => {
     let start_value = self.evaluate(start);
     let end_value = self.evaluate(end);
     let start_number = match start_value {
-        Value::Integer(v) => v,
+        Value::Number(v) => v,
         _ => panic!("For loop start must be integer"),
     };
     let end_number = match end_value {
-        Value::Integer(v) => v,
+        Value::Number(v) => v,
         _ => panic!("For loop end must be integer"),
     };
     self.environment.push_scope();
@@ -251,7 +251,7 @@ Statement::Continue => {
     for i in start_number..end_number {
         self.environment.set(
             variable.clone(),
-            Value::Integer(i),
+            Value::Number(i),
         );
         for statement in body {
     match self.execute_statement(statement) {
@@ -358,13 +358,10 @@ Statement::Continue => {
 }
     fn evaluate(&mut self, expr: &Expression) -> Value {
         match expr {
-            Expression::Integer(v) => Value::Integer(*v),
+            Expression::Number(v) => Value::Number(*v),
             Expression::Float(v) => Value::Float(*v),
             Expression::String(v) => Value::String(v.clone()),
             Expression::Boolean(v) => Value::Boolean(*v),
-            Expression::Character(value) => {
-            Value::Character(*value)
-            }
             Expression::Array(values) => {
                 let mut result = Vec::new();
                 for value in values {
@@ -402,8 +399,8 @@ Statement::Continue => {
     match operator {
         UnaryOperator::Negate => {
             match value {
-                Value::Integer(v) =>
-                    Value::Integer(-v),
+                Value::Number(v) =>
+                    Value::Number(-v),
                 Value::Float(v) =>
                     Value::Float(-v),
                 _ =>
@@ -430,7 +427,7 @@ Expression::Index {
                 let array_value = self.evaluate(array);
                 let index_value = self.evaluate(index);
                 match (array_value, index_value) {
-                    (Value::Array(values), Value::Integer(i)) => {
+                    (Value::Array(values), Value::Number(i)) => {
                         match values.get(i as usize) {
                             Some(value) => value.clone(),
                             None => panic!("Array index out of bounds"),
@@ -472,7 +469,7 @@ Expression::Index {
         return;
     };
     let valid = match expected.as_str() {
-        "int" => matches!(value, Value::Integer(_)),
+        "num" => matches!(value, Value::Number(_)),
         "float" => matches!(value, Value::Float(_)),
         "string" => matches!(value, Value::String(_)),
         "bool" => matches!(value, Value::Boolean(_)),
@@ -493,16 +490,16 @@ Expression::Index {
     right: Value,
 ) -> Value {
     match (left, right) {
-        (Value::Integer(a), Value::Integer(b)) => {
+        (Value::Number(a), Value::Number(b)) => {
             match operator {
-                Operator::Plus => Value::Integer(a + b),
-                Operator::Minus => Value::Integer(a - b),
-                Operator::Multiply => Value::Integer(a * b),
+                Operator::Plus => Value::Number(a + b),
+                Operator::Minus => Value::Number(a - b),
+                Operator::Multiply => Value::Number(a * b),
                 Operator::Divide => {
     if b == 0 {
         panic!("Division by zero");
     }
-    Value::Integer(a / b)
+    Value::Number(a / b)
 }
                 Operator::Equal => Value::Boolean(a == b),
                 Operator::NotEqual => Value::Boolean(a != b),
