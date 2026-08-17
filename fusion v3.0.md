@@ -3,6 +3,8 @@ maintenance will become a problem(as new versions of other languages come out)
 plugins with other languages are owned, built, maintained by the community(are downloaded separately by need)
 fusion will become gigantic and the use of cloud builds becomes an advantage
 
+Fusion is a Dart-like general-purpose language and application platform, with first-class C interoperability and an extensible architecture for integrating other programming ecosystems.
+
 
 Interoperability is the defining long-term goal of Fusion.
 
