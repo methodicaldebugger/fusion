@@ -5,10 +5,27 @@ REPL/Jupyter
 Create a built-in UI framework, similar to what Flutter did for Dart(that way you write: the backend, the frontend, desktop apps, mobile apps).
 SQLite support in the standard library.
 Cloud builds
-Erlang / Elixir: "Let it crash philosophy" 
+Erlang / Elixir: "Let it crash philosophy" / actors system
 Don't make every component capable of recovering from every possible failure. Isolate components so that a failure can be contained and the component restarted. This feature is only available in fusion 2.0.
 Actors are especially interesting for distributed systems(web servers, messaging systems, multiplayer games, distributed services, telecommunications, fault-tolerant systems). Actors don't necessarily need to live in the same process—or even the same machine.
 
+Fusion will create five folders as following:
+Fusion/
+├── fusion/
+├── runtime_plugins/
+│   └── actors/
+├── library_integrations/
+│   ├── sqlite/
+│   └── rust/
+├── source_language_support/
+│   └── c/
+└── frameworks/
+    └── flutter/
+
+The user will be able to drop new source_language_support and library_integrations files as they are created by the fusion community.
+
+THERE ARE MANY THINGS ON THE INTERNET THAT CAN HELP BUILD FUSION FASTER:
+FLUTTER the framework UI from dart(programming language), sqlite, skia-main, sdk-main, LLVM.
 
 Let us say that at this point fusion 2.0 is completed
 Then this project will need assistance from larger corporations.
