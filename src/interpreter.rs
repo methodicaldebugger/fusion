@@ -189,6 +189,35 @@ Value::None
 }
     pub fn execute(&mut self, program:&Program) {
     // Pass 1: register functions
+    // Register structs
+for statement in &program.statements {
+    if let Statement::Struct {
+        name,
+        fields,
+    } = statement
+    {
+        let mut field_map = HashMap::new();
+
+        for field in fields {
+            let field_type = match field.type_name.as_str() {
+                "num" => crate::types::Type::Num,
+                "float" => crate::types::Type::Float,
+                "bool" => crate::types::Type::Bool,
+                "string" => crate::types::Type::String,
+                other => crate::types::Type::Struct(other.to_string()),
+            };
+
+            field_map.insert(field.name.clone(), field_type);
+        }
+
+        self.structs.insert(
+            name.clone(),
+            StructDefinition {
+                fields: field_map,
+            },
+        );
+    }
+}
 for statement in &program.statements {
     if let Statement::Function {
     name,

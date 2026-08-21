@@ -172,178 +172,175 @@ impl TypeChecker {
         false
     }
     
-fn infer_expression(&self,expression:&Expression)-> Result<Type,FusionError>
-{
-match expression {
-    Expression::StructConstructor {
-    name,
-    fields,
-} => {
-    let definition = self
-        .environment
-        .structs
-        .get(name)
-        .ok_or_else(|| {
-            FusionError::UnknownVariable(name.clone())
-        })?;
+    fn infer_expression(&self,expression:&Expression)-> Result<Type,FusionError>
+    {
+        match expression {
+            Expression::StructConstructor {
+                name,
+                fields,
+                } => {
+                    let definition = self
+                    .environment
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| {
+                        FusionError::UnknownVariable(name.clone())
+                    })?;
 
-    // Check every supplied field.
-    for (field_name, expression) in fields {
-        let expected_type = definition
-            .fields
-            .get(field_name)
-            .ok_or_else(|| {
-                FusionError::UnknownVariable(
-                    format!(
-                        "Unknown field '{}' on struct '{}'",
-                        field_name,
-                        name
-                    )
-                )
-            })?;
+                // Check every supplied field.
+                for (field_name, expression) in fields {
+                    let expected_type = definition
+                    .fields
+                    .get(field_name)
+                    .ok_or_else(|| {
+                        FusionError::UnknownVariable(
+                            format!(
+                            "Unknown field '{}' on struct '{}'",
+                            field_name,
+                            name
+                            )
+                        )
+                    })?;
 
-        let actual_type =
-            self.infer_expression(expression)?;
+                    let actual_type =
+                    self.infer_expression(expression)?;
 
-        if *expected_type != actual_type {
-            return Err(
-                FusionError::TypeMismatch {
-                    expected: format!(
-                        "{:?}",
-                        expected_type
-                    ),
-                    found: format!(
-                        "{:?}",
-                        actual_type
-                    ),
+                    if *expected_type != actual_type {
+                        return Err(
+                            FusionError::TypeMismatch {
+                                expected: format!(
+                                "{:?}",
+                                expected_type
+                                ),
+                            found: format!(
+                                "{:?}",
+                                actual_type
+                                ),
+                            }
+                        );
+                    }
                 }
-            );
-        }
-    }
 
-    // Make sure required fields were supplied.
-    for field_name in definition.fields.keys() {
-        if !fields
-            .iter()
-            .any(|(name, _)| name == field_name)
-        {
-            return Err(
-                FusionError::UnknownVariable(
-                    format!(
-                        "Missing field '{}' in struct '{}'",
-                        field_name,
-                        name
-                    )
-                )
-            );
+            // Make sure required fields were supplied.
+            for field_name in definition.fields.keys() {
+                if !fields
+                    .iter()
+                    .any(|(name, _)| name == field_name)
+                    {
+                        return Err(
+                            FusionError::UnknownVariable(
+                            format!(
+                            "Missing field '{}' in struct '{}'",
+                            field_name,
+                            name
+                            )
+                            )
+                        );
+                    }
+            }
+            Ok(Type::Struct(name.clone()))
         }
-    }
-
-    Ok(Type::Struct(name.clone()))
-}
-    Expression::Binary {
-        left,
-        operator,
-        right,
-        } => {
-            let left_type =
-            self.infer_expression(left)?;
-            let right_type =
-            self.infer_expression(right)?;
-            match operator {
-                Operator::Plus |
-                Operator::Minus |
-                Operator::Multiply |
-                Operator::Divide =>
+        Expression::Binary {
+            left,
+            operator,
+            right,
+            } => {
+                let left_type =
+                self.infer_expression(left)?;
+                let right_type =
+                self.infer_expression(right)?;
+                match operator {
+                    Operator::Plus |
+                    Operator::Minus |
+                    Operator::Multiply |
+                    Operator::Divide =>
+                    {
+                        if left_type == Type::Num&& right_type == Type::Num
+                        {
+                            Ok(Type::Num)
+                        }
+                        else if left_type == Type::Float&& right_type == Type::Float
+                        {
+                            Ok(Type::Float)
+                        }
+                        else if operator == &Operator::Plus&& left_type == Type::String&& right_type == Type::String
+                        {
+                            Ok(Type::String)
+                        }
+                        else {
+                            Err(FusionError::InvalidOperation {
+                                left:
+                                format!("{:?}",left_type),
+                                operator:
+                                self.operator_name(operator),
+                                right:
+                                format!("{:?}",right_type),
+                            }
+                        )
+                    }
+                }
+                Operator::Equal |
+                Operator::NotEqual =>
                 {
-                    if left_type == Type::Num&& right_type == Type::Num
-                    {
-                        Ok(Type::Num)
-                    }
-                    else if left_type == Type::Float&& right_type == Type::Float
-                    {
-                        Ok(Type::Float)
-                    }
-                    else if operator == &Operator::Plus&& left_type == Type::String&& right_type == Type::String
-                    {
-                        Ok(Type::String)
+                    if left_type == right_type {
+                        Ok(Type::Bool)
                     }
                     else {
-                        Err(FusionError::InvalidOperation {
-                            left:
-                            format!("{:?}",left_type),
-                            operator:
-                            self.operator_name(operator),
-                            right:
-                            format!("{:?}",right_type),
+                        Err(
+                        FusionError::InvalidOperation {
+                        left: format!("{:?}", left_type),
+                        operator: self.operator_name(operator),
+                        right: format!("{:?}", right_type),
                         }
+                        )
+                    }
+                }
+                Operator::Less |
+                Operator::LessEqual |
+                Operator::Greater |
+                Operator::GreaterEqual =>
+                {
+                if (left_type == Type::Num && right_type == Type::Num)
+                {
+                    Ok(Type::Bool)
+                }
+                else
+                {
+                    Err(
+                    FusionError::InvalidOperation {
+                        left:
+                        format!("{:?}", left_type),
+                        operator:
+                        self.operator_name(operator),
+                        right:
+                        format!("{:?}", right_type),
+                    }
                     )
                 }
             }
-Operator::Equal |
-Operator::NotEqual =>
-{
-    if left_type == right_type {
-        Ok(Type::Bool)
+            Operator::And |
+            Operator::Or =>
+            {
+                if left_type == Type::Bool
+                    && right_type == Type::Bool
+        {
+            Ok(Type::Bool)
+        }
+        else
+        {
+            Err(
+                FusionError::InvalidOperation {
+                    left:
+                        format!("{:?}", left_type),
+                    operator:
+                        self.operator_name(operator),
+                    right:
+                        format!("{:?}", right_type),
+                }
+            )
+        }
     }
-    else {
-        Err(
-            FusionError::InvalidOperation {
-                left: format!("{:?}", left_type),
-                operator: self.operator_name(operator),
-                right: format!("{:?}", right_type),
-            }
-        )
     }
-}
-Operator::Less |
-Operator::LessEqual |
-Operator::Greater |
-Operator::GreaterEqual =>
-{
-    if (left_type == Type::Num && right_type == Type::Num)
-    {
-        Ok(Type::Bool)
-    }
-    else
-    {
-        Err(
-            FusionError::InvalidOperation {
-                left:
-                    format!("{:?}", left_type),
-
-                operator:
-                    self.operator_name(operator),
-
-                right:
-                    format!("{:?}", right_type),
-            }
-        )
-    }
-}
-Operator::And |
-Operator::Or =>
-{
-    if left_type == Type::Bool
-        && right_type == Type::Bool
-    {
-        Ok(Type::Bool)
-    }
-    else
-    {
-        Err(
-            FusionError::InvalidOperation {
-                left:
-                    format!("{:?}", left_type),
-                operator:
-                    self.operator_name(operator),
-                right:
-                    format!("{:?}", right_type),
-            }
-        )
-    }
-}
-}
 }
 Expression::Number(_) =>Ok(Type::Num),
 Expression::Float(_) =>Ok(Type::Float),
@@ -536,6 +533,11 @@ Expression::MethodCall {object: _,method: _,arguments: _,} => {
 
 
 
+
+
+
+
+
 pub fn check_statement(&mut self,statement:&Statement)
     ->Result<(),FusionError>
     {
@@ -636,6 +638,42 @@ Statement::Call(expression) => {
     Ok(())
 }
 
+    Statement::VariableDeclaration {
+    name,
+    declared_type,
+    value,
+} => {
+    let inferred = self.infer_expression(value)?;
+
+    let ty = match declared_type {
+        Some(type_name) => {
+            let declared =
+                self.convert_type(type_name)?;
+
+            if declared != inferred {
+                return Err(
+                    FusionError::TypeMismatch {
+                        expected: format!("{:?}", declared),
+                        found: format!("{:?}", inferred),
+                    }
+                );
+            }
+
+            declared
+        }
+
+        None => inferred,
+    };
+
+    self.declare_variable(
+        name.clone(),
+        ty,
+        true,
+    );
+
+    Ok(())
+}
+
 Statement::If {
     condition,
     body,
@@ -656,22 +694,44 @@ if let Some(else_statements) = else_body {
 }
 Ok(())
 }
-Statement::ConstDeclaration {
+
+    Statement::ConstDeclaration {
     name,
+    declared_type,
     value,
-    ..
 } => {
     let inferred =
         self.infer_expression(value)?;
 
+    let ty = match declared_type {
+        Some(type_name) => {
+            let declared =
+                self.convert_type(type_name)?;
+
+            if declared != inferred {
+                return Err(
+                    FusionError::TypeMismatch {
+                        expected: format!("{:?}", declared),
+                        found: format!("{:?}", inferred),
+                    }
+                );
+            }
+
+            declared
+        }
+
+        None => inferred,
+    };
+
     self.declare_variable(
         name.clone(),
-        inferred,
+        ty,
         false,
     );
 
     Ok(())
 }
+
 Statement::Return(expression) => {
     let actual =
         self.infer_expression(expression)?;
@@ -767,101 +827,185 @@ pub fn check(
     &mut self,
     program: &Program,
 ) -> Result<(), FusionError> {
-    // Pass 1: register functions
+
+    // Pass 1: register struct names
     for statement in &program.statements {
-        if let Statement::Function {
-            name,
-            parameters,
-            return_type,
-            ..
-        } = statement {
-            let mut params = Vec::new();
-            for parameter in parameters {
-                let ty = match &parameter.type_name {
-                    Some(name) =>
-                        self.convert_type(name)?,
-                    None =>Type::Unknown,
-                };
-                params.push(ty);
+        if let Statement::Struct { name, .. } = statement {
+            if self.environment.structs.contains_key(name) {
+                return Err(
+                    FusionError::UnknownVariable(
+                        format!(
+                            "Struct '{}' is already defined",
+                            name
+                        )
+                    )
+                );
             }
-            let ret = match return_type {
-    Some(name) =>
-        Some(self.convert_type(name)?),
-    None =>
-        None,
-};
-            self.environment.functions.insert(
+
+            self.environment.structs.insert(
                 name.clone(),
-                FunctionType {
-                    parameters: params,
-                    return_type: ret,
+                StructDefinition {
+                    fields: HashMap::new(),
                 },
             );
         }
     }
-    // Pass 2: check function bodies and normal statements
+
+    // Pass 2: resolve struct fields
     for statement in &program.statements {
-        match statement {
-            Statement::Function {
-                parameters,
-                return_type,
-                body,
-                ..
-            } => {
-                    self.push_scope();
-                // insert parameters into function scope
-                for parameter in parameters {
-                    let ty = match &parameter.type_name {
-                        Some(name) =>
-                            self.convert_type(name)?,
-                        None =>
-                            Type::Unknown,
-                    };
-                    self.declare_variable(
+        if let Statement::Struct {
+            name,
+            fields,
+        } = statement
+        {
+            let mut field_map = HashMap::new();
+
+            for field in fields {
+                if field_map.contains_key(&field.name) {
+                    return Err(
+                        FusionError::UnknownVariable(
+                            format!(
+                                "Duplicate field '{}' in struct '{}'",
+                                field.name,
+                                name
+                            )
+                        )
+                    );
+                }
+
+                let field_type =
+                    self.convert_type(&field.type_name)?;
+
+                field_map.insert(
+                    field.name.clone(),
+                    field_type,
+                );
+            }
+
+            self.environment
+                .structs
+                .get_mut(name)
+                .unwrap()
+                .fields = field_map;
+        }
+    }
+
+    // Pass 3: register functions
+    for statement in &program.statements {
+    if let Statement::Function {
+        name,
+        parameters,
+        return_type,
+        ..
+    } = statement
+    {
+        if self.environment.functions.contains_key(name) {
+            return Err(FusionError::UnknownVariable(
+                format!("Function '{}' is already defined", name)
+            ));
+        }
+
+        let mut parameter_types = Vec::new();
+
+        for parameter in parameters {
+            let ty = match &parameter.type_name {
+                Some(type_name) => self.convert_type(type_name)?,
+                None => Type::Unknown,
+            };
+
+            parameter_types.push(ty);
+        }
+
+        let return_ty = match return_type {
+            Some(type_name) => Some(self.convert_type(type_name)?),
+            None => None,
+        };
+
+        self.environment.functions.insert(
+            name.clone(),
+            FunctionType {
+                parameters: parameter_types,
+                return_type: return_ty,
+            },
+        );
+    }
+}
+
+// Pass 4: check everything
+for statement in &program.statements {
+    match statement {
+        Statement::Struct { .. } => {
+            // Structs were already checked above.
+        }
+
+        Statement::Function {
+            parameters,
+            return_type,
+            body,
+            ..
+        } => {
+            self.push_scope();
+
+            for parameter in parameters {
+                let ty = match &parameter.type_name {
+                    Some(type_name) => {
+                        self.convert_type(type_name)?
+                    }
+                    None => Type::Unknown,
+                };
+
+                self.declare_variable(
                     parameter.name.clone(),
                     ty,
                     true,
-                    );
+                );
+            }
+
+            let old_function = self.current_function.take();
+
+            self.current_function = Some(FunctionContext {
+                return_type: match return_type {
+                    Some(type_name) => {
+                        Some(self.convert_type(type_name)?)
+                    }
+                    None => None,
+                },
+            });
+
+            for statement in body {
+                if let Err(error) = self.check_statement(statement) {
+                    self.current_function = old_function;
+                    self.pop_scope();
+                    return Err(error);
                 }
-                let old_function = self.current_function.take();
-self.current_function = Some(FunctionContext {
-    return_type: match return_type {
-        Some(name) => Some(self.convert_type(name)?),
-        None => None,
-    }
-});
-                for statement in body {
-    if let Err(error) =
-        self.check_statement(statement)
-    {
-        self.current_function = old_function;
-        self.pop_scope();
-        return Err(error);
-    }
-}
-if return_type.is_some()
-&& !TypeChecker::block_returns(body)
-{
-    self.current_function = old_function;
-    self.pop_scope();
-    return Err(
-        FusionError::TypeMismatch {
-            expected:
-            "function return value".into(),
-            found:
-            "no return".into(),
+            }
+
+            if return_type.is_some()
+                && !Self::block_returns(body)
+            {
+                self.current_function = old_function;
+                self.pop_scope();
+
+                return Err(FusionError::TypeMismatch {
+                    expected: "function return value".into(),
+                    found: "no return".into(),
+                });
+            }
+
+            self.current_function = old_function;
+            self.pop_scope();
         }
-    );
-}
-// restore function context
-self.current_function = old_function;
-self.pop_scope();
-            }
-            _ => {
-                self.check_statement(statement)?;
-            }
+
+        _ => {
+            self.check_statement(statement)?;
         }
     }
+}
+
     Ok(())
 }
+
+
+
+
 }
