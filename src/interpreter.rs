@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::value::Value;
 use crate::environment::Environment;
+use crate::types::StructDefinition;
+
+
 #[derive(Debug)]
 enum Flow {
     Normal,Break,Continue,Return(Value),
@@ -10,6 +13,7 @@ enum Flow {
 pub struct Interpreter {
     environment: Environment,
     functions: HashMap<String, Function>,
+    structs: HashMap<String, StructDefinition>,
     loop_depth: usize,
 }
 #[derive(Clone)]
@@ -19,6 +23,60 @@ pub struct Function {
     pub body: Vec<Statement>,
 }
 impl Interpreter {
+    fn assign_property(
+    &mut self,
+    object: &Expression,
+    name: &str,
+    value: Value,
+) {
+    let object_value = self.evaluate(object);
+
+    match object_value {
+        Value::Struct {
+            name: struct_name,
+            mut fields,
+        } => {
+            if !fields.contains_key(name) {
+                panic!(
+                    "Unknown field '{}' on struct '{}'",
+                    name,
+                    struct_name
+                );
+            }
+
+            fields.insert(name.to_string(), value);
+
+            // IMPORTANT:
+            // We need to write the modified struct back to the variable.
+            match object {
+                Expression::Identifier(variable_name) => {
+                    if let Err(error) =
+                        self.environment.assign(
+                            variable_name,
+                            Value::Struct {
+                                name: struct_name,
+                                fields,
+                            },
+                        )
+                    {
+                        panic!("{}", error);
+                    }
+                }
+
+                _ => {
+                    panic!(
+                        "Nested property assignment is not implemented yet"
+                    );
+                }
+            }
+        }
+
+        _ => {
+            panic!("Property assignment requires a struct");
+        }
+    }
+}
+
     fn call_function(
     &mut self,
     name: &str,
@@ -44,27 +102,27 @@ impl Interpreter {
     };
     if function.return_type.is_some()
     && !self.function_has_return(&function.body)
-{
-    panic!(
-        "Function '{}' expects a return value but has no return statement",
-        name
-    );
-}
-    let values: Vec<Value> =
-    arguments
-    .iter()
-    .map(|argument| self.evaluate(argument))
-    .collect();
-self.environment.push_scope();
-for (parameter, value) 
-in function.parameters.iter()
-.zip(values.iter())
-{
-    self.environment.set(
-        parameter.name.clone(),
-        value.clone(),
-    );
-}
+    {
+        panic!(
+            "Function '{}' expects a return value but has no return statement",
+            name
+        );
+    }
+    let values: Vec<Value> = arguments
+        .iter()
+        .map(|argument| 
+        self.evaluate(argument))
+        .collect();
+        self.environment.push_scope();
+        for (parameter, value) 
+            in function.parameters.iter()
+            .zip(values.iter())
+        {
+            self.environment.set(
+                parameter.name.clone(),
+                value.clone(),
+            );
+        }
     for statement in &function.body {
     match self.execute_statement(statement) {
         Flow::Return(value) => {
@@ -125,6 +183,7 @@ Value::None
     Self {
         environment: Environment::new(),
         functions: HashMap::new(),
+        structs: HashMap::new(),
         loop_depth: 0,
     }
 }
@@ -136,6 +195,7 @@ for statement in &program.statements {
     parameters,
     body,
     return_type,
+    ..
 } = statement {
     self.functions.insert(
         name.clone(),
@@ -171,15 +231,18 @@ for statement in &program.statements {
 ) -> Flow {
     match statement {
         Statement::VariableDeclaration {
-    name,
-    value,
-    ..
-} => {
+            name,
+            declared_type: _,
+            value,
+        } => {
     let result = self.evaluate(value);
-    self.environment.set(
+
+    self.environment.declare(
         name.clone(),
         result,
+        true,
     );
+
     Flow::Normal
 }
 Statement::ConstDeclaration {
@@ -188,10 +251,13 @@ Statement::ConstDeclaration {
     ..
 } => {
     let result = self.evaluate(value);
-    self.environment.set(
+
+    self.environment.declare(
         name.clone(),
         result,
+        false,
     );
+
     Flow::Normal
 }
 Statement::Expression(expr) => {
@@ -211,17 +277,29 @@ Statement::Continue => {
     Flow::Continue
 }
         Statement::Assignment {
-    name,
+    target,
     value,
-    ..
 } => {
-            let result = self.evaluate(value);
-            self.environment.set(
-    name.clone(),
-    result,
-);
-            Flow::Normal
+    let result = self.evaluate(value);
+
+    match target {
+        Expression::Identifier(name) => {
+            if let Err(error) = self.environment.assign(name, result) {
+                panic!("{}", error);
+            }
         }
+
+        Expression::Property { object, name } => {
+            self.assign_property(object, name, result);
+        }
+
+        _ => {
+            panic!("Invalid assignment target");
+        }
+    }
+
+    Flow::Normal
+}
         Statement::Call(expr) => {
             self.evaluate(expr);
             Flow::Normal
@@ -354,6 +432,9 @@ Statement::Continue => {
             );
             Flow::Normal
         }
+        _ => {
+            Flow::Normal
+        }
     }
 }
     fn evaluate(&mut self, expr: &Expression) -> Value {
@@ -362,6 +443,21 @@ Statement::Continue => {
             Expression::Float(v) => Value::Float(*v),
             Expression::String(v) => Value::String(v.clone()),
             Expression::Boolean(v) => Value::Boolean(*v),
+            Expression::StructConstructor { 
+                name, fields } => {
+                let mut result = HashMap::new();
+                for (field_name, expression) in fields {
+                        result.insert(
+                    field_name.clone(),
+                    self.evaluate(expression),
+                    );
+                }
+
+                Value::Struct {
+                    name: name.clone(),
+                    fields: result,
+                    }
+                }
             Expression::Array(values) => {
                 let mut result = Vec::new();
                 for value in values {
@@ -417,7 +513,11 @@ Statement::Continue => {
         }
     }
 }
-            Expression::Call { name, arguments } => {
+            Expression::Call {
+    name,
+    arguments,
+    ..
+} => {
     self.call_function(name, arguments)
 }
 Expression::Index {
@@ -437,15 +537,32 @@ Expression::Index {
                 }
             }
             Expression::Property {
-                object,
-                name,
-            } => {
-                panic!(
-                    "Property access not implemented: {:?}.{}",
-                    object,
-                    name
-                );
+    object,
+    name,
+} => {
+    let value = self.evaluate(object);
+
+    match value {
+        Value::Struct { fields, .. } => {
+            match fields.get(name) {
+                Some(value) => value.clone(),
+
+                None => {
+                    panic!(
+                        "Unknown field '{}'",
+                        name
+                    );
+                }
             }
+        }
+
+        _ => {
+            panic!(
+                "Property access requires a struct"
+            );
+        }
+    }
+}
             Expression::MethodCall {
                 object,
                 method,

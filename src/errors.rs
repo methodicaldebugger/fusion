@@ -6,6 +6,7 @@ pub enum FusionError {
         expected:String,
         found:String,
     },
+    CannotAssignToConst(String),
     InvalidOperation {
         left:String,
         operator:String,
@@ -22,6 +23,8 @@ impl std::fmt::Display for FusionError {
                 expected,found
             }=>
                 write!(f,"Type mismatch: expected {}, found {}",expected,found),
+            FusionError::CannotAssignToConst(name) =>
+                write!(f,"Cannot assign to constant '{}'",name),
             FusionError::InvalidOperation {
                 left,
                 operator,

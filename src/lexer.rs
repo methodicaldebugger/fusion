@@ -1,6 +1,13 @@
-
 //contents of lexer.rs
 use std::collections::VecDeque;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BlockMode {
+    Unknown,
+    Indentation,
+    Braces,
+}
+
 #[derive(Debug)]
 pub struct LexError {
     message: String,
@@ -18,16 +25,66 @@ pub struct LexError {
 impl std::error::Error for LexError {}
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    Num(i64),Float(f64),Boolean(bool),
-    String(String),Identifier(String),
-    FloatType,Bool,StringType,Const,
-    Fn,Return,If,Else,While,For,In,
-    Break,Continue,And,Or,Not,Plus,Minus,Star,Slash,Equal,
-    EqualEqual,NotEqual,Less,LessEqual,Greater,GreaterEqual,
-    AndAnd,OrOr,Bang,LeftParen,RightParen,LeftBracket,
-    RightBracket,Comma,Colon,Dot,DotDot,Arrow,Indent,
-    Dedent,NewLine,Eof,Struct,Trait,Impl,
-    Match,Import,From,Async,Await,
+    Num(i64),
+    Float(f64),
+    Boolean(bool),
+    String(String),
+    Identifier(String),
+    FloatType,
+    Bool,
+    StringType,
+    Const,
+    Fn,
+    Return,
+    If,
+    Else,
+    While,
+    For,
+    In,
+    Defer,
+    Break,
+    Continue,
+    And,
+    Or,
+    Not,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Equal,
+    EqualEqual,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    AndAnd,
+    OrOr,
+    Bang,
+    LeftParen,
+    RightParen,
+    LeftBracket,
+    RightBracket,
+    Comma,
+    Colon,
+    Dot,
+    DotDot,
+    Arrow,
+    Indent,
+    Dedent,
+    NewLine,
+    Eof,
+    Struct,
+    Trait,
+    Impl,
+    Match,
+    Import,
+    From,
+    Async,
+    Await,
+    LeftBrace,
+    RightBrace,
+    Enum,
 }
 
 pub struct Lexer {
@@ -39,56 +96,97 @@ pub struct Lexer {
     at_file_start: bool,
     indentation_stack: Vec<usize>,
     pending_tokens: VecDeque<Token>,
+    block_mode: BlockMode,
 }
+
 impl Lexer {
-    pub fn new(source: &str) -> Self {
-    Self {
-        input: source.chars().collect(),
-        position: 0,
-        line: 1,
-        column: 1,
-        line_start: true,
-        at_file_start: true,
-        indentation_stack: vec![0],
-        pending_tokens: VecDeque::new(),
+    fn set_indentation_mode(&mut self) -> Result<(), LexError> {
+    match self.block_mode {
+        BlockMode::Unknown => {
+            self.block_mode = BlockMode::Indentation;
+            Ok(())
+        }
+        BlockMode::Indentation => Ok(()),
+        BlockMode::Braces => Err(LexError {
+            message: "Cannot use indentation blocks after '{' brace syntax was selected for this file".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        }),
     }
+}
+
+fn set_brace_mode(&mut self) -> Result<(), LexError> {
+    match self.block_mode {
+        BlockMode::Unknown => {
+            self.block_mode = BlockMode::Braces;
+            Ok(())
+        }
+        BlockMode::Braces => Ok(()),
+        BlockMode::Indentation => Err(LexError {
+            message: "Cannot use '{' brace blocks after indentation syntax was selected for this file".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        }),
+    }
+}
+
+    pub fn new(source: &str) -> Self {
+   Self {
+            input: source.chars().collect(),
+            position: 0,
+            line: 1,
+            column: 1,
+            line_start: true,
+            at_file_start: true,
+            indentation_stack: vec![0],
+            pending_tokens: VecDeque::new(),
+            block_mode: BlockMode::Unknown,
+        }
 }
     fn handle_indentation(&mut self) -> Result<(), LexError> {
     let mut spaces = 0;
+
     while let Some(ch) = self.peek() {
         if ch == ' ' {
             spaces += 1;
             self.advance();
-        }
-        else if ch == '\t' {
+        } else if ch == '\t' {
             spaces += 4;
             self.advance();
-        }
-        else {
+        } else {
             break;
         }
     }
+
     let current = *self.indentation_stack.last().unwrap();
-if spaces > current {
-    self.indentation_stack.push(spaces);
-    self.pending_tokens.push_back(Token::Indent);
-}
-else if spaces < current {
-    while self.indentation_stack.len() > 1
-        && spaces < *self.indentation_stack.last().unwrap()
-    {
-        self.indentation_stack.pop();
-        self.pending_tokens.push_back(Token::Dedent);
+
+    // Only select indentation mode when actual indentation occurs.
+    if spaces > current {
+        self.set_indentation_mode()?;
+        self.indentation_stack.push(spaces);
+        self.pending_tokens.push_back(Token::Indent);
+    } else if spaces < current {
+        // We are already in indentation mode if we're dedenting.
+        self.set_indentation_mode()?;
+        while self.indentation_stack.len() > 1
+            && spaces < *self.indentation_stack.last().unwrap()
+        {
+            self.indentation_stack.pop();
+            self.pending_tokens.push_back(Token::Dedent);
+        }
+
+        if spaces != *self.indentation_stack.last().unwrap() {
+            return Err(LexError {
+                message: "Invalid indentation level".into(),
+                position: self.position,
+                line: self.line,
+                column: self.column,
+            });
+        }
     }
-    if spaces != *self.indentation_stack.last().unwrap() {
-        return Err(LexError {
-    message: "Invalid indentation level".into(),
-    position: self.position,
-    line: self.line,
-    column: self.column,
-});
-    }
-}
+
     Ok(())
 }
     fn peek(&self) -> Option<char> {
@@ -116,6 +214,39 @@ else if spaces < current {
             break;
         }
     }
+}
+
+     fn skip_multiline_comment(&mut self) -> Result<(), LexError> {
+    // '/' has already been consumed.
+
+    if self.peek() != Some('*') {
+        return Err(LexError {
+            message: "Expected '*' after '/'".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        });
+    }
+
+    self.advance(); // *
+
+    while let Some(ch) = self.peek() {
+        if ch == '*'
+            && self.input.get(self.position + 1) == Some(&'/')
+        {
+            self.advance(); // *
+            self.advance(); // /
+            return Ok(());
+        }
+        self.advance();
+    }
+
+    Err(LexError {
+        message: "Unterminated multi-line comment".into(),
+        position: self.position,
+        line: self.line,
+        column: self.column,
+    })
 }
     fn read_identifier(&mut self) -> String {
         let mut value = String::new();
@@ -161,10 +292,13 @@ else if spaces < current {
             return Ok(token);
         }
         if self.line_start {
-    self.handle_indentation()?;
+    if self.block_mode == BlockMode::Indentation {
+        self.handle_indentation()?;
+    }
+
     self.line_start = false;
 
-    if let Some(token)=self.pending_tokens.pop_front(){
+    if let Some(token) = self.pending_tokens.pop_front() {
         return Ok(token);
     }
 }
@@ -172,16 +306,33 @@ else if spaces < current {
     self.advance();
 }
         let ch = match self.peek() {
-            Some(c) => c,
-            None => {
-                if self.indentation_stack.len() > 1 {
-                    self.indentation_stack.pop();
-                    return Ok(Token::Dedent);
-                }
-                return Ok(Token::Eof);
-            }
-        };
+    Some(c) => c,
+
+    None => {
+        if self.block_mode == BlockMode::Indentation
+            && self.indentation_stack.len() > 1
+        {
+            self.indentation_stack.pop();
+            return Ok(Token::Dedent);
+        }
+
+        return Ok(Token::Eof);
+    }
+};
         match ch {
+
+            '{' => {
+    self.set_brace_mode()?;
+    self.advance();
+    Ok(Token::LeftBrace)
+}
+
+'}' => {
+    self.set_brace_mode()?;
+    self.advance();
+    Ok(Token::RightBrace)
+}
+
             '\n' => {
     self.advance();
     self.line_start = true;
@@ -229,11 +380,17 @@ else if spaces < current {
             }
             '|' => {
     self.advance();
-    if self.peek()==Some('|') {
+
+    if self.peek() == Some('|') {
         self.advance();
         Ok(Token::OrOr)
     } else {
-        Ok(Token::Bang)
+        Err(LexError {
+            message: "Unexpected '|'. Use '||' for logical OR".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        })
     }
 }
             '(' => {
@@ -278,22 +435,53 @@ else if spaces < current {
                 self.advance();
                 Ok(Token::Star)
             }
-            '/' => {
-    self.advance();
-    if self.peek() == Some('/') {
-        while let Some(ch)=self.peek() {
-            self.advance();
-            if ch=='\n' {
-                self.line_start=true;
-                break;
-            }
-        }
-        self.next_token()
+             '/' => {
+                self.advance();
+
+                match self.peek() {
+                    Some('*') => {
+    if self.input.get(self.position + 1) == Some(&'*') {
+        return Err(LexError {
+            message: "Documentation comments using /** ... */ are not allowed".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        });
     }
-    else {
-        Ok(Token::Slash)
-    }
+
+    self.skip_multiline_comment()?;
+    self.next_token()
 }
+
+                    Some('/') => {
+    self.advance(); // consume second /
+
+    if self.peek() == Some('/') {
+        return Err(LexError {
+            message: "Triple-slash comments using /// are not allowed".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        });
+    }
+
+    while let Some(ch) = self.peek() {
+        self.advance();
+
+        if ch == '\n' {
+            self.line_start = true;
+            break;
+        }
+    }
+
+    self.next_token()
+}
+
+                    _ => {
+                        Ok(Token::Slash)
+                    }
+                }
+            }
             '=' => {
                 self.advance();
                 if self.peek() == Some('=') {
@@ -336,7 +524,10 @@ else if spaces < current {
                 c if c.is_alphabetic() || c == '_' => {
                     let ident = self.read_identifier();
                     match ident.as_str() {
+                        "const" => Ok(Token::Const),
+                        "enum" => Ok(Token::Enum),
                         "fn" => Ok(Token::Fn),
+                        "defer" => Ok(Token::Defer),
                         "if" => Ok(Token::If),
                         "and" => Ok(Token::And),
                         "or" => Ok(Token::Or),

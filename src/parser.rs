@@ -55,17 +55,27 @@ impl Parser {
     }
     Some(arguments)
 }
-    fn is_type_name(name:&str)->bool {
-        matches!(name,"int" |"float" |"bool" |"string")
-    }
+    fn is_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "num" | "float" | "bool" | "string"
+    )
+}
     fn parse_block(&mut self) -> Vec<Statement> {
+    match self.current() {
+        Token::Indent => self.parse_indentation_block(),
+
+        Token::LeftBrace => self.parse_brace_block(),
+
+        _ => Vec::new(),
+    }
+}
+fn parse_indentation_block(&mut self) -> Vec<Statement> {
     let mut statements = Vec::new();
-    if self.current() == &Token::Indent {
-        self.advance();
-    }
-    else {
-        return statements;
-    }
+
+    // consume Indent
+    self.advance();
+
     while self.current() != &Token::Dedent
         && self.current() != &Token::Eof
     {
@@ -73,20 +83,57 @@ impl Parser {
             self.advance();
             continue;
         }
+
         if let Some(statement) = self.parse_statement() {
             println!("BLOCK FOUND: {:?}", statement);
             statements.push(statement);
+        } else {
+            panic!(
+                "Invalid statement in indentation block near token: {:?}",
+                self.current()
+            );
         }
-        else {
-    panic!(
-        "Invalid statement in block near token: {:?}",
-        self.current()
-    );
-}
     }
+
     if self.current() == &Token::Dedent {
         self.advance();
     }
+
+    statements
+}
+
+fn parse_brace_block(&mut self) -> Vec<Statement> {
+    let mut statements = Vec::new();
+
+    // consume {
+    if !self.consume(&Token::LeftBrace) {
+        return statements;
+    }
+
+    while self.current() != &Token::RightBrace
+        && self.current() != &Token::Eof
+    {
+        // Ignore newlines inside brace blocks
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
+
+        if let Some(statement) = self.parse_statement() {
+            println!("BRACE BLOCK FOUND: {:?}", statement);
+            statements.push(statement);
+        } else {
+            panic!(
+                "Invalid statement in brace block near token: {:?}",
+                self.current()
+            );
+        }
+    }
+
+    if !self.consume(&Token::RightBrace) {
+        panic!("Expected '}}' at end of block");
+    }
+
     statements
 }
     pub fn new(tokens: Vec<Token>) -> Self {
@@ -206,7 +253,7 @@ while self.current() != &Token::RightParen
     let body = self.parse_block();
     println!("FUNCTION NAME: {}", name);
     println!("FUNCTION BODY: {:?}", body);
-    Some(Statement::Function {name,parameters,return_type,body,})}
+    Some(Statement::Function {name,generic_parameters: Vec::new(),parameters,return_type,body,})}
 
 fn parse_statement(&mut self) -> Option<Statement> {
     match self.current() {
@@ -232,6 +279,36 @@ fn parse_statement(&mut self) -> Option<Statement> {
     Some(Statement::While {
         condition,
         body,
+    })
+}
+        Token::Const => {
+    self.advance();
+
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            name
+        }
+        _ => return None,
+    };
+
+    let declared_type = if self.consume(&Token::Colon) {
+        Some(self.parse_type()?)
+    } else {
+        None
+    };
+
+    if !self.consume(&Token::Equal) {
+        return None;
+    }
+
+    let value = self.parse_expression()?;
+
+    Some(Statement::ConstDeclaration {
+        name,
+        declared_type,
+        value,
     })
 }
         Token::If => {
@@ -285,9 +362,8 @@ fn parse_statement(&mut self) -> Option<Statement> {
                     self.advance(); // '='
                     let value = self.parse_expression()?;
                     Some(Statement::Assignment {
-                        name: first_name,
-                        declared_type: None,
-                        value,
+                    target: Expression::Identifier(first_name),
+                    value,
                     })
                 }
                 Some(Token::LeftParen) => {
@@ -295,27 +371,31 @@ fn parse_statement(&mut self) -> Option<Statement> {
                     Some(Statement::Call(expression))
                 }
                 Some(Token::Identifier(_))
-                    if Parser::is_type_name(&first_name) =>
-                {
-                    self.advance(); // type
-                    let name = match self.current() {
-                        Token::Identifier(name) => {
-                            let n = name.clone();
-                            self.advance();
-                            n
-                        }
-                        _ => return None,
-                    };
-                    if !self.consume(&Token::Equal) {
-                        return None;
-                    }
-                    let value = self.parse_expression()?;
-                    Some(Statement::Assignment {
-                        name,
-                        declared_type: Some(first_name),
-                        value,
-                    })
-                }
+    if Parser::is_type_name(&first_name) =>
+{
+    self.advance(); // type
+
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let n = name.clone();
+            self.advance();
+            n
+        }
+        _ => return None,
+    };
+
+    if !self.consume(&Token::Equal) {
+        return None;
+    }
+
+    let value = self.parse_expression()?;
+
+    Some(Statement::VariableDeclaration {
+        name,
+        declared_type: Some(first_name),
+        value,
+    })
+}
                 _ => {
                     let expression = self.parse_expression()?;
                     Some(Statement::Expression(expression))
@@ -392,72 +472,104 @@ fn parse_unary(&mut self) -> Option<Expression> {
         }
     }
 }
-fn parse_primary(&mut self) -> Option<Expression> {
-    match self.current() {
-        Token::LeftParen => {
-            self.advance();
-            let expr = self.parse_expression()?;
-            if !self.consume(&Token::RightParen) {
-                panic!("Expected ')'");
-            }
-            Some(expr)
-        }
-        Token::LeftBracket => {
-    self.advance();
-    let mut values=Vec::new();
-    while self.current()!=&Token::RightBracket {
-        let value =
-            self.parse_expression()?;
-        values.push(value);
-        if self.current()==&Token::Comma {
-            self.advance();
-        }
-    }
-    self.advance();
-    Some(
-        Expression::Array(values)
-    )
-
-}
+    fn parse_primary(&mut self) -> Option<Expression> {
+    let mut expression = match self.current() {
         Token::Num(value) => {
             let value = *value;
             self.advance();
-            Some(Expression::Number(value))
+            Expression::Number(value)
         }
+
         Token::Float(value) => {
             let value = *value;
             self.advance();
-            Some(Expression::Float(value))
+            Expression::Float(value)
         }
+
         Token::String(value) => {
             let value = value.clone();
             self.advance();
-            Some(Expression::String(value))
+            Expression::String(value)
         }
-       Token::Boolean(value) => {
-    let value = *value;
-    self.advance();
-    Some(Expression::Boolean(value))
-}
-Token::Identifier(name) => {
-    let name = name.clone();
-    self.advance();
-    if self.current() == &Token::LeftParen {
-    let arguments =
-        self.parse_arguments()?;
-    Some(
-        Expression::Call {
-            name,
-            arguments,
+
+        Token::Boolean(value) => {
+            let value = *value;
+            self.advance();
+            Expression::Boolean(value)
         }
-    )
-}
-    else {
-        Some(Expression::Identifier(name))
+
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+
+            if self.current() == &Token::LeftParen {
+                let arguments = self.parse_arguments()?;
+
+                Expression::Call {
+                    name,
+                    arguments,
+                    generic_arguments: Vec::new(),
+                }
+            } else {
+                Expression::Identifier(name)
+            }
+        }
+
+        Token::LeftParen => {
+            self.advance();
+
+            let expression = self.parse_expression()?;
+
+            if !self.consume(&Token::RightParen) {
+                return None;
+            }
+
+            expression
+        }
+
+        _ => return None,
+    };
+
+    loop {
+        match self.current() {
+            Token::Dot => {
+                self.advance();
+
+                let name = match self.current() {
+                    Token::Identifier(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    }
+                    _ => return None,
+                };
+
+                expression = Expression::Property {
+                    object: Box::new(expression),
+                    name,
+                };
+            }
+
+            Token::LeftBracket => {
+                self.advance();
+
+                let index = self.parse_expression()?;
+
+                if !self.consume(&Token::RightBracket) {
+                    return None;
+                }
+
+                expression = Expression::Index {
+                    array: Box::new(expression),
+                    index: Box::new(index),
+                };
+            }
+
+            _ => break,
+        }
     }
-}
-_ => None,
-    }
+
+    Some(expression)
 }
 fn parse_comparison(&mut self) -> Option<Expression> {
     let mut left = self.parse_addition()?;

@@ -1,14 +1,21 @@
 //contents of type_checker.rs
 use std::collections::HashMap;
 use crate::ast::*;
-use crate::types::Type;
 use crate::errors::*;
+use crate::types::{Type, StructDefinition};
+
+pub struct TypeEnvironment {
+    pub scopes: Vec<HashMap<String, VariableInfo>>,
+    pub functions: HashMap<String, FunctionType>,
+    pub structs: HashMap<String, StructDefinition>,
+}
 struct FunctionContext {
     return_type: Option<Type>,
 }
-pub struct TypeEnvironment {
-    scopes: Vec<HashMap<String, Type>>,
-    functions: HashMap<String, FunctionType>,
+#[derive(Clone)]
+pub struct VariableInfo {
+    pub ty: Type,
+    pub mutable: bool,
 }
 #[derive(Clone)]
 pub struct FunctionType {
@@ -23,119 +30,217 @@ impl TypeChecker {
     fn push_scope(&mut self) {
     self.environment.scopes.push(HashMap::new());
 }
-fn pop_scope(&mut self) {
-    self.environment.scopes.pop();
-}
-fn declare_variable(
-    &mut self,
-    name: String,
-    ty: Type,
-) {
-    self.environment
+
+    fn pop_scope(&mut self) {
+        self.environment.scopes.pop();
+    }
+    
+    fn declare_variable(
+        &mut self,
+        name: String,
+        ty: Type,
+        mutable: bool,
+    ) {
+        self.environment
         .scopes
         .last_mut()
         .unwrap()
-        .insert(name, ty);
-}
-fn lookup_variable(&self,name: &str,) -> Option<Type> {
-    for scope in self.environment.scopes.iter().rev() {
-        if let Some(ty) = scope.get(name) {
-            return Some(ty.clone());
+        .insert(
+            name,
+            VariableInfo {
+                ty,
+                mutable,
+            },
+        );
+    }
+
+    fn lookup_variable(&self, name: &str) -> Option<Type> {
+        for scope in self.environment.scopes.iter().rev() {
+            if let Some(info) = scope.get(name) {
+                return Some(info.ty.clone());
+            }
         }
+        None
     }
-    None
-}
+
+    fn lookup_variable_info(&self, name: &str) -> Option<VariableInfo> {
+        for scope in self.environment.scopes.iter().rev() {
+            if let Some(info) = scope.get(name) {
+                return Some(info.clone());
+            }
+        }
+        None
+    }
+
     fn require_bool(&self,found: Type)
--> Result<(), FusionError>
-{
-    if found == Type::Bool {
-        Ok(())
-    }
-    else {
-        Err(
-            FusionError::TypeMismatch {
+        -> Result<(), FusionError>
+    {
+        if found == Type::Bool {
+            Ok(())
+        }
+        else {
+            Err(
+                FusionError::TypeMismatch {
                 expected:
                 "Bool".into(),
                 found:
                 format!("{:?}", found),
-            }
-        )
-    }
-}
-    fn operator_name(&self,operator: &Operator) -> String {
-match operator {
-    Operator::Plus => "+".into(),
-    Operator::Minus => "-".into(),
-    Operator::Multiply => "*".into(),
-    Operator::Divide => "/".into(),
-    Operator::Equal => "==".into(),
-    Operator::NotEqual => "!=".into(),
-    Operator::Less => "<".into(),
-    Operator::LessEqual => "<=".into(),
-    Operator::Greater => ">".into(),
-    Operator::GreaterEqual => ">=".into(),
-    Operator::And => "and".into(),
-    Operator::Or => "or".into(),
-    }
-}
-pub fn new()->Self {
-    let mut functions = HashMap::new();
-    functions.insert(
-        "print".into(),
-        FunctionType {
-            parameters: vec![Type::Unknown],
-            return_type: Some(Type::Void),
-        },
-    );
-    Self {
-        environment: TypeEnvironment {
-            scopes: vec![HashMap::new()],
-            functions,
-        },
-        current_function: None,
-    }
-}
-fn convert_type(&self,name:&String)-> Result<Type,FusionError>
-{
-    match name.as_str()
-    {
-        "num" =>Ok(Type::Num),
-        "float" =>Ok(Type::Float),
-        "bool" =>Ok(Type::Bool),
-        "string" =>Ok(Type::String),
-        _ =>
-        Err(FusionError::TypeMismatch {
-            expected:"known type".into(),
-            found:name.clone(),})
-    }
-}
-fn block_returns(statements:&Vec<Statement>) -> bool {
-    for statement in statements {
-        match statement {
-            Statement::Return(_) => {
-                return true;
-            }
-            Statement::If {
-                body,
-                else_body,
-                ..
-            } => {
-                if let Some(else_body)=else_body {
-                    if Self::block_returns(body)
-                    && Self::block_returns(else_body)
-                    {
-                        return true;
-                    }
                 }
-            }
-            _ => {}
+            )
         }
     }
-    false
-}
+
+    fn operator_name(&self,operator: &Operator) -> String {
+        match operator {
+        Operator::Plus => "+".into(),
+        Operator::Minus => "-".into(),
+        Operator::Multiply => "*".into(),
+        Operator::Divide => "/".into(),
+        Operator::Equal => "==".into(),
+        Operator::NotEqual => "!=".into(),
+        Operator::Less => "<".into(),
+        Operator::LessEqual => "<=".into(),
+        Operator::Greater => ">".into(),
+        Operator::GreaterEqual => ">=".into(),
+        Operator::And => "and".into(),
+        Operator::Or => "or".into(),
+        }
+    }
+
+    pub fn new()->Self {
+        let mut functions = HashMap::new();
+        functions.insert(
+            "print".into(),
+            FunctionType {
+                parameters: vec![Type::Unknown],
+                return_type: Some(Type::Void),
+            },
+        );
+        Self {
+            environment: TypeEnvironment {
+            scopes: vec![HashMap::new()],
+            functions,
+            structs: HashMap::new(),
+            },
+            current_function: None,
+        }
+    }
+
+    fn convert_type(
+        &self,
+        name: &String,
+        ) -> Result<Type, FusionError> {
+            match name.as_str() {
+            "num" => Ok(Type::Num),
+            "float" => Ok(Type::Float),
+            "bool" => Ok(Type::Bool),
+            "string" => Ok(Type::String),
+
+        _ if self.environment.structs.contains_key(name) => {
+            Ok(Type::Struct(name.clone()))
+        }
+
+        _ => Err(FusionError::TypeMismatch {
+            expected: "known type".into(),
+            found: name.clone(),
+            }),
+        }
+    }
+
+    fn block_returns(statements:&Vec<Statement>) -> bool {
+        for statement in statements {
+            match statement {
+                Statement::Return(_) => {
+                    return true;
+                }
+                Statement::If {
+                    body,
+                    else_body,
+                    ..
+                } => {
+                if let Some(else_body)=else_body {
+                    if Self::block_returns(body)
+                        && Self::block_returns(else_body)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    
 fn infer_expression(&self,expression:&Expression)-> Result<Type,FusionError>
 {
 match expression {
+    Expression::StructConstructor {
+    name,
+    fields,
+} => {
+    let definition = self
+        .environment
+        .structs
+        .get(name)
+        .ok_or_else(|| {
+            FusionError::UnknownVariable(name.clone())
+        })?;
+
+    // Check every supplied field.
+    for (field_name, expression) in fields {
+        let expected_type = definition
+            .fields
+            .get(field_name)
+            .ok_or_else(|| {
+                FusionError::UnknownVariable(
+                    format!(
+                        "Unknown field '{}' on struct '{}'",
+                        field_name,
+                        name
+                    )
+                )
+            })?;
+
+        let actual_type =
+            self.infer_expression(expression)?;
+
+        if *expected_type != actual_type {
+            return Err(
+                FusionError::TypeMismatch {
+                    expected: format!(
+                        "{:?}",
+                        expected_type
+                    ),
+                    found: format!(
+                        "{:?}",
+                        actual_type
+                    ),
+                }
+            );
+        }
+    }
+
+    // Make sure required fields were supplied.
+    for field_name in definition.fields.keys() {
+        if !fields
+            .iter()
+            .any(|(name, _)| name == field_name)
+        {
+            return Err(
+                FusionError::UnknownVariable(
+                    format!(
+                        "Missing field '{}' in struct '{}'",
+                        field_name,
+                        name
+                    )
+                )
+            );
+        }
+    }
+
+    Ok(Type::Struct(name.clone()))
+}
     Expression::Binary {
         left,
         operator,
@@ -295,6 +400,7 @@ Expression::Unary {
 Expression::Call {
     name,
     arguments,
+    ..
 } => {
     let function =
         match self.environment.functions.get(name)
@@ -385,8 +491,42 @@ Expression::Index {
             )
     }
 }
-Expression::Property {object: _,name: _,} => {
-    Err(FusionError::UnknownVariable("property access not implemented".into()))
+    Expression::Property { object, name } => {
+    let object_type = self.infer_expression(object)?;
+
+    match object_type {
+        Type::Struct(struct_name) => {
+            let definition =
+                self.environment.structs
+                    .get(&struct_name)
+                    .ok_or_else(|| {
+                        FusionError::UnknownVariable(
+                            struct_name.clone()
+                        )
+                    })?;
+
+            match definition.fields.get(name) {
+                Some(field_type) => Ok(field_type.clone()),
+
+                None => Err(
+                    FusionError::UnknownVariable(
+                        format!(
+                            "Unknown field '{}' on struct '{}'",
+                            name,
+                            struct_name
+                        )
+                    )
+                ),
+            }
+        }
+
+        other => {
+            Err(FusionError::TypeMismatch {
+                expected: "struct".into(),
+                found: format!("{:?}", other),
+            })
+        }
+    }
 }
 Expression::MethodCall {object: _,method: _,arguments: _,} => {
     Err(FusionError::UnknownVariable("method call not implemented".into()))
@@ -401,43 +541,95 @@ pub fn check_statement(&mut self,statement:&Statement)
     {
         match statement {
             Statement::Assignment {
-                name,
-                declared_type,
-                value
-                }=>{
-                let inferred =
-                self.infer_expression(value)?;
-                let final_type =
-                match declared_type {
-    Some(type_name) => {
-        let declared =
-        self.convert_type(type_name)?;
-        if declared != inferred {
-            return Err(
-                FusionError::TypeMismatch {
-                    expected:
-                    format!("{:?}", declared),
-                    found:
-                    format!("{:?}", inferred),
-                }
-            );
-        }
-        declared
-    }
-    None => inferred,
-};
-    if let Some(old_type) = self.lookup_variable(name) {
-    if old_type != final_type {
-        return Err(
-            FusionError::TypeMismatch {
-                expected: format!("{:?}", old_type),
-                found: format!("{:?}", final_type),
+    target,
+    value,
+} => {
+    let inferred = self.infer_expression(value)?;
+
+    match target {
+        Expression::Identifier(name) => {
+            let info = self
+                .lookup_variable_info(name)
+                .ok_or_else(|| {
+                    FusionError::UnknownVariable(name.clone())
+                })?;
+
+            if !info.mutable {
+                return Err(
+                    FusionError::CannotAssignToConst(name.clone())
+                );
             }
-        );
+
+            if info.ty != inferred {
+                return Err(
+                    FusionError::TypeMismatch {
+                        expected: format!("{:?}", info.ty),
+                        found: format!("{:?}", inferred),
+                    }
+                );
+            }
+
+            Ok(())
+        }
+
+        Expression::Property { object, name } => {
+            let object_type =
+                self.infer_expression(object)?;
+
+            match object_type {
+                Type::Struct(struct_name) => {
+                    let definition = self
+                        .environment
+                        .structs
+                        .get(&struct_name)
+                        .ok_or_else(|| {
+                            FusionError::UnknownVariable(
+                                struct_name.clone()
+                            )
+                        })?;
+
+                    let field_type = definition
+                        .fields
+                        .get(name)
+                        .ok_or_else(|| {
+                            FusionError::UnknownVariable(
+                                format!(
+                                    "Unknown field '{}' on struct '{}'",
+                                    name,
+                                    struct_name
+                                )
+                            )
+                        })?;
+
+                    if *field_type != inferred {
+                        return Err(
+                            FusionError::TypeMismatch {
+                                expected:
+                                    format!("{:?}", field_type),
+                                found:
+                                    format!("{:?}", inferred),
+                            }
+                        );
+                    }
+
+                    Ok(())
+                }
+
+                other => {
+                    Err(FusionError::TypeMismatch {
+                        expected: "struct".into(),
+                        found: format!("{:?}", other),
+                    })
+                }
+            }
+        }
+
+        _ => {
+            Err(FusionError::UnknownVariable(
+                "invalid assignment target".into()
+            ))
+        }
     }
-}
-self.declare_variable(name.clone(),final_type,);
-Ok(())
 }
 Statement::Call(expression) => {
     self.infer_expression(expression)?;
@@ -463,6 +655,22 @@ if let Some(else_statements) = else_body {
     }
 }
 Ok(())
+}
+Statement::ConstDeclaration {
+    name,
+    value,
+    ..
+} => {
+    let inferred =
+        self.infer_expression(value)?;
+
+    self.declare_variable(
+        name.clone(),
+        inferred,
+        false,
+    );
+
+    Ok(())
 }
 Statement::Return(expression) => {
     let actual =
@@ -501,6 +709,25 @@ Statement::Return(expression) => {
     }
     Ok(())
 }
+    Statement::While {
+    condition,
+    body,
+} => {
+    let condition_type =
+        self.infer_expression(condition)?;
+
+    self.require_bool(condition_type)?;
+
+    self.push_scope();
+
+    for statement in body {
+        self.check_statement(statement)?;
+    }
+
+    self.pop_scope();
+
+    Ok(())
+}
 Statement::For {
     variable,
     start,
@@ -524,7 +751,8 @@ Statement::For {
     self.push_scope();
     self.declare_variable(
         variable.clone(),
-        Type::Num,);
+        Type::Num,
+      true,);
     for statement in body {
         self.check_statement(statement)?;
     }
@@ -592,6 +820,7 @@ pub fn check(
                     self.declare_variable(
                     parameter.name.clone(),
                     ty,
+                    true,
                     );
                 }
                 let old_function = self.current_function.take();
