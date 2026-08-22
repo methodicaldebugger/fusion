@@ -12,6 +12,13 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone)]
+pub struct VariableDeclaration {
+    pub name: String,
+    pub declared_type: Option<String>,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone)]
 pub struct StructField {
     pub name: String,
     pub type_name: String,
@@ -54,16 +61,14 @@ pub enum Pattern {
 #[derive(Debug, Clone)]
 pub enum Statement {
 
-    VariableDeclaration {
-    name: String,
-    declared_type: Option<String>,
-    value: Expression,
+    VariableDeclarations {
+        declarations: Vec<VariableDeclaration>,
     },
 
     ConstDeclaration {
-    name: String,
-    declared_type: Option<String>,
-    value: Expression,
+        name: String,
+        declared_type: Option<String>,
+        value: Expression,
     },
 
     Assignment {

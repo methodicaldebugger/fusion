@@ -442,38 +442,122 @@ impl Parser { // contains many functions for parsing different constructs in the
         Token::Identifier(first_name) => {
     let first_name = first_name.clone();
 
-    // Type declaration:
-    // Person person = ...
-    // num age = ...
+    // ---------------------------------------------------------
+    // Typed variable declaration
+    //
+    // Examples:
+    //
+    // num i = 0
+    // num i, j, m = 0, 0, 0
+    // float x, y = 1.0, 2.0
+    // bool a, b = true, false
+    // string x, y = "hello", "world"
+    // Player p1, p2 = player1, player2
+    //
+    // Any identifier can be used as the type, so custom types
+    // work automatically.
+    // ---------------------------------------------------------
+
     if let Some(Token::Identifier(_)) =
         self.tokens.get(self.position + 1)
     {
-        if matches!(
-            self.tokens.get(self.position + 2),
-            Some(Token::Equal)
-        ) {
-            self.advance(); // type
+        let mut lookahead = self.position + 1;
 
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
+        // Collect variable names:
+        //
+        // num i, j, m
+        //
+        // We start after the type name.
+        let mut names = Vec::new();
+
+        if let Some(Token::Identifier(name)) =
+            self.tokens.get(lookahead)
+        {
+            names.push(name.clone());
+            lookahead += 1;
+
+            while matches!(
+                self.tokens.get(lookahead),
+                Some(Token::Comma)
+            ) {
+                lookahead += 1;
+
+                match self.tokens.get(lookahead) {
+                    Some(Token::Identifier(name)) => {
+                        names.push(name.clone());
+                        lookahead += 1;
+                    }
+
+                    _ => return None,
                 }
-                _ => return None,
-            };
+            }
 
-            self.advance(); // '='
+            // We only have a declaration if the names are
+            // followed by '='.
+            if matches!(
+                self.tokens.get(lookahead),
+                Some(Token::Equal)
+            ) {
+                // Move parser position to the first variable.
+                self.advance();
 
-            let value = self.parse_expression()?;
+                // Consume all variable names.
+                for _ in 0..names.len() {
+                    self.advance();
 
-            return Some(Statement::VariableDeclaration {
-                name,
-                declared_type: Some(first_name),
-                value,
-            });
+                    if self.current() == &Token::Comma {
+                        self.advance();
+                    }
+                }
+
+                // Consume '='.
+                if !self.consume(&Token::Equal) {
+                    return None;
+                }
+
+                // Parse all initializer expressions.
+                let mut values = Vec::new();
+
+                loop {
+                    let value = self.parse_expression()?;
+                    values.push(value);
+
+                    if self.current() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Number of variables must match number of values.
+                if names.len() != values.len() {
+                    return None;
+                }
+
+                let declarations = names
+                    .into_iter()
+                    .zip(values.into_iter())
+                    .map(|(name, value)| {
+                        VariableDeclaration {
+                            name,
+                            declared_type: Some(first_name.clone()),
+                            value,
+                        }
+                    })
+                    .collect();
+
+                return Some(
+                    Statement::VariableDeclarations {
+                        declarations,
+                    }
+                );
+            }
         }
     }
+
+    // ---------------------------------------------------------
+    // Normal expression / assignment
+    // ---------------------------------------------------------
 
     let expression = self.parse_expression()?;
 

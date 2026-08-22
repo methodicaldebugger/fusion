@@ -15,10 +15,7 @@ use interpreter::*;
 fn main() {
     println!("Fusion Compiler 0.1");
 let source = r#"
-nums = [1, 2, 3]
-nums.push(4)
-nums.push(5)
-
+string a, b = "hello", 42
 "#;
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize()

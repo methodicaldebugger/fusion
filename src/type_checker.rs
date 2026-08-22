@@ -749,38 +749,36 @@ Statement::Call(expression) => {
     Ok(())
 }
 
-    Statement::VariableDeclaration {
-    name,
-    declared_type,
-    value,
-} => {
-    let inferred = self.infer_expression(value)?;
+    Statement::VariableDeclarations { declarations } => {
+    for declaration in declarations {
+        let inferred = self.infer_expression(&declaration.value)?;
 
-    let ty = match declared_type {
-        Some(type_name) => {
-            let declared =
-                self.convert_type(type_name)?;
+        let ty = match &declaration.declared_type {
+            Some(type_name) => {
+                let declared =
+                    self.convert_type(type_name)?;
 
-            if declared != inferred {
-                return Err(
-                    FusionError::TypeMismatch {
-                        expected: format!("{:?}", declared),
-                        found: format!("{:?}", inferred),
-                    }
-                );
+                if declared != inferred {
+                    return Err(
+                        FusionError::TypeMismatch {
+                            expected: format!("{:?}", declared),
+                            found: format!("{:?}", inferred),
+                        }
+                    );
+                }
+
+                declared
             }
 
-            declared
-        }
+            None => inferred,
+        };
 
-        None => inferred,
-    };
-
-    self.declare_variable(
-    name.clone(),
-    ty,
-    true,
-    )?;
+        self.declare_variable(
+            declaration.name.clone(),
+            ty,
+            true,
+        )?;
+    }
 
     Ok(())
 }

@@ -433,21 +433,19 @@ impl Interpreter { // stores many functions
     statement: &Statement,
     ) -> Flow {
         match statement {
-            Statement::VariableDeclaration {
-                name,
-                declared_type: _,
-                value,
-            } => {
-            let result = self.evaluate(value);
+            Statement::VariableDeclarations { declarations } => {
+    for declaration in declarations {
+        let result = self.evaluate(&declaration.value);
 
-            self.environment.declare(
-                name.clone(),
-                result,
-                true,
-                );
+        self.environment.declare(
+            declaration.name.clone(),
+            result,
+            true,
+        );
+    }
 
-            Flow::Normal
-            }
+    Flow::Normal
+}
         Statement::ConstDeclaration {
             name,
             value,
