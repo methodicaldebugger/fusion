@@ -22,34 +22,52 @@ pub struct Function {
     pub return_type: Option<String>,
     pub body: Vec<Statement>,
 }
-impl Interpreter {
+
+
+
+
+impl Interpreter { // stores many functions
+
+
     fn assign_property(
     &mut self,
     object: &Expression,
     name: &str,
     value: Value,
 ) {
-    let object_value = self.evaluate(object);
+    match object {
+        // Simple case:
+        //
+        // person.age = 31
+        //
+        // We replace the whole struct value stored in `person`.
+        Expression::Identifier(variable_name) => {
+            let object_value = self
+                .environment
+                .get(variable_name)
+                .cloned()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Runtime error: unknown variable '{}'",
+                        variable_name
+                    )
+                });
 
-    match object_value {
-        Value::Struct {
-            name: struct_name,
-            mut fields,
-        } => {
-            if !fields.contains_key(name) {
-                panic!(
-                    "Unknown field '{}' on struct '{}'",
-                    name,
-                    struct_name
-                );
-            }
+            match object_value {
+                Value::Struct {
+                    name: struct_name,
+                    mut fields,
+                } => {
+                    if !fields.contains_key(name) {
+                        panic!(
+                            "Unknown field '{}' on struct '{}'",
+                            name,
+                            struct_name
+                        );
+                    }
 
-            fields.insert(name.to_string(), value);
+                    fields.insert(name.to_string(), value);
 
-            // IMPORTANT:
-            // We need to write the modified struct back to the variable.
-            match object {
-                Expression::Identifier(variable_name) => {
                     if let Err(error) =
                         self.environment.assign(
                             variable_name,
@@ -65,176 +83,321 @@ impl Interpreter {
 
                 _ => {
                     panic!(
-                        "Nested property assignment is not implemented yet"
+                        "Property assignment requires a struct"
+                    );
+                }
+            }
+        }
+
+        // Nested case:
+        //
+        // person.address.city = "London"
+        //
+        // `object` here is:
+        //
+        // person.address
+        //
+        // We first evaluate that struct, modify it,
+        // then recursively assign the modified struct
+        // back into its parent.
+        Expression::Property {
+            object: parent,
+            name: parent_field,
+        } => {
+            let object_value = self.evaluate(object);
+
+            match object_value {
+                Value::Struct {
+                    name: struct_name,
+                    mut fields,
+                } => {
+                    if !fields.contains_key(name) {
+                        panic!(
+                            "Unknown field '{}' on struct '{}'",
+                            name,
+                            struct_name
+                        );
+                    }
+
+                    fields.insert(
+                        name.to_string(),
+                        value,
+                    );
+
+                    self.assign_property(
+                        parent,
+                        parent_field,
+                        Value::Struct {
+                            name: struct_name,
+                            fields,
+                        },
+                    );
+                }
+
+                _ => {
+                    panic!(
+                        "Property assignment requires a struct"
                     );
                 }
             }
         }
 
         _ => {
-            panic!("Property assignment requires a struct");
+            panic!(
+                "Invalid property assignment target"
+            );
         }
     }
 }
+
+
+
+
+    fn check_parameter_type(
+        &self,
+        function_name: &str,
+        parameter: &Parameter,
+        value: &Value,
+        ) {
+            let Some(expected) = &parameter.type_name else {
+                return;
+            };
+
+        let valid = match expected.as_str() {
+            "num" => matches!(value, Value::Number(_)),
+            "float" => matches!(value, Value::Float(_)),
+            "string" => matches!(value, Value::String(_)),
+            "bool" => matches!(value, Value::Boolean(_)),
+
+            struct_name => {
+                match value {
+                    Value::Struct { name, .. } => {
+                        name == struct_name
+                }
+                    _ => false,
+                }
+            }
+        };
+
+        if !valid {
+            panic!(
+                "Function '{}' parameter '{}' expects {}, got {:?}",
+                function_name,
+                parameter.name,
+                expected,
+                value
+            );
+        }
+    }
+
+
+
 
     fn call_function(
     &mut self,
     name: &str,
     arguments: &[Expression],
-) -> Value {
-    // Built-in functions
-    match name {
-        "print" => {
-            for argument in arguments {
-                let value = self.evaluate(argument);
-                println!("{}", value);
-            }
-            return Value::None;
-        }
-        _ => {}
-    }
-    // User-defined functions
-    let function = match self.functions.get(name) {
-        Some(f) => f.clone(),
-        None => {
-            panic!("Unknown function '{}'", name);
-        }
-    };
-    if function.return_type.is_some()
-    && !self.function_has_return(&function.body)
-    {
-        panic!(
-            "Function '{}' expects a return value but has no return statement",
-            name
-        );
-    }
-    let values: Vec<Value> = arguments
-        .iter()
-        .map(|argument| 
-        self.evaluate(argument))
-        .collect();
-        self.environment.push_scope();
-        for (parameter, value) 
-            in function.parameters.iter()
-            .zip(values.iter())
-        {
-            self.environment.set(
-                parameter.name.clone(),
-                value.clone(),
-            );
-        }
-    for statement in &function.body {
-    match self.execute_statement(statement) {
-        Flow::Return(value) => {
-    self.check_return_type(
-        &function.return_type,
-        &value,
-    );
-    self.environment.pop_scope();
-    return value;
-}
-        Flow::Break => {
-            panic!("break outside loop");
-        }
-        Flow::Continue => {
-            panic!("continue outside loop");
-        }
-        Flow::Normal => {}
-    }
-}
-    self.environment.pop_scope();
-if function.return_type.is_some() {
-    panic!("Function '{}' expected a return value", name);
-}
-Value::None
-}
-    fn function_has_return(
-    &self,
-    statements: &[Statement],
-) -> bool {
-    for statement in statements {
-        match statement {
-            Statement::Return(_) => {
-                return true;
-            }
-            Statement::If {
-                body,
-                else_body,
-                ..
-            } => {
-                let if_returns =
-                    self.function_has_return(body);
-                let else_returns =
-                    match else_body {
-                        Some(body) =>
-                            self.function_has_return(body),
-                        None => false,
-                    };
-                if if_returns && else_returns {
-                    return true;
+    ) -> Value {
+        // Built-in functions
+        match name {
+            "print" => {
+                for argument in arguments {
+                    let value = self.evaluate(argument);
+                    println!("{}", value);
                 }
+                return Value::None;
             }
             _ => {}
         }
-    }
-    false
-}
-    pub fn new() -> Self {
-    Self {
-        environment: Environment::new(),
-        functions: HashMap::new(),
-        structs: HashMap::new(),
-        loop_depth: 0,
-    }
-}
-    pub fn execute(&mut self, program:&Program) {
-    // Pass 1: register functions
-    // Register structs
-for statement in &program.statements {
-    if let Statement::Struct {
-        name,
-        fields,
-    } = statement
-    {
-        let mut field_map = HashMap::new();
 
-        for field in fields {
-            let field_type = match field.type_name.as_str() {
-                "num" => crate::types::Type::Num,
-                "float" => crate::types::Type::Float,
-                "bool" => crate::types::Type::Bool,
-                "string" => crate::types::Type::String,
-                other => crate::types::Type::Struct(other.to_string()),
-            };
+        // User-defined function
+        let function = match self.functions.get(name) {
+            Some(f) => f.clone(),
+            None => {
+                panic!("Unknown function '{}'", name);
+            }
+        };
 
-            field_map.insert(field.name.clone(), field_type);
+        // Check argument count.
+        if arguments.len() != function.parameters.len() {
+            panic!(
+                "Function '{}' expects {} arguments, got {}",
+                name,
+                function.parameters.len(),
+                arguments.len()
+            );
         }
 
-        self.structs.insert(
-            name.clone(),
-            StructDefinition {
-                fields: field_map,
-            },
-        );
+        // Evaluate arguments.
+        let values: Vec<Value> = arguments
+            .iter()
+            .map(|argument| self.evaluate(argument))
+            .collect();
+
+        // Check parameter types.
+            for (parameter, value) in
+                function.parameters.iter().zip(values.iter())
+            {
+                self.check_parameter_type(
+                    name,
+                    parameter,
+                    value,
+            );
+        }
+
+        // Create function scope.
+        self.environment.push_scope();
+
+        // Bind parameters.
+        for (parameter, value) in
+            function.parameters.iter().zip(values.iter())
+        {
+            self.environment.declare(
+                parameter.name.clone(),
+                value.clone(),
+                true,
+            );
+        }
+
+        // Execute body.
+        for statement in &function.body {
+            match self.execute_statement(statement) {
+                Flow::Return(value) => {
+                    self.check_return_type(
+                        name,
+                        &function.return_type,
+                        &value,
+                    );
+                    self.environment.pop_scope();
+                    return value;
+                }
+                Flow::Break => {
+                    self.environment.pop_scope();
+                    panic!(
+                        "break outside loop in function '{}'",
+                        name
+                    );
+                }
+                Flow::Continue => {
+                    self.environment.pop_scope();
+                    panic!(
+                        "continue outside loop in function '{}'",
+                        name
+                    );
+                }
+                Flow::Normal => {}
+            }
+        }
+
+        // Function reached its end.
+        self.environment.pop_scope();
+
+        if function.return_type.is_some() {
+            panic!(
+                "Function '{}' expected a return value",
+                name
+            );
+        }
+        Value::None
     }
-}
-for statement in &program.statements {
-    if let Statement::Function {
-    name,
-    parameters,
-    body,
-    return_type,
-    ..
-} = statement {
-    self.functions.insert(
-        name.clone(),
-        Function {
-            parameters: parameters.clone(),
-            return_type: return_type.clone(),
-            body: body.clone(),
-        },
-    );
-}
+
+
+
+    fn function_has_return(
+        &self,
+        statements: &[Statement],
+        ) -> bool {
+            for statement in statements {
+                match statement {
+                    Statement::Return(_) => {
+                        return true;
+                    }
+                Statement::If {
+                    body,
+                    else_body,
+                    ..
+                } => {
+                    let if_returns =
+                        self.function_has_return(body);
+                    let else_returns =
+                        match else_body {
+                            Some(body) =>
+                                self.function_has_return(body),
+                            None => false,
+                        };
+                    if if_returns && else_returns {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+
+
+
+
+    pub fn new() -> Self {
+        Self {
+            environment: Environment::new(),
+            functions: HashMap::new(),
+            structs: HashMap::new(),
+            loop_depth: 0,
+        }
+    }
+
+
+
+    pub fn execute(&mut self, program:&Program) {
+        // Pass 1: register functions
+        // Register structs
+        for statement in &program.statements {
+        if let Statement::Struct {
+            name,
+            fields,
+            } = statement
+        {
+            let mut field_map = HashMap::new();
+
+            for field in fields {
+                let field_type = match field.type_name.as_str() {
+                    "num" => crate::types::Type::Num,
+                    "float" => crate::types::Type::Float,
+                    "bool" => crate::types::Type::Bool,
+                    "string" => crate::types::Type::String,
+                    other => crate::types::Type::Struct(other.to_string()),
+                };
+
+                field_map.insert(field.name.clone(), field_type);
+            }
+
+            self.structs.insert(
+                name.clone(),
+                StructDefinition {
+                    fields: field_map,
+                },
+            );
+        }
+    }
+    for statement in &program.statements {
+        if let Statement::Function {
+            name,
+            parameters,
+            body,
+            return_type,
+            ..
+            } = statement {
+                self.functions.insert(
+                name.clone(),
+                Function {
+                    parameters: parameters.clone(),
+                    return_type: return_type.clone(),
+                    body: body.clone(),
+                },
+            );
+        }
     }
     // Pass 2: execute normal code
     for statement in &program.statements {
@@ -244,228 +407,283 @@ for statement in &program.statements {
             }
             _ => {
                 match self.execute_statement(statement) {
-    Flow::Return(value) => {
-        println!("Program returned: {:?}", value);
-        break;
-    }
-    _ => {}
-}
+                    Flow::Return(_) => {
+                        panic!("return outside function");
+                    }
+
+                    Flow::Break => {
+                        panic!("break outside loop");
+                    }
+
+                    Flow::Continue => {
+                        panic!("continue outside loop");
+                    }
+
+                    Flow::Normal => {}
+                    }
+                }
             }
         }
     }
-}
+
+
+
     fn execute_statement(
     &mut self,
     statement: &Statement,
-) -> Flow {
-    match statement {
-        Statement::VariableDeclaration {
-            name,
-            declared_type: _,
-            value,
-        } => {
-    let result = self.evaluate(value);
+    ) -> Flow {
+        match statement {
+            Statement::VariableDeclaration {
+                name,
+                declared_type: _,
+                value,
+            } => {
+            let result = self.evaluate(value);
 
-    self.environment.declare(
-        name.clone(),
-        result,
-        true,
-    );
+            self.environment.declare(
+                name.clone(),
+                result,
+                true,
+                );
 
-    Flow::Normal
-}
-Statement::ConstDeclaration {
-    name,
-    value,
-    ..
-} => {
-    let result = self.evaluate(value);
-
-    self.environment.declare(
-        name.clone(),
-        result,
-        false,
-    );
-
-    Flow::Normal
-}
-Statement::Expression(expr) => {
-    self.evaluate(expr);
-    Flow::Normal
-}
-        Statement::Break => {
-    if self.loop_depth == 0 {
-        panic!("break outside loop");
-    }
-    Flow::Break
-}
-Statement::Continue => {
-    if self.loop_depth == 0 {
-        panic!("continue outside loop");
-    }
-    Flow::Continue
-}
-        Statement::Assignment {
-    target,
-    value,
-} => {
-    let result = self.evaluate(value);
-
-    match target {
-        Expression::Identifier(name) => {
-            if let Err(error) = self.environment.assign(name, result) {
-                panic!("{}", error);
+            Flow::Normal
             }
-        }
+        Statement::ConstDeclaration {
+            name,
+            value,
+            ..
+            } => {
+            let result = self.evaluate(value);
 
-        Expression::Property { object, name } => {
-            self.assign_property(object, name, result);
-        }
+            self.environment.declare(
+                name.clone(),
+                result,
+                false,
+                );
 
-        _ => {
-            panic!("Invalid assignment target");
+            Flow::Normal
+            }
+        Statement::Expression(expr) => {
+            self.evaluate(expr);
+            Flow::Normal
+            }
+        Statement::Break => {
+            if self.loop_depth == 0 {
+                panic!("break outside loop");
+            }
+            Flow::Break
+            }
+        Statement::Continue => {
+            if self.loop_depth == 0 {
+                panic!("continue outside loop");
+            }
+        Flow::Continue
         }
-    }
+        Statement::Assignment {
+            target,
+            value,
+            } => {
+            let result = self.evaluate(value);
 
-    Flow::Normal
-}
+            match target {
+                Expression::Identifier(name) => {
+                    if let Err(error) = self.environment.assign(name, result) {
+                        panic!("{}", error);
+                    }
+                }
+
+                Expression::Property { object, name } => {
+                    self.assign_property(object, name, result);
+                }
+
+                _ => {
+                    panic!("Invalid assignment target");
+                }
+            }
+
+            Flow::Normal
+        }
         Statement::Call(expr) => {
             self.evaluate(expr);
             Flow::Normal
         }
-       Statement::Return(expr) => {
+        Statement::Return(expr) => {
             let value = self.evaluate(expr);
             Flow::Return(value)
         }
         Statement::For {
-    variable,
-    start,
-    end,
-    body,
-} => {
-    let start_value = self.evaluate(start);
-    let end_value = self.evaluate(end);
-    let start_number = match start_value {
-        Value::Number(v) => v,
-        _ => panic!("For loop start must be integer"),
-    };
-    let end_number = match end_value {
-        Value::Number(v) => v,
-        _ => panic!("For loop end must be integer"),
-    };
-    self.environment.push_scope();
-    self.loop_depth += 1;
-    for i in start_number..end_number {
-        self.environment.set(
-            variable.clone(),
-            Value::Number(i),
-        );
-        for statement in body {
-    match self.execute_statement(statement) {
-        Flow::Normal => {}
-        Flow::Continue => {
-            break;
-        }
-        Flow::Break => {
-            self.loop_depth -= 1;
-            self.environment.pop_scope();
-            return Flow::Normal;
-        }
-        Flow::Return(value) => {
-            self.loop_depth -= 1;
-            self.environment.pop_scope();
-            return Flow::Return(value);
-        }
-    }
-}
-    }
-    self.loop_depth -= 1;
-    self.environment.pop_scope();
-    Flow::Normal
-}
-        Statement::While {
-    condition,
-    body,
-} => {
-    self.loop_depth += 1;
-    loop {
-        match self.evaluate(condition) {
-            Value::Boolean(true) => {}
-            Value::Boolean(false) => {
-                break;
-            }
-            _ => {
-                panic!("While condition must be boolean");
-            }
-        }
-        for stmt in body {
-            match self.execute_statement(stmt) {
-                Flow::Normal => {}
-                Flow::Continue => {
-                    break;
-                }
+            variable,
+            start,
+            end,
+            body,
+            } => {
+            let start_value = self.evaluate(start);
+            let end_value = self.evaluate(end);
+            let start_number = match start_value {
+                Value::Number(v) => v,
+                _ => panic!("For loop start must be integer"),
+            };
+            let end_number = match end_value {
+                Value::Number(v) => v,
+                _ => panic!("For loop end must be integer"),
+            };
+        self.environment.push_scope();
+        self.loop_depth += 1;
+        for i in start_number..end_number {
+            self.environment.set(
+                variable.clone(),
+                Value::Number(i),
+                );
+            for statement in body {
+                match self.execute_statement(statement) {
+                    Flow::Normal => {}
+                    Flow::Continue => {
+                        break;
+                    }
                 Flow::Break => {
                     self.loop_depth -= 1;
+                    self.environment.pop_scope();
                     return Flow::Normal;
                 }
                 Flow::Return(value) => {
                     self.loop_depth -= 1;
+                    self.environment.pop_scope();
                     return Flow::Return(value);
                 }
             }
         }
     }
     self.loop_depth -= 1;
+    self.environment.pop_scope();
     Flow::Normal
 }
-        Statement::If {
-            condition,
-            body,
-            else_body,
+    Statement::While {
+        condition,
+        body,
         } => {
-    let value = self.evaluate(condition);
-    let statements = match value {
-    Value::Boolean(true) =>
-        Some(body),
-    Value::Boolean(false) =>
-        else_body.as_ref(),
-    _ =>
-        None,
-};
-    if let Some(statements) = statements {
-        for stmt in statements {
-            match self.execute_statement(stmt) {
-    Flow::Normal => {}
-    other => {
-        return other;
+            self.environment.push_scope();
+            self.loop_depth += 1;
+
+            loop {
+                match self.evaluate(condition) {
+                    Value::Boolean(true) => {}
+
+                    Value::Boolean(false) => {
+                        break;
+                    }
+
+                    _ => {
+                        self.loop_depth -= 1;
+                        self.environment.pop_scope();
+                        panic!("While condition must be boolean");
+                    }
+                }
+
+            for stmt in body {
+                match self.execute_statement(stmt) {
+                    Flow::Normal => {}
+
+                    Flow::Continue => {
+                        break;
+                    }
+
+                    Flow::Break => {
+                        self.loop_depth -= 1;
+                        self.environment.pop_scope();
+                        return Flow::Normal;
+                    }
+
+                    Flow::Return(value) => {
+                        self.loop_depth -= 1;
+                        self.environment.pop_scope();
+                        return Flow::Return(value);
+                    }
+                }
+            }
+        }
+
+        self.loop_depth -= 1;
+        self.environment.pop_scope();
+
+        Flow::Normal
     }
-}
+    
+    Statement::If {
+        condition,
+        body,
+        else_body,
+    } => {
+    let value = self.evaluate(condition);
+
+    match value {
+        Value::Boolean(true) => {
+            self.environment.push_scope();
+
+            for stmt in body {
+                match self.execute_statement(stmt) {
+                    Flow::Normal => {}
+                    other => {
+                        self.environment.pop_scope();
+                        return other;
+                    }
+                }
+            }
+
+            self.environment.pop_scope();
+        }
+
+        Value::Boolean(false) => {
+            if let Some(else_statements) = else_body {
+                self.environment.push_scope();
+
+                for stmt in else_statements {
+                    match self.execute_statement(stmt) {
+                        Flow::Normal => {}
+                        other => {
+                            self.environment.pop_scope();
+                            return other;
+                        }
+                    }
+                }
+
+                self.environment.pop_scope();
+            }
+        }
+
+        _ => {
+            panic!("If condition must be boolean");
         }
     }
+
     Flow::Normal
-}
-        Statement::Function {
-    name,
-    parameters,
-    body,
-    return_type,
-    ..
-} => {
-            self.functions.insert(
-                name.clone(),
-                Function {
-    parameters: parameters.clone(),
-    return_type: return_type.clone(),
-    body: body.clone(),
-}
+    }
+    Statement::Function {
+        name,
+        parameters,
+        body,
+        return_type,
+        ..
+        } => {
+        self.functions.insert(
+            name.clone(),
+            Function {
+                parameters: parameters.clone(),
+                return_type: return_type.clone(),
+                body: body.clone(),
+                }
             );
             Flow::Normal
-        }
+            }
         _ => {
             Flow::Normal
+            }
         }
     }
-}
+
+
+
+
+
     fn evaluate(&mut self, expr: &Expression) -> Value {
         match expr {
             Expression::Number(v) => Value::Number(*v),
@@ -606,29 +824,54 @@ Expression::Index {
             }
         }
     }
+
+
+
+
+
+
     fn check_return_type(
     &self,
+    function_name: &str,
     expected: &Option<String>,
     value: &Value,
 ) {
     let Some(expected) = expected else {
         return;
     };
+
     let valid = match expected.as_str() {
         "num" => matches!(value, Value::Number(_)),
         "float" => matches!(value, Value::Float(_)),
         "string" => matches!(value, Value::String(_)),
         "bool" => matches!(value, Value::Boolean(_)),
-        _ => true,
+
+        struct_name => {
+            match value {
+                Value::Struct { name, .. } => {
+                    name == struct_name
+                }
+
+                _ => false,
+            }
+        }
     };
+
     if !valid {
         panic!(
-            "Return type error: expected {}, got {:?}",
+            "Function '{}' return type error: expected {}, got {:?}",
+            function_name,
             expected,
             value
         );
     }
 }
+   
+
+
+
+
+
     fn evaluate_binary(
     &self,
     left: Value,
@@ -713,4 +956,7 @@ Expression::Index {
         _ => Value::None,
     }
 }
+
+
+
 }

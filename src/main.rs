@@ -15,8 +15,17 @@ use interpreter::*;
 fn main() {
     println!("Fusion Compiler 0.1");
 let source = r#"
-fn add(a:num,b:num)->num:
-    return a+b
+struct Person {
+    name: string,
+    age: num,
+}
+
+Person person = Person {
+    name: 123,
+    age: 30,
+}
+
+
 "#;
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize()

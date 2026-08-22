@@ -164,7 +164,6 @@ impl Parser { // contains many functions for parsing different constructs in the
             }
 
         if let Some(statement) = self.parse_statement() {
-            println!("BLOCK FOUND: {:?}", statement);
             statements.push(statement);
         } else {
             panic!(
@@ -196,7 +195,6 @@ impl Parser { // contains many functions for parsing different constructs in the
                 continue;
             }
         if let Some(statement) = self.parse_statement() {
-            println!("BRACE BLOCK FOUND: {:?}", statement);
             statements.push(statement);
         } else {
             panic!(
@@ -206,7 +204,7 @@ impl Parser { // contains many functions for parsing different constructs in the
             }
         }
         if !self.consume(&Token::RightBrace) {
-            panic!("Expected '}}' at end of block");
+            panic!("{}", "Expected '}' at end of block");
         }
     statements
     }
@@ -295,7 +293,6 @@ impl Parser { // contains many functions for parsing different constructs in the
             return None;
         }
         let mut parameters = Vec::new();
-        println!("START PARAM PARSE");
         while self.current() != &Token::RightParen
             && self.current() != &Token::Eof
         {
@@ -340,8 +337,6 @@ impl Parser { // contains many functions for parsing different constructs in the
             self.advance();
         }
         let body = self.parse_block();
-        println!("FUNCTION NAME: {}", name);
-        println!("FUNCTION BODY: {:?}", body);
         Some(Statement::Function {
             name,generic_parameters: Vec::new(),parameters,return_type,body,
         })
@@ -445,54 +440,56 @@ impl Parser { // contains many functions for parsing different constructs in the
             Some(Statement::Return(value))
         }
         Token::Identifier(first_name) => {
-            let first_name = first_name.clone();
-            let next = self.tokens.get(self.position + 1);
-            match next {
-                Some(Token::Equal) => {
-                    self.advance(); // identifier
-                    self.advance(); // '='
-                    let value = self.parse_expression()?;
-                    Some(Statement::Assignment {
-                    target: Expression::Identifier(first_name),
-                    value,
-                    })
-                }
-                Some(Token::LeftParen) => {
-                    let expression = self.parse_expression()?;
-                    Some(Statement::Call(expression))
-                }
-                Some(Token::Identifier(_))
-    if Parser::is_type_name(&first_name) =>
-{
-    self.advance(); // type
+    let first_name = first_name.clone();
 
-    let name = match self.current() {
-        Token::Identifier(name) => {
-            let n = name.clone();
-            self.advance();
-            n
+    // Type declaration:
+    // Person person = ...
+    // num age = ...
+    if let Some(Token::Identifier(_)) =
+        self.tokens.get(self.position + 1)
+    {
+        if matches!(
+            self.tokens.get(self.position + 2),
+            Some(Token::Equal)
+        ) {
+            self.advance(); // type
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+                _ => return None,
+            };
+
+            self.advance(); // '='
+
+            let value = self.parse_expression()?;
+
+            return Some(Statement::VariableDeclaration {
+                name,
+                declared_type: Some(first_name),
+                value,
+            });
         }
-        _ => return None,
-    };
-
-    if !self.consume(&Token::Equal) {
-        return None;
     }
 
-    let value = self.parse_expression()?;
+    let expression = self.parse_expression()?;
 
-    Some(Statement::VariableDeclaration {
-        name,
-        declared_type: Some(first_name),
-        value,
-    })
+    if self.current() == &Token::Equal {
+        self.advance();
+
+        let value = self.parse_expression()?;
+
+        Some(Statement::Assignment {
+            target: expression,
+            value,
+        })
+    } else {
+        Some(Statement::Expression(expression))
+    }
 }
-                _ => {
-                    let expression = self.parse_expression()?;
-                    Some(Statement::Expression(expression))
-                }
-            }
-        }
         _ => None,
     }
 }
