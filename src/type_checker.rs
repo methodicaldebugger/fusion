@@ -575,12 +575,88 @@ Expression::Index {
     self.lookup_property_type(object, name)
 }
 
+    Expression::MethodCall {
+    object,
+    method,
+    arguments,
+} => {
+    let object_type = self.infer_expression(object)?;
 
+    match object_type {
+        Type::Array(element_type) => {
+            match method.as_str() {
+                "push" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::TypeMismatch {
+                            expected: "1 argument".into(),
+                            found: format!(
+                                "{} arguments",
+                                arguments.len()
+                            ),
+                        });
+                    }
 
+                    let argument_type =
+                        self.infer_expression(&arguments[0])?;
 
-Expression::MethodCall {object: _,method: _,arguments: _,} => {
-    Err(FusionError::UnknownVariable("method call not implemented".into()))
+                    if *element_type != Type::Unknown
+                        && argument_type != *element_type
+                    {
+                        return Err(FusionError::TypeMismatch {
+                            expected: format!("{:?}", element_type),
+                            found: format!("{:?}", argument_type),
+                        });
+                    }
+
+                    Ok(Type::Void)
+                }
+
+                "pop" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::TypeMismatch {
+                            expected: "0 arguments".into(),
+                            found: format!(
+                                "{} arguments",
+                                arguments.len()
+                            ),
+                        });
+                    }
+
+                    Ok(*element_type)
+                }
+
+                "length" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::TypeMismatch {
+                            expected: "0 arguments".into(),
+                            found: format!(
+                                "{} arguments",
+                                arguments.len()
+                            ),
+                        });
+                    }
+
+                    Ok(Type::Num)
+                }
+
+                _ => {
+                    Err(FusionError::UnknownVariable(format!(
+                        "Unknown array method '{}'",
+                        method
+                    )))
+                }
+            }
+        }
+
+        other => {
+            Err(FusionError::TypeMismatch {
+                expected: "array".into(),
+                found: format!("{:?}", other),
+            })
+        }
+    }
 }
+
 }
 }
 
@@ -603,12 +679,8 @@ pub fn check_statement(&mut self,statement:&Statement)
 
     match target {
         Expression::Identifier(name) => {
-            let info = self
-                .lookup_variable_info(name)
-                .ok_or_else(|| {
-                    FusionError::UnknownVariable(name.clone())
-                })?;
-
+    match self.lookup_variable_info(name) {
+        Some(info) => {
             if !info.mutable {
                 return Err(
                     FusionError::CannotAssignToConst(name.clone())
@@ -626,6 +698,18 @@ pub fn check_statement(&mut self,statement:&Statement)
 
             Ok(())
         }
+
+        None => {
+            self.declare_variable(
+                name.clone(),
+                inferred,
+                true,
+            )?;
+
+            Ok(())
+        }
+    }
+}
 
         Expression::Property { object, name } => {
     // The root variable of the entire property chain
@@ -869,6 +953,11 @@ Statement::For {
     self.pop_scope();
     Ok(())
 }
+Statement::Expression(expression) => {
+    self.infer_expression(expression)?;
+    Ok(())
+}
+
 _ => Ok(())
 
 }

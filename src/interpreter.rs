@@ -480,29 +480,39 @@ impl Interpreter { // stores many functions
         Flow::Continue
         }
         Statement::Assignment {
-            target,
-            value,
-            } => {
-            let result = self.evaluate(value);
+    target,
+    value,
+} => {
+    let result = self.evaluate(value);
 
-            match target {
-                Expression::Identifier(name) => {
-                    if let Err(error) = self.environment.assign(name, result) {
-                        panic!("{}", error);
-                    }
+    match target {
+        Expression::Identifier(name) => {
+            if self.environment.get(name).is_some() {
+                if let Err(error) =
+                    self.environment.assign(name, result)
+                {
+                    panic!("{}", error);
                 }
-
-                Expression::Property { object, name } => {
-                    self.assign_property(object, name, result);
-                }
-
-                _ => {
-                    panic!("Invalid assignment target");
-                }
+            } else {
+                self.environment.declare(
+                    name.clone(),
+                    result,
+                    true,
+                );
             }
-
-            Flow::Normal
         }
+
+        Expression::Property { object, name } => {
+            self.assign_property(object, name, result);
+        }
+
+        _ => {
+            panic!("Invalid assignment target");
+        }
+    }
+
+    Flow::Normal
+}
         Statement::Call(expr) => {
             self.evaluate(expr);
             Flow::Normal
@@ -811,17 +821,99 @@ Expression::Index {
     }
 }
             Expression::MethodCall {
-                object,
-                method,
-                arguments,
-            } => {
-                panic!(
-                    "Method call not implemented: {:?}.{}({:?})",
-                    object,
-                    method,
-                    arguments
-                );
+    object,
+    method,
+    arguments,
+} => {
+    let object_value = self.evaluate(object);
+
+    match method.as_str() {
+        "push" => {
+            if arguments.len() != 1 {
+                panic!("push() expects exactly 1 argument");
             }
+
+            let value = self.evaluate(&arguments[0]);
+
+            match object_value {
+                Value::Array(mut values) => {
+                    values.push(value);
+
+                    // We need to put the mutated array back
+                    // into the variable it came from.
+                    if let Expression::Identifier(name) = object.as_ref() {
+                        self.environment.assign(
+                            name,
+                            Value::Array(values),
+                        ).unwrap();
+                    } else {
+                        panic!("push() requires an array variable");
+                    }
+
+                    Value::None
+                }
+
+                _ => {
+                    panic!("push() can only be called on an array");
+                }
+            }
+        }
+
+        "pop" => {
+    if !arguments.is_empty() {
+        panic!("pop() expects no arguments");
+    }
+
+    match object.as_ref() {
+        Expression::Identifier(name) => {
+            let array = self
+                .environment
+                .get_mut(name)
+                .expect("Unknown array variable");
+
+            match array {
+                Value::Array(values) => {
+                    values.pop().unwrap_or_else(|| {
+                        panic!("Cannot pop from an empty array")
+                    })
+                }
+
+                _ => {
+                    panic!("pop() can only be called on an array");
+                }
+            }
+        }
+
+        _ => {
+            panic!("pop() requires an array variable");
+        }
+    }
+}
+
+        "length" => {
+            if !arguments.is_empty() {
+                panic!("length() expects no arguments");
+            }
+
+            match object_value {
+                Value::Array(values) => {
+                    Value::Number(values.len() as i64)
+                }
+
+                _ => {
+                    panic!("length() can only be called on an array");
+                }
+            }
+        }
+
+        _ => {
+            panic!(
+                "Unknown method '{}'",
+                method
+            );
+        }
+    }
+}
         }
     }
 

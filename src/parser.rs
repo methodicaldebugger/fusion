@@ -705,39 +705,74 @@ fn parse_unary(&mut self) -> Option<Expression> {
 
 
         Token::LeftParen => {
+    self.advance();
+
+    let expression = self.parse_expression()?;
+
+    if !self.consume(&Token::RightParen) {
+        return None;
+    }
+
+    expression
+}
+
+Token::LeftBracket => {
+    self.advance();
+
+    let mut values = Vec::new();
+
+    while self.current() != &Token::RightBracket
+        && self.current() != &Token::Eof
+    {
+        let value = self.parse_expression()?;
+        values.push(value);
+
+        if self.current() == &Token::Comma {
             self.advance();
-
-            let expression = self.parse_expression()?;
-
-            if !self.consume(&Token::RightParen) {
-                return None;
-            }
-
-            expression
+        } else if self.current() != &Token::RightBracket {
+            return None;
         }
+    }
 
-        _ => return None,
+    if !self.consume(&Token::RightBracket) {
+        return None;
+    }
+
+    Expression::Array(values)
+}
+
+_ => return None,
     };
 
     loop {
         match self.current() {
             Token::Dot => {
-                self.advance();
+    self.advance();
 
-                let name = match self.current() {
-                    Token::Identifier(name) => {
-                        let name = name.clone();
-                        self.advance();
-                        name
-                    }
-                    _ => return None,
-                };
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            name
+        }
+        _ => return None,
+    };
 
-                expression = Expression::Property {
-                    object: Box::new(expression),
-                    name,
-                };
-            }
+    if self.current() == &Token::LeftParen {
+        let arguments = self.parse_arguments()?;
+
+        expression = Expression::MethodCall {
+            object: Box::new(expression),
+            method: name,
+            arguments,
+        };
+    } else {
+        expression = Expression::Property {
+            object: Box::new(expression),
+            name,
+        };
+    }
+}
 
             Token::LeftBracket => {
                 self.advance();

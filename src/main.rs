@@ -15,16 +15,9 @@ use interpreter::*;
 fn main() {
     println!("Fusion Compiler 0.1");
 let source = r#"
-struct Person {
-    name: string,
-    age: num,
-}
-
-Person person = Person {
-    name: 123,
-    age: 30,
-}
-
+nums = [1, 2, 3]
+nums.push(4)
+nums.push(5)
 
 "#;
     let mut lexer = Lexer::new(source);
