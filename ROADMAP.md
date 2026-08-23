@@ -38,18 +38,18 @@ Fusion Roadmap
 [x] Basic interpreter
 
 0.2 — Language Foundation            <-- we are here
-[ ] Type checker improvements
-[ ] Better diagnostics
-[ ] Arrays
+[X] Type checker improvements
+[X] Better diagnostics
+[X] Arrays
 [ ] Functions
 [ ] Modules
 [ ] Standard library foundations
 [ ] Comprehensive tests
 
 0.3 — Core Language
-[ ] Structs
-[ ] Enums
-[ ] Match
+[X] Structs
+[X] Enums
+[X] Match
 [ ] Pattern matching
 [ ] Traits
 [ ] Generics
