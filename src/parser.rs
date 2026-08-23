@@ -774,17 +774,6 @@ let expression = expression?;
 
 
 
-    fn parse_block(&mut self) -> Vec<Statement> {
-        match self.current() {
-            Token::Indent => self.parse_indentation_block(),
-            Token::LeftBrace => self.parse_brace_block(),
-            _ => Vec::new(),
-        }
-    }
-
-
-
-
     fn parse_indentation_block(&mut self) -> Vec<Statement> {
     let mut statements = Vec::new();
 
@@ -889,17 +878,6 @@ let expression = expression?;
             statements,
         }
     }
-
-    fn is_type_token(token: &Token) -> bool {
-    matches!(
-        token,
-        Token::NumType
-            | Token::FloatType
-            | Token::BoolType
-            | Token::StringType
-            | Token::Identifier(_)
-    )
-}
 
 
     fn parse_type(&mut self) -> Option<String> {
