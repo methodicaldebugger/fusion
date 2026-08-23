@@ -20,94 +20,103 @@ pub struct Parser {
     pending_block_styles: Vec<BlockStyle>,
 }
 
-impl Parser { // contains many functions for parsing different constructs in the language
+impl Parser {
 
     fn parse_style_block(&mut self) -> Option<Vec<Statement>> {
-    let style = match self.current() {
-        Token::Colon => {
-            self.advance();
-            BlockStyle::Indentation
-        }
+        let style = match self.current() {
+            Token::Colon => {
+                self.advance();
+                BlockStyle::Indentation
+            }
 
-        Token::LeftBrace => {
-            BlockStyle::Braces
-        }
+            Token::LeftBrace => BlockStyle::Braces,
 
-        _ => return None,
-    };
+            _ => return None,
+        };
 
-    // Once main has established the block style, every
-    // subsequent block must use exactly the same style.
-    if self.seen_main && self.block_style != style {
-        panic!(
-            "Block style mismatch: main uses {:?}, \
-             but this block uses {:?}",
-            self.block_style,
-            style
-        );
-    }
-
-    self.use_block_style(style);
-
-    fn use_block_style(&mut self, style: BlockStyle) {
-    match self.block_style {
-        BlockStyle::Unknown => {
-            // Before main appears, remember the style used by
-            // earlier constructs. main must eventually match it.
-            self.pending_block_styles.push(style);
-        }
-
-        existing if existing != style => {
+        // Once main has established the block style, every
+        // subsequent block must use exactly the same style.
+        if self.seen_main && self.block_style != style {
             panic!(
-                "Block style mismatch: main uses {:?}, \
-                 but this construct uses {:?}",
-                existing,
+                "Block style mismatch: main uses {:?}, but this block uses {:?}",
+                self.block_style,
                 style
             );
         }
 
-        _ => {}
-    }
-}
+        self.use_block_style(style);
 
-fn establish_main_style(&mut self, style: BlockStyle) {
-    if self.seen_main {
-        panic!("Multiple 'main' declarations are not allowed");
-    }
+        match style {
+            BlockStyle::Indentation => {
+                while self.current() == &Token::NewLine {
+                    self.advance();
+                }
 
-    // main establishes the global block style.
-    //
-    // Every block that appeared before main must use
-    // the same style as main.
-    for previous in &self.pending_block_styles {
-        if *previous != style {
-            panic!(
-                "Block style mismatch: main uses {:?}, \
-                 but an earlier construct uses {:?}",
-                style,
-                previous
-            );
+                Some(self.parse_indentation_block())
+            }
+
+            BlockStyle::Braces => {
+                Some(self.parse_brace_block())
+            }
+
+            BlockStyle::Unknown => unreachable!(),
         }
     }
 
-    // main is now the authority for the entire program.
-    self.pending_block_styles.clear();
-    self.block_style = style;
-    self.seen_main = true;
-}
+    fn use_block_style(&mut self, style: BlockStyle) {
+        match self.block_style {
+            BlockStyle::Unknown => {
+                // Before main appears, remember the style used by
+                // earlier constructs. main must eventually match it.
+                self.pending_block_styles.push(style);
+            }
+
+            existing if existing != style => {
+                panic!(
+                    "Block style mismatch: main uses {:?}, but this construct uses {:?}",
+                    existing,
+                    style
+                );
+            }
+
+            _ => {}
+        }
+    }
+
+    fn establish_main_style(&mut self, style: BlockStyle) {
+        if self.seen_main {
+            panic!("Multiple 'main' declarations are not allowed");
+        }
+
+        // main establishes the global block style.
+        //
+        // Every block that appeared before main must use
+        // the same style as main.
+        for previous in &self.pending_block_styles {
+            if *previous != style {
+                panic!(
+                    "Block style mismatch: main uses {:?}, but an earlier construct uses {:?}",
+                    style,
+                    previous
+                );
+            }
+        }
+
+        self.pending_block_styles.clear();
+        self.block_style = style;
+        self.seen_main = true;
+    }
 
     pub fn new(tokens: Vec<Token>) -> Self {
-    Self {
-        tokens,
-        position: 0,
-        allow_struct_constructor: true,
-
-        block_style: BlockStyle::Unknown,
-        seen_main: false,
-        pending_block_styles: Vec::new(),
+        Self {
+            tokens,
+            position: 0,
+            allow_struct_constructor: true,
+            block_style: BlockStyle::Unknown,
+            seen_main: false,
+            pending_block_styles: Vec::new(),
+        }
     }
-}
-
 
 
     fn parse_statement(&mut self) -> Option<Statement> {
@@ -665,10 +674,10 @@ if first == "_" {
         }
 
         Token::Boolean(value) => {
-            let value = *value;
-            self.advance();
-            Some(Pattern::Boolean(value))
-        }
+    let value = value.clone();
+    self.advance();
+    Some(Pattern::Boolean(value))
+}
 
         _ => None,
     }
@@ -1232,13 +1241,13 @@ fn parse_unary(&mut self) -> Option<Expression> {
 }
 
         Token::Num(value) => {
-            let value = *value;
+            let value = value.clone();
             self.advance();
             Expression::Number(value)
         }
 
         Token::Float(value) => {
-            let value = *value;
+            let value = value.clone();
             self.advance();
             Expression::Float(value)
         }
@@ -1250,7 +1259,7 @@ fn parse_unary(&mut self) -> Option<Expression> {
         }
 
         Token::Boolean(value) => {
-            let value = *value;
+            let value = value.clone();
             self.advance();
             Expression::Boolean(value)
         }
