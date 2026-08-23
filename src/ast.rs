@@ -94,6 +94,10 @@ pub enum Statement {
         variants: Vec<EnumVariant>,
     },
 
+    Main {
+        body: Vec<Statement>,
+    },
+
     Trait {
         name: String,
         methods: Vec<TraitMethod>,

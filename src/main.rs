@@ -15,23 +15,11 @@ use interpreter::*;
 fn main() {
     println!("Fusion Compiler 0.1");
 let source = r#"
-enum Result {
-    Ok(num)
-    Error(string)
-}
-
-Result a = Result::Ok(42)
-
-match a {
-    Result::Ok(value) => {
-        print(value)
-    }
-    Result::Error(message) => {
-        print(message)
-    }
-}
+main:
+    num x = 10
+      print(x)
 "#;
-    let mut lexer = Lexer::new(source);
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
     let tokens = lexer.tokenize()
         .expect("Lexer failed");
     println!("TOKENS:");

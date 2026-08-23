@@ -2,7 +2,7 @@
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum BlockMode {
+pub enum BlockMode {
     Unknown,
     Indentation,
     Braces,
@@ -31,8 +31,10 @@ pub enum Token {
     String(String),
     Identifier(String),
     FloatType,
-    Bool,
+    NumType,
+    BoolType,
     StringType,
+    Main,
     Const,
     Fn,
     Return,
@@ -95,102 +97,133 @@ pub struct Lexer {
     line: usize,
     column: usize,
     line_start: bool,
-    at_file_start: bool,
     indentation_stack: Vec<usize>,
     pending_tokens: VecDeque<Token>,
     block_mode: BlockMode,
+    brace_depth: usize,
 }
 
 impl Lexer {
-    fn set_indentation_mode(&mut self) -> Result<(), LexError> {
-    match self.block_mode {
-        BlockMode::Unknown => {
-            self.block_mode = BlockMode::Indentation;
-            Ok(())
+
+    fn detect_block_mode(source: &str) -> BlockMode {
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            continue;
         }
-        BlockMode::Indentation => Ok(()),
-        BlockMode::Braces => Err(LexError {
-            message: "Cannot use indentation blocks after '{' brace syntax was selected for this file".into(),
-            position: self.position,
-            line: self.line,
-            column: self.column,
-        }),
+
+        // Ignore comments.
+        if trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Valid indentation-style main:
+        // main:
+        if trimmed == "main:" {
+            return BlockMode::Indentation;
+        }
+
+        // Valid brace-style main:
+        // main{
+        if trimmed == "main{" {
+            return BlockMode::Braces;
+        }
+
+        // Invalid forms:
+        // main :
+        // main {
+        if trimmed == "main :" || trimmed == "main {" {
+            panic!(
+                "Invalid main declaration: use `main:` or `main{{` without whitespace"
+            );
+        }
+
+        // If this is some other non-comment code, continue looking
+        // for the main declaration.
     }
+
+    panic!("Could not determine block mode: expected `main:` or `main{{`");
 }
 
-fn set_brace_mode(&mut self) -> Result<(), LexError> {
-    match self.block_mode {
-        BlockMode::Unknown => {
-            self.block_mode = BlockMode::Braces;
-            Ok(())
-        }
-        BlockMode::Braces => Ok(()),
-        BlockMode::Indentation => Err(LexError {
-            message: "Cannot use '{' brace blocks after indentation syntax was selected for this file".into(),
-            position: self.position,
-            line: self.line,
-            column: self.column,
-        }),
-    }
-}
+    pub fn new(source: &str, block_mode: BlockMode) -> Self {
+        let detected_mode = match block_mode {
+            BlockMode::Unknown => Self::detect_block_mode(source),
+            mode => mode,
+        };
 
-    pub fn new(source: &str) -> Self {
-   Self {
+        Self {
             input: source.chars().collect(),
             position: 0,
             line: 1,
             column: 1,
             line_start: true,
-            at_file_start: true,
             indentation_stack: vec![0],
             pending_tokens: VecDeque::new(),
-            block_mode: BlockMode::Unknown,
+            block_mode: detected_mode,
+            brace_depth: 0,
         }
-}
+    }
+
     fn handle_indentation(&mut self) -> Result<(), LexError> {
-    let mut spaces = 0;
-
-    while let Some(ch) = self.peek() {
-        if ch == ' ' {
-            spaces += 1;
-            self.advance();
-        } else if ch == '\t' {
-            spaces += 4;
-            self.advance();
-        } else {
-            break;
+        if self.block_mode != BlockMode::Indentation {
+            self.skip_spaces();
+            return Ok(());
         }
+
+        let mut spaces = 0;
+
+        while let Some(ch) = self.peek() {
+            match ch {
+                ' ' => {
+                    spaces += 1;
+                    self.advance();
+                }
+
+                '\t' => {
+                    spaces += 4;
+                    self.advance();
+                }
+
+                _ => break,
+            }
+        }
+
+        // Blank line: don't modify indentation state.
+        if self.peek() == Some('\n') {
+            return Ok(());
+        }
+
+        // EOF on a whitespace-only line.
+        if self.peek().is_none() {
+            return Ok(());
+        }
+
+        let current = *self.indentation_stack.last().unwrap();
+
+        if spaces > current {
+            self.indentation_stack.push(spaces);
+            self.pending_tokens.push_back(Token::Indent);
+        } else if spaces < current {
+            while self.indentation_stack.len() > 1
+                && spaces < *self.indentation_stack.last().unwrap()
+            {
+                self.indentation_stack.pop();
+                self.pending_tokens.push_back(Token::Dedent);
+            }
+
+            if spaces != *self.indentation_stack.last().unwrap() {
+                return Err(LexError {
+                    message: "Invalid indentation level".into(),
+                    position: self.position,
+                    line: self.line,
+                    column: self.column,
+                });
+            }
+        }
+
+        Ok(())
     }
-
-    let current = *self.indentation_stack.last().unwrap();
-
-    // Only select indentation mode when actual indentation occurs.
-    if spaces > current {
-        self.set_indentation_mode()?;
-        self.indentation_stack.push(spaces);
-        self.pending_tokens.push_back(Token::Indent);
-    } else if spaces < current {
-        // We are already in indentation mode if we're dedenting.
-        self.set_indentation_mode()?;
-        while self.indentation_stack.len() > 1
-            && spaces < *self.indentation_stack.last().unwrap()
-        {
-            self.indentation_stack.pop();
-            self.pending_tokens.push_back(Token::Dedent);
-        }
-
-        if spaces != *self.indentation_stack.last().unwrap() {
-            return Err(LexError {
-                message: "Invalid indentation level".into(),
-                position: self.position,
-                line: self.line,
-                column: self.column,
-            });
-        }
-    }
-
-    Ok(())
-}
     fn peek(&self) -> Option<char> {
         self.input.get(self.position).copied()
     }
@@ -290,13 +323,34 @@ fn set_brace_mode(&mut self) -> Result<(), LexError> {
     })
 }
     fn next_token(&mut self) -> Result<Token, LexError> {
+        
         if let Some(token) = self.pending_tokens.pop_front() {
             return Ok(token);
         }
         if self.line_start {
-    if self.block_mode == BlockMode::Indentation {
-        self.handle_indentation()?;
+    // Check for completely blank lines first.
+    let mut lookahead = self.position;
+
+    while let Some(ch) = self.input.get(lookahead) {
+        if *ch == ' ' || *ch == '\t' {
+            lookahead += 1;
+        } else {
+            break;
+        }
     }
+
+    // Blank line: consume whitespace/newline without changing indentation.
+    if self.input.get(lookahead) == Some(&'\n') {
+        while matches!(self.peek(), Some(' ' | '\t' | '\n')) {
+            self.advance();
+        }
+
+        self.line_start = true;
+
+        return self.next_token();
+    }
+
+    self.handle_indentation()?;
 
     self.line_start = false;
 
@@ -311,39 +365,71 @@ fn set_brace_mode(&mut self) -> Result<(), LexError> {
     Some(c) => c,
 
     None => {
-        if self.block_mode == BlockMode::Indentation
-            && self.indentation_stack.len() > 1
-        {
-            self.indentation_stack.pop();
-            return Ok(Token::Dedent);
-        }
-
-        return Ok(Token::Eof);
+    if self.brace_depth > 0 {
+        return Err(LexError {
+            message: "Unclosed '{' at end of file".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        });
     }
+
+    if self.block_mode == BlockMode::Indentation
+    && self.indentation_stack.len() > 1
+{
+    self.indentation_stack.pop();
+    return Ok(Token::Dedent);
+}
+
+if self.block_mode == BlockMode::Braces
+    && self.brace_depth > 0
+{
+    return Err(LexError {
+        message: "Unclosed '{' at end of file".into(),
+        position: self.position,
+        line: self.line,
+        column: self.column,
+    });
+}
+
+    return Ok(Token::Eof);
+}
 };
         match ch {
 
             '{' => {
-    self.set_brace_mode()?;
     self.advance();
+    self.brace_depth += 1;
     Ok(Token::LeftBrace)
 }
-
+';' => {
+    Err(LexError {
+        message: "Semicolons are not allowed in Fusion".into(),
+        position: self.position,
+        line: self.line,
+        column: self.column,
+    })
+}
 '}' => {
-    self.set_brace_mode()?;
+    if self.brace_depth == 0 {
+        return Err(LexError {
+            message: "Unexpected '}'".into(),
+            position: self.position,
+            line: self.line,
+            column: self.column,
+        });
+    }
+
     self.advance();
+    self.brace_depth -= 1;
+
     Ok(Token::RightBrace)
 }
 
             '\n' => {
     self.advance();
     self.line_start = true;
-    if matches!(self.peek(), Some('\n')) {
-        self.next_token()
-    }
-    else {
-        Ok(Token::NewLine)
-    }
+    Ok(Token::NewLine)
 }
             '&' => {
     self.advance();
@@ -404,15 +490,15 @@ fn set_brace_mode(&mut self) -> Result<(), LexError> {
                 Ok(Token::RightParen)
             }
             ':' => {
-                self.advance();
+    self.advance();
 
-                if self.peek() == Some(':') {
-                    self.advance();
-                    Ok(Token::DoubleColon)
-                    } else {
-                        Ok(Token::Colon)
-                    }
-            }
+    if self.peek() == Some(':') {
+        self.advance();
+        Ok(Token::DoubleColon)
+    } else {
+        Ok(Token::Colon)
+    }
+}
             ',' => {
                 self.advance();
                 Ok(Token::Comma)
@@ -534,11 +620,38 @@ fn set_brace_mode(&mut self) -> Result<(), LexError> {
                 self.read_number()
             }
                 c if c.is_alphabetic() || c == '_' => {
-                    let ident = self.read_identifier();
-                    match ident.as_str() {
+    let ident = self.read_identifier();
+
+    if ident == "main" {
+        match self.peek() {
+            Some(':') | Some('{') => {
+                // Valid: main: or main{
+            }
+
+            Some(' ') | Some('\t') => {
+                return Err(LexError {
+                    message: "`main` must be immediately followed by `:` or `{`".into(),
+                    position: self.position,
+                    line: self.line,
+                    column: self.column,
+                });
+            }
+
+            _ => {
+                // Let the parser report an invalid main declaration.
+            }
+        }
+    }
+
+    match ident.as_str() {
+                        "num" => Ok(Token::NumType),
+                        "float" => Ok(Token::FloatType),
+                        "bool" => Ok(Token::BoolType),
+                        "string" => Ok(Token::StringType),
                         "const" => Ok(Token::Const),
                         "enum" => Ok(Token::Enum),
                         "fn" => Ok(Token::Fn),
+                        "main" => Ok(Token::Main),
                         "defer" => Ok(Token::Defer),
                         "if" => Ok(Token::If),
                         "and" => Ok(Token::And),

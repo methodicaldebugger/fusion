@@ -178,7 +178,197 @@ fn property_target_is_mutable(
     Ok(info.mutable)
 }
 
+    fn check_pattern(
+    &mut self,
+    pattern: &Pattern,
+    expected_type: &Type,
+) -> Result<(), FusionError> {
+    match pattern {
+        // -------------------------------------------------
+        // Wildcard
+        // -------------------------------------------------
+        Pattern::Wildcard => {
+            Ok(())
+        }
 
+        // -------------------------------------------------
+        // Identifier binding
+        //
+        // value => binds value to the matched type
+        // _     => wildcard
+        // -------------------------------------------------
+        Pattern::Identifier(name) => {
+            if name == "_" {
+                return Ok(());
+            }
+
+            self.declare_variable(
+                name.clone(),
+                expected_type.clone(),
+                true,
+            )?;
+
+            Ok(())
+        }
+
+        // -------------------------------------------------
+        // Number literal
+        // -------------------------------------------------
+        Pattern::Number(_) => {
+            if *expected_type != Type::Num {
+                return Err(FusionError::TypeMismatch {
+                    expected: "num".into(),
+                    found: format!("{:?}", expected_type),
+                });
+            }
+
+            Ok(())
+        }
+
+        // -------------------------------------------------
+        // Float literal
+        // -------------------------------------------------
+        Pattern::Float(_) => {
+            if *expected_type != Type::Float {
+                return Err(FusionError::TypeMismatch {
+                    expected: "float".into(),
+                    found: format!("{:?}", expected_type),
+                });
+            }
+
+            Ok(())
+        }
+
+        // -------------------------------------------------
+        // String literal
+        // -------------------------------------------------
+        Pattern::String(_) => {
+            if *expected_type != Type::String {
+                return Err(FusionError::TypeMismatch {
+                    expected: "string".into(),
+                    found: format!("{:?}", expected_type),
+                });
+            }
+
+            Ok(())
+        }
+
+        // -------------------------------------------------
+        // Boolean literal
+        // -------------------------------------------------
+        Pattern::Boolean(_) => {
+            if *expected_type != Type::Bool {
+                return Err(FusionError::TypeMismatch {
+                    expected: "bool".into(),
+                    found: format!("{:?}", expected_type),
+                });
+            }
+
+            Ok(())
+        }
+
+        // -------------------------------------------------
+        // Enum variant
+        //
+        // Result::Ok(value)
+        // Result::Error(message)
+        // -------------------------------------------------
+        Pattern::Variant {
+            name,
+            bindings,
+        } => {
+            let enum_name = match expected_type {
+                Type::Enum(name) => name,
+                _ => {
+                    return Err(FusionError::TypeMismatch {
+                        expected: "enum".into(),
+                        found: format!("{:?}", expected_type),
+                    });
+                }
+            };
+
+            let parts: Vec<&str> = name.split("::").collect();
+
+            if parts.len() != 2 {
+                return Err(FusionError::UnknownVariable(
+                    format!(
+                        "Invalid enum pattern '{}'",
+                        name
+                    )
+                ));
+            }
+
+            let pattern_enum = parts[0];
+            let variant_name = parts[1];
+
+            // Make sure the enum in the pattern is the
+            // same enum as the expression being matched.
+            if pattern_enum != enum_name {
+                return Err(FusionError::TypeMismatch {
+                    expected: enum_name.clone(),
+                    found: pattern_enum.to_string(),
+                });
+            }
+
+            // Copy the variant field types so that we can
+            // release the immutable borrow before declaring
+            // bindings.
+            let field_types = {
+                let enum_definition =
+                    self.environment
+                        .enums
+                        .get(enum_name)
+                        .ok_or_else(|| {
+                            FusionError::UnknownVariable(
+                                enum_name.clone()
+                            )
+                        })?;
+
+                let variant =
+                    enum_definition
+                        .variants
+                        .get(variant_name)
+                        .ok_or_else(|| {
+                            FusionError::UnknownVariable(
+                                format!(
+                                    "Unknown variant '{}::{}'",
+                                    enum_name,
+                                    variant_name
+                                )
+                            )
+                        })?;
+
+                if bindings.len() != variant.fields.len() {
+                    return Err(FusionError::TypeMismatch {
+                        expected: format!(
+                            "{} bindings",
+                            variant.fields.len()
+                        ),
+                        found: format!(
+                            "{} bindings",
+                            bindings.len()
+                        ),
+                    });
+                }
+
+                variant.fields.clone()
+            };
+
+            // Bind the fields.
+            for (binding, field_type)
+                in bindings.iter().zip(field_types.iter())
+            {
+                self.declare_variable(
+                    binding.clone(),
+                    field_type.clone(),
+                    true,
+                )?;
+            }
+
+            Ok(())
+        }
+    }
+}
 
 
     fn require_bool(&self,found: Type)
@@ -882,7 +1072,154 @@ pub fn check_statement(&mut self,statement:&Statement)
         Ok(())
     }
 
+    Statement::Match {
+    expression,
+    arms,
+} => {
+    let expression_type =
+        self.infer_expression(expression)?;
 
+    // Track which enum variants are explicitly matched.
+    let mut matched_variants = std::collections::HashSet::new();
+
+    // A wildcard (`_`) makes the match exhaustive.
+    let mut has_wildcard = false;
+
+    for arm in arms {
+        // Check for wildcard before normal pattern checking.
+        if matches!(&arm.pattern, Pattern::Wildcard)
+    || matches!(
+        &arm.pattern,
+        Pattern::Identifier(name) if name == "_"
+    )
+{
+    has_wildcard = true;
+}
+
+        // Record explicitly matched enum variants.
+        if let Pattern::Variant { name, .. } = &arm.pattern {
+            matched_variants.insert(name.clone());
+        }
+
+        self.push_scope();
+
+        if let Err(error) =
+            self.check_pattern(
+                &arm.pattern,
+                &expression_type,
+            )
+        {
+            self.pop_scope();
+            return Err(error);
+        }
+
+        for statement in &arm.body {
+            if let Err(error) =
+                self.check_statement(statement)
+            {
+                self.pop_scope();
+                return Err(error);
+            }
+        }
+
+        self.pop_scope();
+    }
+
+    // Check enum exhaustiveness.
+    // Check match exhaustiveness.
+match &expression_type {
+    Type::Enum(enum_name) => {
+        if !has_wildcard {
+            let enum_definition =
+                self.environment
+                    .enums
+                    .get(enum_name)
+                    .ok_or_else(|| {
+                        FusionError::UnknownVariable(
+                            enum_name.clone()
+                        )
+                    })?;
+
+            for variant_name in enum_definition.variants.keys() {
+                let full_name =
+                    format!("{}::{}", enum_name, variant_name);
+
+                if !matched_variants.contains(&full_name) {
+                    return Err(
+                        FusionError::UnknownVariable(
+                            format!(
+                                "Non-exhaustive match: missing variant '{}'",
+                                full_name
+                            )
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    Type::Bool => {
+        if !has_wildcard {
+            let mut has_true = false;
+            let mut has_false = false;
+
+            for arm in arms {
+                match &arm.pattern {
+                    Pattern::Boolean(true) => {
+                        has_true = true;
+                    }
+
+                    Pattern::Boolean(false) => {
+                        has_false = true;
+                    }
+
+                    _ => {}
+                }
+            }
+
+            if !has_true {
+                return Err(
+                    FusionError::UnknownVariable(
+                        "Non-exhaustive match: missing 'true'".into()
+                    )
+                );
+            }
+
+            if !has_false {
+                return Err(
+                    FusionError::UnknownVariable(
+                        "Non-exhaustive match: missing 'false'".into()
+                    )
+                );
+            }
+        }
+    }
+
+    Type::Num
+    | Type::Float
+    | Type::String => {
+        if !has_wildcard {
+            return Err(
+                FusionError::UnknownVariable(
+                    "Non-exhaustive match: missing wildcard '_'".into()
+                )
+            );
+        }
+    }
+
+    _ => {
+        if !has_wildcard {
+            return Err(
+                FusionError::UnknownVariable(
+                    "Non-exhaustive match: missing wildcard '_'".into()
+                )
+            );
+        }
+    }
+}
+
+    Ok(())
+}
 
 
     Statement::If {
@@ -1091,6 +1428,72 @@ pub fn check(
     }
 
     // Pass 2: resolve struct fields
+    // Pass 2.5: register enum names
+for statement in &program.statements {
+    if let Statement::Enum { name, .. } = statement {
+        if self.environment.enums.contains_key(name) {
+            return Err(FusionError::UnknownVariable(
+                format!(
+                    "Enum '{}' is already defined",
+                    name
+                )
+            ));
+        }
+
+        self.environment.enums.insert(
+            name.clone(),
+            EnumDefinition {
+                variants: HashMap::new(),
+            },
+        );
+    }
+}
+
+    // Pass 2.6: resolve enum variants
+for statement in &program.statements {
+    if let Statement::Enum {
+        name,
+        variants,
+    } = statement
+    {
+        let mut variant_map = HashMap::new();
+
+        for variant in variants {
+            if variant_map.contains_key(&variant.name) {
+                return Err(FusionError::UnknownVariable(
+                    format!(
+                        "Duplicate variant '{}' in enum '{}'",
+                        variant.name,
+                        name
+                    )
+                ));
+            }
+
+            let mut field_types = Vec::new();
+
+            for field in &variant.fields {
+                let field_type =
+                    self.convert_type(field)?;
+
+                field_types.push(field_type);
+            }
+
+            variant_map.insert(
+                variant.name.clone(),
+                EnumVariantDefinition {
+                    fields: field_types,
+                },
+            );
+        }
+
+        self.environment
+            .enums
+            .get_mut(name)
+            .unwrap()
+            .variants = variant_map;
+    }
+}
+
     for statement in &program.statements {
         if let Statement::Struct {
             name,
@@ -1177,36 +1580,9 @@ for statement in &program.statements {
             // Structs were already checked above.
         }
 
-        Statement::Enum {
-            name,
-            variants,
-            } => {
-                let mut enum_variants = HashMap::new();
-
-                for variant in variants {
-                    let mut field_types = Vec::new();
-
-                    for field in &variant.fields {
-                        let field_type = self.convert_type(field)?;
-                        field_types.push(field_type);
-                    }
-
-                    enum_variants.insert(
-                        variant.name.clone(),
-                        EnumVariantDefinition {
-                            fields: field_types,
-                        },
-                    );
-                }
-                self.environment.enums.insert(
-                name.clone(),
-                EnumDefinition {
-                variants: enum_variants,
-                },
-            );
-        }
-
-
+        Statement::Enum { .. } => {
+    // Enums were already registered and resolved above.
+}
 
         Statement::Function {
             parameters,

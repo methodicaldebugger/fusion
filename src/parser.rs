@@ -2,13 +2,114 @@
 //contents of parser.rs
 use crate::lexer::Token;
 use crate::ast::*;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BlockStyle {
+    Unknown,
+    Indentation,
+    Braces,
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
     allow_struct_constructor: bool,
+
+    block_style: BlockStyle,
+    seen_main: bool,
+    pending_block_styles: Vec<BlockStyle>,
 }
+
 impl Parser { // contains many functions for parsing different constructs in the language
-   
+
+    fn parse_style_block(&mut self) -> Option<Vec<Statement>> {
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
+
+        Token::LeftBrace => {
+            BlockStyle::Braces
+        }
+
+        _ => return None,
+    };
+
+    // Once main has established the block style, every
+    // subsequent block must use exactly the same style.
+    if self.seen_main && self.block_style != style {
+        panic!(
+            "Block style mismatch: main uses {:?}, \
+             but this block uses {:?}",
+            self.block_style,
+            style
+        );
+    }
+
+    self.use_block_style(style);
+
+    fn use_block_style(&mut self, style: BlockStyle) {
+    match self.block_style {
+        BlockStyle::Unknown => {
+            // Before main appears, remember the style used by
+            // earlier constructs. main must eventually match it.
+            self.pending_block_styles.push(style);
+        }
+
+        existing if existing != style => {
+            panic!(
+                "Block style mismatch: main uses {:?}, \
+                 but this construct uses {:?}",
+                existing,
+                style
+            );
+        }
+
+        _ => {}
+    }
+}
+
+fn establish_main_style(&mut self, style: BlockStyle) {
+    if self.seen_main {
+        panic!("Multiple 'main' declarations are not allowed");
+    }
+
+    // main establishes the global block style.
+    //
+    // Every block that appeared before main must use
+    // the same style as main.
+    for previous in &self.pending_block_styles {
+        if *previous != style {
+            panic!(
+                "Block style mismatch: main uses {:?}, \
+                 but an earlier construct uses {:?}",
+                style,
+                previous
+            );
+        }
+    }
+
+    // main is now the authority for the entire program.
+    self.pending_block_styles.clear();
+    self.block_style = style;
+    self.seen_main = true;
+}
+
+    pub fn new(tokens: Vec<Token>) -> Self {
+    Self {
+        tokens,
+        position: 0,
+        allow_struct_constructor: true,
+
+        block_style: BlockStyle::Unknown,
+        seen_main: false,
+        pending_block_styles: Vec::new(),
+    }
+}
+
+
+
     fn parse_statement(&mut self) -> Option<Statement> {
     match self.current() {
         Token::NewLine => {
@@ -21,7 +122,52 @@ impl Parser { // contains many functions for parsing different constructs in the
             self.parse_statement()
         }
 
+        Token::Main => {
+    self.advance();
+
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
+
+        Token::LeftBrace => {
+            BlockStyle::Braces
+        }
+
+        _ => return None,
+    };
+
+    self.establish_main_style(style);
+
+    let body = match style {
+        BlockStyle::Indentation => {
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            self.parse_indentation_block()
+        }
+
+        BlockStyle::Braces => {
+            self.parse_brace_block()
+        }
+
+        BlockStyle::Unknown => unreachable!(),
+    };
+
+    Some(Statement::Main { body })
+}
+
         Token::Fn => self.parse_function(),
+
+        Token::Defer => {
+    self.advance();
+
+    let expression = self.parse_expression()?;
+
+    Some(Statement::Defer(expression))
+}
 
         Token::Struct => self.parse_struct(),
 
@@ -30,63 +176,39 @@ impl Parser { // contains many functions for parsing different constructs in the
         Token::Match => self.parse_match(),
 
         Token::While => {
-            self.advance();
+    self.advance();
 
-            let condition = self.parse_expression()?;
+    let condition = self.parse_expression()?;
 
-            if !self.consume(&Token::Colon) {
-                return None;
-            }
+    let body = self.parse_style_block()?;
 
-            while self.current() == &Token::NewLine {
-                self.advance();
-            }
-
-            let body = self.parse_block();
-
-            Some(Statement::While {
-                condition,
-                body,
-            })
-        }
+    Some(Statement::While {
+        condition,
+        body,
+    })
+}
 
         Token::If => {
-            self.advance();
+    self.advance();
 
-            let condition = self.parse_expression()?;
+    let condition = self.parse_expression()?;
 
-            if !self.consume(&Token::Colon) {
-                return None;
-            }
+    let body = self.parse_style_block()?;
 
-            while self.current() == &Token::NewLine {
-                self.advance();
-            }
+    let else_body = if self.current() == &Token::Else {
+        self.advance();
 
-            let body = self.parse_block();
+        Some(self.parse_style_block()?)
+    } else {
+        None
+    };
 
-            let else_body = if self.current() == &Token::Else {
-                self.advance();
-
-                if !self.consume(&Token::Colon) {
-                    return None;
-                }
-
-                while self.current() == &Token::NewLine {
-                    self.advance();
-                }
-
-                Some(self.parse_block())
-            } else {
-                None
-            };
-
-            Some(Statement::If {
-                condition,
-                body,
-                else_body,
-            })
-        }
+    Some(Statement::If {
+        condition,
+        body,
+        else_body,
+    })
+}
 
         Token::For => self.parse_for(),
 
@@ -138,6 +260,7 @@ impl Parser { // contains many functions for parsing different constructs in the
                 value,
             })
         }
+
 
         Token::Identifier(first_name) => {
             let first_name = first_name.clone();
@@ -266,33 +389,39 @@ impl Parser { // contains many functions for parsing different constructs in the
 }
 
     fn parse_for(&mut self) -> Option<Statement> {
-        self.advance();
+    self.advance();
 
-        let variable = match self.current() {
-            Token::Identifier(name) => {
-                let n = name.clone();
-                self.advance();
-                n
-                }
-            _ => return None,
-            };
-        if !self.consume(&Token::In) {
-            return None;
-        }
-        let start = self.parse_expression()?;
-        if !self.consume(&Token::DotDot) {
-            return None;
-        }
-        let end = self.parse_expression()?;
-        if !self.consume(&Token::Colon) {
-            return None;
-        }
-        while self.current() == &Token::NewLine {
+    let variable = match self.current() {
+        Token::Identifier(name) => {
+            let n = name.clone();
             self.advance();
+            n
         }
-        let body = self.parse_block();
-        Some(Statement::For {variable,start,end,body,})
+
+        _ => return None,
+    };
+
+    if !self.consume(&Token::In) {
+        return None;
     }
+
+    let start = self.parse_expression()?;
+
+    if !self.consume(&Token::DotDot) {
+        return None;
+    }
+
+    let end = self.parse_expression()?;
+
+    let body = self.parse_style_block()?;
+
+    Some(Statement::For {
+        variable,
+        start,
+        end,
+        body,
+    })
+}
 
 
 
@@ -447,7 +576,16 @@ impl Parser { // contains many functions for parsing different constructs in the
             let first = name.clone();
             self.advance();
 
+            // Wildcard pattern:
+            //
+            // _
+            //
+            if first == "_" {
+                return Some(Pattern::Wildcard);
+            }
+
             // Variant pattern:
+            //
             // Result::Ok(value)
             if self.consume(&Token::DoubleColon) {
                 let variant = match self.current() {
@@ -462,6 +600,7 @@ impl Parser { // contains many functions for parsing different constructs in the
                 let mut bindings = Vec::new();
 
                 // Optional bindings:
+                //
                 // Result::Ok(value)
                 if self.consume(&Token::LeftParen) {
                     while self.current() != &Token::RightParen
@@ -496,9 +635,15 @@ impl Parser { // contains many functions for parsing different constructs in the
                 });
             }
 
-            // Bare identifier:
-            // value
-            Some(Pattern::Identifier(first))
+            // Wildcard:
+// _
+if first == "_" {
+    Some(Pattern::Wildcard)
+} else {
+    // Bare identifier:
+    // value
+    Some(Pattern::Identifier(first))
+}
         }
 
         Token::Num(value) => {
@@ -632,18 +777,19 @@ let expression = expression?;
 
 
     fn parse_indentation_block(&mut self) -> Vec<Statement> {
-        let mut statements = Vec::new();
+    let mut statements = Vec::new();
 
-        // consume Indent
-        self.advance();
+    if !self.consume(&Token::Indent) {
+        panic!("Expected indentation block");
+    }
 
-        while self.current() != &Token::Dedent
-            && self.current() != &Token::Eof
-        {
-            if self.current() == &Token::NewLine {
-                self.advance();
-                continue;
-            }
+    while self.current() != &Token::Dedent
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
 
         if let Some(statement) = self.parse_statement() {
             statements.push(statement);
@@ -651,14 +797,16 @@ let expression = expression?;
             panic!(
                 "Invalid statement in indentation block near token: {:?}",
                 self.current()
-                );
-            }
+            );
         }
-        if self.current() == &Token::Dedent {
-            self.advance();
-        }
-    statements
     }
+
+    if self.current() == &Token::Dedent {
+        self.advance();
+    }
+
+    statements
+}
 
 
 
@@ -691,17 +839,6 @@ let expression = expression?;
     statements
     }
 
-
-
-
-
-    pub fn new(tokens: Vec<Token>) -> Self {
-        Self {
-            tokens,
-            position: 0,
-            allow_struct_constructor: true,
-        }
-    }
 
     fn current(&self) -> &Token {
         &self.tokens[self.position]
@@ -744,19 +881,49 @@ let expression = expression?;
         }
     }
 
-
+    fn is_type_token(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::NumType
+            | Token::FloatType
+            | Token::BoolType
+            | Token::StringType
+            | Token::Identifier(_)
+    )
+}
 
 
     fn parse_type(&mut self) -> Option<String> {
-        match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                Some(name)
-            }
-            _ => None,
+    match self.current() {
+        Token::NumType => {
+            self.advance();
+            Some("num".into())
         }
+
+        Token::FloatType => {
+            self.advance();
+            Some("float".into())
+        }
+
+        Token::BoolType => {
+            self.advance();
+            Some("bool".into())
+        }
+
+        Token::StringType => {
+            self.advance();
+            Some("string".into())
+        }
+
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            Some(name)
+        }
+
+        _ => None,
     }
+}
 
 
 
@@ -813,13 +980,36 @@ let expression = expression?;
                 return None;
             }
         }
-        if !self.consume(&Token::Colon) {
-            return None;
-        }
-        if self.current() == &Token::NewLine {
+        let style = match self.current() {
+    Token::Colon => {
+        self.advance();
+        BlockStyle::Indentation
+    }
+
+    Token::LeftBrace => {
+        BlockStyle::Braces
+    }
+
+    _ => return None,
+};
+
+self.use_block_style(style);
+
+let body = match style {
+    BlockStyle::Indentation => {
+        while self.current() == &Token::NewLine {
             self.advance();
         }
-        let body = self.parse_block();
+
+        self.parse_indentation_block()
+    }
+
+    BlockStyle::Braces => {
+        self.parse_brace_block()
+    }
+
+    BlockStyle::Unknown => unreachable!(),
+};
         Some(Statement::Function {
             name,generic_parameters: Vec::new(),parameters,return_type,body,
         })

@@ -42,12 +42,16 @@ impl Environment {
         );
     }
 
-    pub fn pop_scope(&mut self) -> Vec<Expression> {
-        match self.scopes.pop() {
-            Some(scope) => scope.deferred,
-            None => Vec::new(),
-        }
+    pub fn take_deferred(&mut self) -> Vec<Expression> {
+    match self.scopes.last_mut() {
+        Some(scope) => std::mem::take(&mut scope.deferred),
+        None => Vec::new(),
     }
+}
+
+pub fn pop_scope(&mut self) {
+    self.scopes.pop();
+}
 
     pub fn set(
     &mut self,

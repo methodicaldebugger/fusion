@@ -3,7 +3,11 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::value::Value;
 use crate::environment::Environment;
-use crate::types::StructDefinition;
+
+use crate::types::{
+    StructDefinition,
+    EnumDefinition,
+};
 
 
 #[derive(Debug)]
@@ -11,7 +15,7 @@ enum Flow {
     Normal,Break,Continue,Return(Value),
 }
 pub struct Interpreter {
-    enums: HashMap<String, Vec<String>>,
+    enums: HashMap<String, EnumDefinition>,
     environment: Environment,
     functions: HashMap<String, Function>,
     structs: HashMap<String, StructDefinition>,
@@ -29,6 +33,16 @@ pub struct Function {
 
 impl Interpreter { // stores many functions
 
+    fn exit_scope(&mut self) {
+    let deferred = self.environment.take_deferred();
+
+    // Zig-style defer: last defer runs first.
+    for expression in deferred.into_iter().rev() {
+        self.evaluate(&expression);
+    }
+
+    self.environment.pop_scope();
+}
 
     fn assign_property(
     &mut self,
@@ -264,34 +278,39 @@ impl Interpreter { // stores many functions
         for statement in &function.body {
             match self.execute_statement(statement) {
                 Flow::Return(value) => {
-                    self.check_return_type(
-                        name,
-                        &function.return_type,
-                        &value,
-                    );
-                    self.environment.pop_scope();
-                    return value;
-                }
+    self.check_return_type(
+        name,
+        &function.return_type,
+        &value,
+    );
+
+    self.exit_scope();
+
+    return value;
+}
                 Flow::Break => {
-                    self.environment.pop_scope();
-                    panic!(
-                        "break outside loop in function '{}'",
-                        name
-                    );
-                }
-                Flow::Continue => {
-                    self.environment.pop_scope();
-                    panic!(
-                        "continue outside loop in function '{}'",
-                        name
-                    );
-                }
+    self.exit_scope();
+
+    panic!(
+        "break outside loop in function '{}'",
+        name
+    );
+}
+
+Flow::Continue => {
+    self.exit_scope();
+
+    panic!(
+        "continue outside loop in function '{}'",
+        name
+    );
+}
                 Flow::Normal => {}
             }
         }
 
         // Function reached its end.
-        self.environment.pop_scope();
+        self.exit_scope();
 
         if function.return_type.is_some() {
             panic!(
@@ -448,6 +467,36 @@ impl Interpreter { // stores many functions
 
     Flow::Normal
 }
+
+        Statement::Main { body } => {
+    self.environment.push_scope();
+
+    for statement in body {
+        match self.execute_statement(statement) {
+            Flow::Normal => {}
+
+            Flow::Return(value) => {
+                self.exit_scope();
+                return Flow::Return(value);
+            }
+
+            Flow::Break => {
+                self.exit_scope();
+                panic!("break outside loop");
+            }
+
+            Flow::Continue => {
+                self.exit_scope();
+                panic!("continue outside loop");
+            }
+        }
+    }
+
+    self.exit_scope();
+
+    Flow::Normal
+}
+
         Statement::ConstDeclaration {
             name,
             value,
@@ -467,12 +516,37 @@ impl Interpreter { // stores many functions
     name,
     variants,
 } => {
+    let mut variant_map = HashMap::new();
+
+    for variant in variants {
+        let fields = variant
+            .fields
+            .iter()
+            .map(|field| match field.as_str() {
+                "num" => crate::types::Type::Num,
+                "float" => crate::types::Type::Float,
+                "bool" => crate::types::Type::Bool,
+                "string" => crate::types::Type::String,
+
+                other => crate::types::Type::Struct(
+                    other.to_string()
+                ),
+            })
+            .collect();
+
+        variant_map.insert(
+            variant.name.clone(),
+            crate::types::EnumVariantDefinition {
+                fields,
+            },
+        );
+    }
+
     self.enums.insert(
         name.clone(),
-        variants
-            .iter()
-            .map(|variant| variant.name.clone())
-            .collect(),
+        EnumDefinition {
+            variants: variant_map,
+        },
     );
 
     Flow::Normal
@@ -480,6 +554,10 @@ impl Interpreter { // stores many functions
 
         Statement::Expression(expr) => {
             self.evaluate(expr);
+            Flow::Normal
+            }
+        Statement::Defer(expression) => {
+            self.environment.add_defer(expression.clone());
             Flow::Normal
             }
         Statement::Break => {
@@ -568,19 +646,19 @@ impl Interpreter { // stores many functions
                     }
                 Flow::Break => {
                     self.loop_depth -= 1;
-                    self.environment.pop_scope();
+                    self.exit_scope();
                     return Flow::Normal;
                 }
                 Flow::Return(value) => {
                     self.loop_depth -= 1;
-                    self.environment.pop_scope();
+                    self.exit_scope();
                     return Flow::Return(value);
                 }
             }
         }
     }
     self.loop_depth -= 1;
-    self.environment.pop_scope();
+    self.exit_scope();
     Flow::Normal
 }
     Statement::While {
@@ -600,7 +678,7 @@ impl Interpreter { // stores many functions
 
                     _ => {
                         self.loop_depth -= 1;
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         panic!("While condition must be boolean");
                     }
                 }
@@ -615,13 +693,13 @@ impl Interpreter { // stores many functions
 
                     Flow::Break => {
                         self.loop_depth -= 1;
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         return Flow::Normal;
                     }
 
                     Flow::Return(value) => {
                         self.loop_depth -= 1;
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         return Flow::Return(value);
                     }
                 }
@@ -629,7 +707,7 @@ impl Interpreter { // stores many functions
         }
 
         self.loop_depth -= 1;
-        self.environment.pop_scope();
+        self.exit_scope();
 
         Flow::Normal
     }
@@ -658,24 +736,22 @@ impl Interpreter { // stores many functions
                     Flow::Normal => {}
 
                     Flow::Break => {
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         return Flow::Break;
                     }
 
                     Flow::Continue => {
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         return Flow::Continue;
                     }
 
                     Flow::Return(value) => {
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         return Flow::Return(value);
                     }
                 }
             }
-
-            self.environment.pop_scope();
-
+            self.exit_scope();
             break;
         }
     }
@@ -698,13 +774,13 @@ impl Interpreter { // stores many functions
                 match self.execute_statement(stmt) {
                     Flow::Normal => {}
                     other => {
-                        self.environment.pop_scope();
+                        self.exit_scope();
                         return other;
                     }
                 }
             }
 
-            self.environment.pop_scope();
+            self.exit_scope();
         }
 
         Value::Boolean(false) => {
@@ -715,13 +791,13 @@ impl Interpreter { // stores many functions
                     match self.execute_statement(stmt) {
                         Flow::Normal => {}
                         other => {
-                            self.environment.pop_scope();
+                            self.exit_scope();
                             return other;
                         }
                     }
                 }
 
-                self.environment.pop_scope();
+                self.exit_scope();
             }
         }
 
