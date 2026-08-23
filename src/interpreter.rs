@@ -11,6 +11,7 @@ enum Flow {
     Normal,Break,Continue,Return(Value),
 }
 pub struct Interpreter {
+    enums: HashMap<String, Vec<String>>,
     environment: Environment,
     functions: HashMap<String, Function>,
     structs: HashMap<String, StructDefinition>,
@@ -344,6 +345,7 @@ impl Interpreter { // stores many functions
             environment: Environment::new(),
             functions: HashMap::new(),
             structs: HashMap::new(),
+            enums: HashMap::new(),
             loop_depth: 0,
         }
     }
@@ -461,6 +463,21 @@ impl Interpreter { // stores many functions
 
             Flow::Normal
             }
+        Statement::Enum {
+    name,
+    variants,
+} => {
+    self.enums.insert(
+        name.clone(),
+        variants
+            .iter()
+            .map(|variant| variant.name.clone())
+            .collect(),
+    );
+
+    Flow::Normal
+}
+
         Statement::Expression(expr) => {
             self.evaluate(expr);
             Flow::Normal
@@ -484,6 +501,7 @@ impl Interpreter { // stores many functions
     let result = self.evaluate(value);
 
     match target {
+        
         Expression::Identifier(name) => {
             if self.environment.get(name).is_some() {
                 if let Err(error) =
@@ -615,6 +633,55 @@ impl Interpreter { // stores many functions
 
         Flow::Normal
     }
+    Statement::Match {
+    expression,
+    arms,
+} => {
+    let value = self.evaluate(expression);
+
+    for arm in arms {
+        if let Some(bindings) =
+            self.pattern_matches(&arm.pattern, &value)
+        {
+            self.environment.push_scope();
+
+            for (name, value) in bindings {
+                self.environment.declare(
+                    name,
+                    value,
+                    true,
+                );
+            }
+
+            for statement in &arm.body {
+                match self.execute_statement(statement) {
+                    Flow::Normal => {}
+
+                    Flow::Break => {
+                        self.environment.pop_scope();
+                        return Flow::Break;
+                    }
+
+                    Flow::Continue => {
+                        self.environment.pop_scope();
+                        return Flow::Continue;
+                    }
+
+                    Flow::Return(value) => {
+                        self.environment.pop_scope();
+                        return Flow::Return(value);
+                    }
+                }
+            }
+
+            self.environment.pop_scope();
+
+            break;
+        }
+    }
+
+    Flow::Normal
+}
     
     Statement::If {
         condition,
@@ -686,10 +753,73 @@ impl Interpreter { // stores many functions
             Flow::Normal
             }
         }
+        
     }
 
 
+    fn pattern_matches(
+    &self,
+    pattern: &Pattern,
+    value: &Value,
+) -> Option<Vec<(String, Value)>> {
+    match (pattern, value) {
+        (Pattern::Wildcard, _) => {
+            Some(Vec::new())
+        }
 
+        (Pattern::Identifier(name), value) => {
+            Some(vec![(name.clone(), value.clone())])
+        }
+
+        (Pattern::Number(a), Value::Number(b)) if a == b => {
+            Some(Vec::new())
+        }
+
+        (Pattern::Float(a), Value::Float(b)) if a == b => {
+            Some(Vec::new())
+        }
+
+        (Pattern::String(a), Value::String(b)) if a == b => {
+            Some(Vec::new())
+        }
+
+        (Pattern::Boolean(a), Value::Boolean(b)) if a == b => {
+            Some(Vec::new())
+        }
+
+        (
+            Pattern::Variant {
+                name,
+                bindings,
+            },
+            Value::Enum {
+                enum_name,
+                variant,
+                values,
+            },
+        ) => {
+            let expected = format!("{}::{}", enum_name, variant);
+
+            if name != &expected {
+                return None;
+            }
+
+            if bindings.len() != values.len() {
+                return None;
+            }
+
+            let result = bindings
+                .iter()
+                .cloned()
+                .zip(values.iter().cloned())
+                .collect();
+
+            Some(result)
+        }
+
+        _ => None,
+    }
+}
 
 
     fn evaluate(&mut self, expr: &Expression) -> Value {
@@ -713,6 +843,24 @@ impl Interpreter { // stores many functions
                     fields: result,
                     }
                 }
+            
+            Expression::EnumConstructor {
+    enum_name,
+    variant,
+    arguments,
+} => {
+    let values = arguments
+        .iter()
+        .map(|argument| self.evaluate(argument))
+        .collect();
+
+    Value::Enum {
+        enum_name: enum_name.clone(),
+        variant: variant.clone(),
+        values,
+    }
+}
+            
             Expression::Array(values) => {
                 let mut result = Vec::new();
                 for value in values {

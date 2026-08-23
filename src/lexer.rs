@@ -74,6 +74,8 @@ pub enum Token {
     Dedent,
     NewLine,
     Eof,
+    FatArrow,
+    DoubleColon,
     Struct,
     Trait,
     Impl,
@@ -403,7 +405,13 @@ fn set_brace_mode(&mut self) -> Result<(), LexError> {
             }
             ':' => {
                 self.advance();
-                Ok(Token::Colon)
+
+                if self.peek() == Some(':') {
+                    self.advance();
+                    Ok(Token::DoubleColon)
+                    } else {
+                        Ok(Token::Colon)
+                    }
             }
             ',' => {
                 self.advance();
@@ -484,9 +492,13 @@ fn set_brace_mode(&mut self) -> Result<(), LexError> {
             }
             '=' => {
                 self.advance();
+
                 if self.peek() == Some('=') {
                     self.advance();
                     Ok(Token::EqualEqual)
+                    } else if self.peek() == Some('>') {
+                self.advance();
+                Ok(Token::FatArrow)
                 } else {
                     Ok(Token::Equal)
                 }

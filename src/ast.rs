@@ -173,6 +173,12 @@ pub enum Expression {
         fields: Vec<(String, Expression)>,
     },
 
+    EnumConstructor {
+        enum_name: String,
+        variant: String,
+        arguments: Vec<Expression>,
+    },
+
     Binary {
         left: Box<Expression>,
         operator: Operator,

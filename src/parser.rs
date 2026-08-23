@@ -5,10 +5,265 @@ use crate::ast::*;
 pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    allow_struct_constructor: bool,
 }
 impl Parser { // contains many functions for parsing different constructs in the language
    
+    fn parse_statement(&mut self) -> Option<Statement> {
+    match self.current() {
+        Token::NewLine => {
+            self.advance();
 
+            if self.current() == &Token::Eof {
+                return None;
+            }
+
+            self.parse_statement()
+        }
+
+        Token::Fn => self.parse_function(),
+
+        Token::Struct => self.parse_struct(),
+
+        Token::Enum => self.parse_enum(),
+
+        Token::Match => self.parse_match(),
+
+        Token::While => {
+            self.advance();
+
+            let condition = self.parse_expression()?;
+
+            if !self.consume(&Token::Colon) {
+                return None;
+            }
+
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            let body = self.parse_block();
+
+            Some(Statement::While {
+                condition,
+                body,
+            })
+        }
+
+        Token::If => {
+            self.advance();
+
+            let condition = self.parse_expression()?;
+
+            if !self.consume(&Token::Colon) {
+                return None;
+            }
+
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            let body = self.parse_block();
+
+            let else_body = if self.current() == &Token::Else {
+                self.advance();
+
+                if !self.consume(&Token::Colon) {
+                    return None;
+                }
+
+                while self.current() == &Token::NewLine {
+                    self.advance();
+                }
+
+                Some(self.parse_block())
+            } else {
+                None
+            };
+
+            Some(Statement::If {
+                condition,
+                body,
+                else_body,
+            })
+        }
+
+        Token::For => self.parse_for(),
+
+        Token::Break => {
+            self.advance();
+            Some(Statement::Break)
+        }
+
+        Token::Continue => {
+            self.advance();
+            Some(Statement::Continue)
+        }
+
+        Token::Return => {
+            self.advance();
+
+            let value = self.parse_expression()?;
+
+            Some(Statement::Return(value))
+        }
+
+        Token::Const => {
+            self.advance();
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+                _ => return None,
+            };
+
+            let declared_type = if self.consume(&Token::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+
+            if !self.consume(&Token::Equal) {
+                return None;
+            }
+
+            let value = self.parse_expression()?;
+
+            Some(Statement::ConstDeclaration {
+                name,
+                declared_type,
+                value,
+            })
+        }
+
+        Token::Identifier(first_name) => {
+            let first_name = first_name.clone();
+
+            // -------------------------------------------------
+            // Typed variable declaration
+            //
+            // num x = 10
+            // string name = "Bob"
+            // Color c = Color::Red
+            // Result a = Result::Ok(42)
+            // -------------------------------------------------
+
+            if let Some(Token::Identifier(_)) =
+                self.tokens.get(self.position + 1)
+            {
+                let mut lookahead = self.position + 1;
+
+                let mut names = Vec::new();
+
+                if let Some(Token::Identifier(name)) =
+                    self.tokens.get(lookahead)
+                {
+                    names.push(name.clone());
+                    lookahead += 1;
+
+                    while matches!(
+                        self.tokens.get(lookahead),
+                        Some(Token::Comma)
+                    ) {
+                        lookahead += 1;
+
+                        match self.tokens.get(lookahead) {
+                            Some(Token::Identifier(name)) => {
+                                names.push(name.clone());
+                                lookahead += 1;
+                            }
+
+                            _ => return None,
+                        }
+                    }
+
+                    if matches!(
+                        self.tokens.get(lookahead),
+                        Some(Token::Equal)
+                    ) {
+                        // Move from the type name to the first variable.
+                        self.advance();
+
+                        // Consume variable names.
+                        for _ in 0..names.len() {
+                            self.advance();
+
+                            if self.current() == &Token::Comma {
+                                self.advance();
+                            }
+                        }
+
+                        // Consume '='.
+                        if !self.consume(&Token::Equal) {
+                            return None;
+                        }
+
+                        let mut values = Vec::new();
+
+                        loop {
+                            let value = self.parse_expression()?;
+                            values.push(value);
+
+                            if self.current() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if names.len() != values.len() {
+                            return None;
+                        }
+
+                        let declarations = names
+                            .into_iter()
+                            .zip(values.into_iter())
+                            .map(|(name, value)| {
+                                VariableDeclaration {
+                                    name,
+                                    declared_type: Some(
+                                        first_name.clone()
+                                    ),
+                                    value,
+                                }
+                            })
+                            .collect();
+
+                        return Some(
+                            Statement::VariableDeclarations {
+                                declarations,
+                            }
+                        );
+                    }
+                }
+            }
+
+            // -------------------------------------------------
+            // Normal expression / assignment
+            // -------------------------------------------------
+
+            let expression = self.parse_expression()?;
+
+            if self.current() == &Token::Equal {
+                self.advance();
+
+                let value = self.parse_expression()?;
+
+                Some(Statement::Assignment {
+                    target: expression,
+                    value,
+                })
+            } else {
+                Some(Statement::Expression(expression))
+            }
+        }
+
+        _ => None,
+    }
+}
 
     fn parse_for(&mut self) -> Option<Statement> {
         self.advance();
@@ -104,6 +359,243 @@ impl Parser { // contains many functions for parsing different constructs in the
 }
 
 
+    fn parse_enum(&mut self) -> Option<Statement> {
+    self.advance(); // consume 'enum'
+
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            name
+        }
+        _ => return None,
+    };
+
+    if !self.consume(&Token::LeftBrace) {
+        return None;
+    }
+
+    let mut variants = Vec::new();
+
+    while self.current() != &Token::RightBrace
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
+
+        let variant_name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+            _ => return None,
+        };
+
+        let mut fields = Vec::new();
+
+        // Tuple-style enum variant:
+        //
+        // Rgb(num, num, num)
+        if self.consume(&Token::LeftParen) {
+            while self.current() != &Token::RightParen
+                && self.current() != &Token::Eof
+            {
+                let field_type = self.parse_type()?;
+                fields.push(field_type);
+
+                if self.current() == &Token::Comma {
+                    self.advance();
+                }
+            }
+
+            if !self.consume(&Token::RightParen) {
+                return None;
+            }
+        }
+
+        variants.push(EnumVariant {
+            name: variant_name,
+            fields,
+        });
+
+        if self.current() == &Token::Comma {
+            self.advance();
+        }
+
+        while self.current() == &Token::NewLine {
+            self.advance();
+        }
+    }
+
+    if !self.consume(&Token::RightBrace) {
+        return None;
+    }
+
+    Some(Statement::Enum {
+        name,
+        variants,
+    })
+}
+
+
+    fn parse_pattern(&mut self) -> Option<Pattern> {
+    match self.current() {
+        Token::Identifier(name) => {
+            let first = name.clone();
+            self.advance();
+
+            // Variant pattern:
+            // Result::Ok(value)
+            if self.consume(&Token::DoubleColon) {
+                let variant = match self.current() {
+                    Token::Identifier(name) => {
+                        let variant = name.clone();
+                        self.advance();
+                        variant
+                    }
+                    _ => return None,
+                };
+
+                let mut bindings = Vec::new();
+
+                // Optional bindings:
+                // Result::Ok(value)
+                if self.consume(&Token::LeftParen) {
+                    while self.current() != &Token::RightParen
+                        && self.current() != &Token::Eof
+                    {
+                        match self.current() {
+                            Token::Identifier(name) => {
+                                bindings.push(name.clone());
+                                self.advance();
+                            }
+
+                            _ => return None,
+                        }
+
+                        if self.consume(&Token::Comma) {
+                            continue;
+                        }
+
+                        if self.current() != &Token::RightParen {
+                            return None;
+                        }
+                    }
+
+                    if !self.consume(&Token::RightParen) {
+                        return None;
+                    }
+                }
+
+                return Some(Pattern::Variant {
+                    name: format!("{}::{}", first, variant),
+                    bindings,
+                });
+            }
+
+            // Bare identifier:
+            // value
+            Some(Pattern::Identifier(first))
+        }
+
+        Token::Num(value) => {
+            let value = *value;
+            self.advance();
+            Some(Pattern::Number(value))
+        }
+
+        Token::Float(value) => {
+            let value = *value;
+            self.advance();
+            Some(Pattern::Float(value))
+        }
+
+        Token::String(value) => {
+            let value = value.clone();
+            self.advance();
+            Some(Pattern::String(value))
+        }
+
+        Token::Boolean(value) => {
+            let value = *value;
+            self.advance();
+            Some(Pattern::Boolean(value))
+        }
+
+        _ => None,
+    }
+}
+
+
+    fn parse_match(&mut self) -> Option<Statement> {
+
+    self.advance(); // consume match
+
+    // The `{` after the match expression belongs to the
+    // match statement, not to a struct constructor.
+    let previous = self.allow_struct_constructor;
+self.allow_struct_constructor = false;
+
+let expression = self.parse_expression();
+
+self.allow_struct_constructor = previous;
+
+let expression = expression?;
+
+    if !self.consume(&Token::LeftBrace) {
+        println!(
+            "DEBUG: expected LeftBrace, got {:?}",
+            self.current()
+        );
+        return None;
+    }
+
+    let mut arms = Vec::new();
+
+    while self.current() != &Token::RightBrace
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
+
+        let pattern = self.parse_pattern()?;
+
+        if !self.consume(&Token::FatArrow) {
+            return None;
+        }
+
+        let body = if self.current() == &Token::LeftBrace {
+            self.parse_brace_block()
+        } else {
+            let statement = self.parse_statement()?;
+            vec![statement]
+        };
+
+        arms.push(MatchArm {
+            pattern,
+            body,
+        });
+
+        while self.current() == &Token::NewLine {
+            self.advance();
+        }
+    }
+
+    if !self.consume(&Token::RightBrace) {
+        return None;
+    }
+
+    Some(Statement::Match {
+        expression,
+        arms,
+    })
+}
+
 
     fn parse_arguments(&mut self) -> Option<Vec<Expression>> {
         let mut arguments = Vec::new();
@@ -123,16 +615,6 @@ impl Parser { // contains many functions for parsing different constructs in the
             return None;
         }
         Some(arguments)
-    }
-
-
-
-
-    fn is_type_name(name: &str) -> bool {
-        matches!(
-            name,
-            "num" | "float" | "bool" | "string"
-        )
     }
 
 
@@ -217,6 +699,7 @@ impl Parser { // contains many functions for parsing different constructs in the
         Self {
             tokens,
             position: 0,
+            allow_struct_constructor: true,
         }
     }
 
@@ -341,242 +824,6 @@ impl Parser { // contains many functions for parsing different constructs in the
             name,generic_parameters: Vec::new(),parameters,return_type,body,
         })
     }
-
-
-
-
-
-    fn parse_statement(&mut self) -> Option<Statement> {
-        match self.current() {
-            Token::NewLine => {
-                self.advance();
-                if self.current() == &Token::Eof {
-                    return None;
-                }
-                self.parse_statement()
-                }
-            Token::Fn => self.parse_function(), 
-            Token::Struct => self.parse_struct(),
-            Token::While => {
-                self.advance();
-                let condition = self.parse_expression()?;
-                if !self.consume(&Token::Colon) {
-                    return None;
-                }
-                while self.current() == &Token::NewLine {
-                    self.advance();
-                }
-                let body = self.parse_block();
-                Some(Statement::While {
-                    condition,
-                    body,
-                    })
-                }
-            Token::Const => {
-                self.advance();
-                let name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-            _ => return None,
-            };
-        let declared_type = if self.consume(&Token::Colon) {
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
-        if !self.consume(&Token::Equal) {
-            return None;
-        }
-        let value = self.parse_expression()?;
-        Some(Statement::ConstDeclaration {
-            name,
-            declared_type,
-            value,
-        })
-    }
-        Token::If => {
-            self.advance();
-            let condition = self.parse_expression()?;
-            if !self.consume(&Token::Colon) {
-                return None;
-            }
-            while self.current() == &Token::NewLine {
-                self.advance();
-            }
-            let body = self.parse_block();
-            let else_body = if self.current() == &Token::Else {
-                self.advance();
-                if !self.consume(&Token::Colon) {
-                    return None;
-                }
-                while self.current() == &Token::NewLine {
-                    self.advance();
-                }
-                Some(self.parse_block())
-            } else {
-                None
-            };
-            Some(Statement::If {
-                condition,
-                body,
-                else_body,
-            })
-        }
-        Token::For => self.parse_for(),
-        Token::Break => {
-            self.advance();
-            Some(Statement::Break)
-        }
-        Token::Continue => {
-            self.advance();
-            Some(Statement::Continue)
-        }
-        Token::Return => {
-            self.advance();
-            let value = self.parse_expression()?;
-            Some(Statement::Return(value))
-        }
-        Token::Identifier(first_name) => {
-    let first_name = first_name.clone();
-
-    // ---------------------------------------------------------
-    // Typed variable declaration
-    //
-    // Examples:
-    //
-    // num i = 0
-    // num i, j, m = 0, 0, 0
-    // float x, y = 1.0, 2.0
-    // bool a, b = true, false
-    // string x, y = "hello", "world"
-    // Player p1, p2 = player1, player2
-    //
-    // Any identifier can be used as the type, so custom types
-    // work automatically.
-    // ---------------------------------------------------------
-
-    if let Some(Token::Identifier(_)) =
-        self.tokens.get(self.position + 1)
-    {
-        let mut lookahead = self.position + 1;
-
-        // Collect variable names:
-        //
-        // num i, j, m
-        //
-        // We start after the type name.
-        let mut names = Vec::new();
-
-        if let Some(Token::Identifier(name)) =
-            self.tokens.get(lookahead)
-        {
-            names.push(name.clone());
-            lookahead += 1;
-
-            while matches!(
-                self.tokens.get(lookahead),
-                Some(Token::Comma)
-            ) {
-                lookahead += 1;
-
-                match self.tokens.get(lookahead) {
-                    Some(Token::Identifier(name)) => {
-                        names.push(name.clone());
-                        lookahead += 1;
-                    }
-
-                    _ => return None,
-                }
-            }
-
-            // We only have a declaration if the names are
-            // followed by '='.
-            if matches!(
-                self.tokens.get(lookahead),
-                Some(Token::Equal)
-            ) {
-                // Move parser position to the first variable.
-                self.advance();
-
-                // Consume all variable names.
-                for _ in 0..names.len() {
-                    self.advance();
-
-                    if self.current() == &Token::Comma {
-                        self.advance();
-                    }
-                }
-
-                // Consume '='.
-                if !self.consume(&Token::Equal) {
-                    return None;
-                }
-
-                // Parse all initializer expressions.
-                let mut values = Vec::new();
-
-                loop {
-                    let value = self.parse_expression()?;
-                    values.push(value);
-
-                    if self.current() == &Token::Comma {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-
-                // Number of variables must match number of values.
-                if names.len() != values.len() {
-                    return None;
-                }
-
-                let declarations = names
-                    .into_iter()
-                    .zip(values.into_iter())
-                    .map(|(name, value)| {
-                        VariableDeclaration {
-                            name,
-                            declared_type: Some(first_name.clone()),
-                            value,
-                        }
-                    })
-                    .collect();
-
-                return Some(
-                    Statement::VariableDeclarations {
-                        declarations,
-                    }
-                );
-            }
-        }
-    }
-
-    // ---------------------------------------------------------
-    // Normal expression / assignment
-    // ---------------------------------------------------------
-
-    let expression = self.parse_expression()?;
-
-    if self.current() == &Token::Equal {
-        self.advance();
-
-        let value = self.parse_expression()?;
-
-        Some(Statement::Assignment {
-            target: expression,
-            value,
-        })
-    } else {
-        Some(Statement::Expression(expression))
-    }
-}
-        _ => None,
-    }
-}
 
 
 
@@ -741,27 +988,58 @@ fn parse_unary(&mut self) -> Option<Expression> {
         let mut expression = match self.current() {
 
             Token::Identifier(name) => {
-                let name = name.clone();
+    let name = name.clone();
+    self.advance();
+
+    // Enum constructor:
+    //
+    // Color::Red
+    // Color::Rgb(255, 0, 0)
+    //
+    if self.current() == &Token::DoubleColon {
+        self.advance();
+
+        let variant = match self.current() {
+            Token::Identifier(variant) => {
+                let variant = variant.clone();
                 self.advance();
-
-                if self.current() == &Token::LeftParen {
-                    let arguments = self.parse_arguments()?;
-
-                    Expression::Call {
-                        name,
-                        arguments,
-                        generic_arguments: Vec::new(),
-                    }
-                } else if self.current() == &Token::LeftBrace {
-                    let fields = self.parse_struct_fields()?;
-                    Expression::StructConstructor {
-                    name,
-                    fields,
-                    }
-                } else {
-                    Expression::Identifier(name)
-                }
+                variant
             }
+            _ => return None,
+        };
+
+        let arguments = if self.current() == &Token::LeftParen {
+            self.parse_arguments()?
+        } else {
+            Vec::new()
+        };
+
+        Expression::EnumConstructor {
+            enum_name: name,
+            variant,
+            arguments,
+        }
+    } else if self.current() == &Token::LeftParen {
+        let arguments = self.parse_arguments()?;
+
+        Expression::Call {
+            name,
+            arguments,
+            generic_arguments: Vec::new(),
+        }
+    } else if self.current() == &Token::LeftBrace
+    && self.allow_struct_constructor
+{
+    let fields = self.parse_struct_fields()?;
+
+        Expression::StructConstructor {
+            name,
+            fields,
+        }
+    } else {
+        Expression::Identifier(name)
+    }
+}
 
         Token::Num(value) => {
             let value = *value;

@@ -2,12 +2,20 @@
 use std::collections::HashMap;
 use crate::ast::*;
 use crate::errors::*;
-use crate::types::{Type, StructDefinition};
+
+
+use crate::types::{
+    Type,
+    StructDefinition,
+    EnumDefinition,
+    EnumVariantDefinition,
+};
 
 pub struct TypeEnvironment {
     pub scopes: Vec<HashMap<String, VariableInfo>>,
     pub functions: HashMap<String, FunctionType>,
     pub structs: HashMap<String, StructDefinition>,
+    pub enums: HashMap<String, EnumDefinition>,
 }
 struct FunctionContext {
     return_type: Option<Type>,
@@ -65,6 +73,10 @@ impl TypeChecker {
     }
 }
 
+
+
+
+
     fn push_scope(&mut self) {
     self.environment.scopes.push(HashMap::new());
 }
@@ -73,6 +85,10 @@ impl TypeChecker {
         self.environment.scopes.pop();
     }
     
+
+
+
+
     fn declare_variable(
     &mut self,
     name: String,
@@ -107,6 +123,9 @@ impl TypeChecker {
         None
     }
 
+
+
+
     fn lookup_variable_info(&self, name: &str) -> Option<VariableInfo> {
         for scope in self.environment.scopes.iter().rev() {
             if let Some(info) = scope.get(name) {
@@ -115,6 +134,8 @@ impl TypeChecker {
         }
         None
     }
+
+
 
     
 
@@ -133,6 +154,9 @@ impl TypeChecker {
         _ => None,
     }
 }
+
+
+
 
 fn property_target_is_mutable(
     &self,
@@ -154,6 +178,9 @@ fn property_target_is_mutable(
     Ok(info.mutable)
 }
 
+
+
+
     fn require_bool(&self,found: Type)
         -> Result<(), FusionError>
     {
@@ -172,6 +199,8 @@ fn property_target_is_mutable(
         }
     }
 
+
+
     fn operator_name(&self,operator: &Operator) -> String {
         match operator {
         Operator::Plus => "+".into(),
@@ -189,6 +218,9 @@ fn property_target_is_mutable(
         }
     }
 
+
+
+
     pub fn new()->Self {
         let mut functions = HashMap::new();
         functions.insert(
@@ -203,10 +235,14 @@ fn property_target_is_mutable(
             scopes: vec![HashMap::new()],
             functions,
             structs: HashMap::new(),
+            enums: HashMap::new(),
             },
             current_function: None,
         }
     }
+
+
+
 
     fn convert_type(
         &self,
@@ -222,12 +258,19 @@ fn property_target_is_mutable(
             Ok(Type::Struct(name.clone()))
         }
 
+        _ if self.environment.enums.contains_key(name) => {
+            Ok(Type::Enum(name.clone()))
+        }
+
         _ => Err(FusionError::TypeMismatch {
             expected: "known type".into(),
             found: name.clone(),
             }),
         }
     }
+
+
+
 
     fn block_returns(statements:&Vec<Statement>) -> bool {
         for statement in statements {
@@ -254,6 +297,9 @@ fn property_target_is_mutable(
         false
     }
     
+
+
+
     fn infer_expression(&self,expression:&Expression)-> Result<Type,FusionError>
     {
         match expression {
@@ -319,9 +365,62 @@ fn property_target_is_mutable(
                             )
                         );
                     }
+                }
+                Ok(Type::Struct(name.clone()))
             }
-            Ok(Type::Struct(name.clone()))
+            Expression::EnumConstructor {
+                enum_name,
+                variant,
+                arguments,
+                } => {
+                let definition = self
+                .environment
+                .enums
+                .get(enum_name)
+                .ok_or_else(|| {
+                FusionError::UnknownVariable(enum_name.clone())
+                })?;
+
+            let variant_definition = definition
+            .variants
+            .get(variant)
+            .ok_or_else(|| {
+                FusionError::UnknownVariable(format!(
+                "Unknown variant '{}::{}'",
+                enum_name,
+                variant
+                ))
+            })?;
+
+        if arguments.len() != variant_definition.fields.len() {
+            return Err(FusionError::TypeMismatch {
+                expected: format!(
+                    "{} arguments",
+                    variant_definition.fields.len()
+                ),
+                found: format!(
+                    "{} arguments",
+                    arguments.len()
+                ),
+            });
         }
+
+        for (argument, expected_type)
+            in arguments.iter().zip(variant_definition.fields.iter())
+            {
+                let actual_type =
+                self.infer_expression(argument)?;
+
+                if actual_type != *expected_type {
+                    return Err(FusionError::TypeMismatch {
+                        expected: format!("{:?}", expected_type),
+                        found: format!("{:?}", actual_type),
+                        });
+                    }
+                }
+
+            Ok(Type::Enum(enum_name.clone()))
+            }
         Expression::Binary {
             left,
             operator,
@@ -440,9 +539,9 @@ Expression::Identifier(name)=>{
 Expression::Unary {
     operator,
     expression,
-} => {
+    } => {
     let inner_type =
-        self.infer_expression(expression)?;
+    self.infer_expression(expression)?;
     match operator {
         UnaryOperator::Negate => {
             if inner_type == Type::Num
@@ -744,50 +843,53 @@ pub fn check_statement(&mut self,statement:&Statement)
         }
     }
 }
-Statement::Call(expression) => {
-    self.infer_expression(expression)?;
-    Ok(())
-}
+
+
+
+    Statement::Call(expression) => {
+        self.infer_expression(expression)?;
+        Ok(())
+    }
 
     Statement::VariableDeclarations { declarations } => {
-    for declaration in declarations {
-        let inferred = self.infer_expression(&declaration.value)?;
+        for declaration in declarations {
+            let inferred = self.infer_expression(&declaration.value)?;
 
-        let ty = match &declaration.declared_type {
-            Some(type_name) => {
-                let declared =
-                    self.convert_type(type_name)?;
+            let ty = match &declaration.declared_type {
+                Some(type_name) => {
+                    let declared =
+                        self.convert_type(type_name)?;
 
-                if declared != inferred {
-                    return Err(
-                        FusionError::TypeMismatch {
-                            expected: format!("{:?}", declared),
-                            found: format!("{:?}", inferred),
-                        }
-                    );
-                }
-
+                    if declared != inferred {
+                        return Err(
+                            FusionError::TypeMismatch {
+                                expected: format!("{:?}", declared),
+                                found: format!("{:?}", inferred),
+                            }
+                        );
+                    }
                 declared
-            }
-
+                }
             None => inferred,
-        };
+            };
 
         self.declare_variable(
             declaration.name.clone(),
             ty,
             true,
         )?;
+        }
+        Ok(())
     }
 
-    Ok(())
-}
 
-Statement::If {
-    condition,
-    body,
-    else_body,
-} => {
+
+
+    Statement::If {
+        condition,
+        body,
+        else_body,
+    } => {
     let condition_type =
         self.infer_expression(condition)?;
     self.require_bool(condition_type)?;
@@ -797,29 +899,29 @@ Statement::If {
 
     for statement in body {
         if let Err(error) = self.check_statement(statement) {
-        self.pop_scope();
-        return Err(error);
-    }
-    }
-
-    self.pop_scope();
-
-    // ELSE body gets its own independent scope.
-    if let Some(else_statements) = else_body {
-    self.push_scope();
-
-    for statement in else_statements {
-        if let Err(error) = self.check_statement(statement) {
             self.pop_scope();
             return Err(error);
         }
     }
 
     self.pop_scope();
-}
 
+    // ELSE body gets its own independent scope.
+    if let Some(else_statements) = else_body {
+        self.push_scope();
+
+        for statement in else_statements {
+            if let Err(error) = self.check_statement(statement) {
+                self.pop_scope();
+                return Err(error);
+            }
+        }
+        self.pop_scope();
+    }
     Ok(())
 }
+
+
 
     Statement::ConstDeclaration {
     name,
@@ -1075,6 +1177,37 @@ for statement in &program.statements {
             // Structs were already checked above.
         }
 
+        Statement::Enum {
+            name,
+            variants,
+            } => {
+                let mut enum_variants = HashMap::new();
+
+                for variant in variants {
+                    let mut field_types = Vec::new();
+
+                    for field in &variant.fields {
+                        let field_type = self.convert_type(field)?;
+                        field_types.push(field_type);
+                    }
+
+                    enum_variants.insert(
+                        variant.name.clone(),
+                        EnumVariantDefinition {
+                            fields: field_types,
+                        },
+                    );
+                }
+                self.environment.enums.insert(
+                name.clone(),
+                EnumDefinition {
+                variants: enum_variants,
+                },
+            );
+        }
+
+
+
         Statement::Function {
             parameters,
             return_type,
@@ -1141,8 +1274,6 @@ for statement in &program.statements {
 
     Ok(())
 }
-
-
 
 
 }
