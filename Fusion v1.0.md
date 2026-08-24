@@ -206,22 +206,11 @@ Interpreter-first, compiler-first architecture
 Fusion may initially use an interpreter because it provides a fast development cycle.
 
 
-
-
-
-
-
 However:
 Build the interpreter first, but design the architecture around the compiler.
 This allows language experimentation without locking the project into an interpreter-only execution model.
 
-JIT and AOT
-A long-term goal is to support both:
-JIT. Just-in-Time compilation can optimize code based on how it actually runs.
-AOT. Ahead-of-Time compilation can produce native executables with:
-
-repl + jupyiter
-
-And of course language interoperability, this means the user should be able to
-install the C plugin and write C code, install the rust plugin and write rust code...
-as well as use foreign libraries without any additional installation.
+A long-term goal is to support:
+5 layers of integration, JIT and AOT, repl + jupyiter, sqllite, actors system(erlang/elixir).
+Fusion 1.0 doesn't need to implement every integration!
+It needs to make implementing those integrations possible without redesigning the language.
