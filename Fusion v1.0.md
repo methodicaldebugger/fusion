@@ -210,7 +210,12 @@ However:
 Build the interpreter first, but design the architecture around the compiler.
 This allows language experimentation without locking the project into an interpreter-only execution model.
 
-A long-term goal is to support:
+The long-term goal is to support:
 5 layers of integration, JIT and AOT, repl + jupyiter, sqllite, actors system(erlang/elixir).
 Fusion 1.0 doesn't need to implement every integration!
 It needs to make implementing those integrations possible without redesigning the language.
+
+Here is what fusion 1.0(already self-hoasting) needs to make possible:
+5 layers of interoperability, cloud builds, jit+aot, actors(like elixir/erlang)
+repl+jupyter, UI framework(like flutter), sqlite. 
+These should be build by the community(not me) and the architecture of fusion, should enable this.
