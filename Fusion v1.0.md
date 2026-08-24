@@ -219,3 +219,42 @@ Here is what fusion 1.0(already self-hoasting) needs to make possible:
 5 layers of interoperability, cloud builds, jit+aot, actors(like elixir/erlang)
 repl+jupyter, UI framework(like flutter), sqlite. 
 These should be build by the community(not me) and the architecture of fusion, should enable this.
+
+
+Fusions (current) pipeline:
+                    Fusion source
+                         │
+                         ▼
+                      Lexer
+                         │
+                    Token + Span
+                         │
+                         ▼
+                      Parser
+                         │
+                         ▼
+                        AST
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+        source spans           syntax only
+              │                     │
+              └──────────┬──────────┘
+                         ▼
+                  Name Resolution
+                         │
+                         ▼
+                    Typed HIR
+                         │
+                  type checking
+                         │
+                         ▼
+                       MIR
+                         │
+             ┌───────────┼───────────┐
+             ▼           ▼           ▼
+        Interpreter      JIT         AOT
+             │           │           │
+             └───────────┼───────────┘
+                         ▼
+                    Fusion Runtime
