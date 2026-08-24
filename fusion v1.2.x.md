@@ -1,4 +1,4 @@
-Version 3.x(at this point we are talking about a very ambitious project)
+Version 1.2.x(at this point we are talking about a very ambitious project)
 maintenance will become a problem(as new versions of other languages come out)
 plugins with other languages are owned, built, maintained by the community(are downloaded separately by need)
 fusion will become gigantic and the use of cloud builds becomes an advantage
