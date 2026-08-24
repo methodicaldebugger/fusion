@@ -5,8 +5,6 @@ Fusion aims to provide one language and one toolchain that can gradually interop
 The goal is knowledge interoperability, languages should not be isolated islands, developers worldwide must unite.
 The goal is bridging communities, knowledge transfer, and interoperability.
 
-Learn more about fusion and download the files at: https://fusion.ifree.page
-
 
 
 
@@ -32,7 +30,7 @@ SQLite support
 Fusion 1.2 has Tier 1 plugin for the C language(built by me)
 I will stop building fusion at this point!
 
-
+Send me files you have made by visiting the link: https://fusion.ifree.page
 
 Fusion 2.0 and beyond — Ecosystem interoperability
 List of goals includes(others will build these):

@@ -1,3 +1,6 @@
+Send me files you have made by visiting the link: https://fusion.ifree.page
+
+
 When fusion has:
 achieved self-hoasting and C interoperability
 I stop building it, the community may continue.
