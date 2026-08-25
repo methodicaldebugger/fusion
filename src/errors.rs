@@ -1,36 +1,97 @@
 //contents of errors.rs
-#[derive(Debug)]
+use crate::span::Span;
+
+#[derive(Debug, Clone)]
 pub enum FusionError {
-    UnknownVariable(String),
-    TypeMismatch {
-        expected:String,
-        found:String,
+    Lexer {
+        message: String,
+        span: Span,
     },
-    CannotAssignToConst(String),
+
+    Syntax {
+        message: String,
+        span: Span,
+    },
+
+    UnknownVariable {
+        name: String,
+        span: Span,
+    },
+
+    TypeMismatch {
+        expected: String,
+        found: String,
+        span: Span,
+    },
+
+    CannotAssignToConst {
+        name: String,
+        span: Span,
+    },
+
     InvalidOperation {
-        left:String,
-        operator:String,
-        right:String,
-    }
+        left: String,
+        operator: String,
+        right: String,
+        span: Span,
+    },
 }
+
 impl std::fmt::Display for FusionError {
-    fn fmt(&self,f:&mut std::fmt::Formatter)->std::fmt::Result
-    {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
         match self {
-            FusionError::UnknownVariable(name)=>
-                write!(f,"Unknown variable '{}'",name),
+            FusionError::Lexer { message, .. } => {
+                write!(f, "{}", message)
+            }
+
+            FusionError::Syntax { message, .. } => {
+                write!(f, "{}", message)
+            }
+
+            FusionError::UnknownVariable { name, .. } => {
+                write!(f, "Unknown variable '{}'", name)
+            }
+
             FusionError::TypeMismatch {
-                expected,found
-            }=>
-                write!(f,"Type mismatch: expected {}, found {}",expected,found),
-            FusionError::CannotAssignToConst(name) =>
-                write!(f,"Cannot assign to constant '{}'",name),
+                expected,
+                found,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Type mismatch: expected {}, found {}",
+                    expected,
+                    found
+                )
+            }
+
+            FusionError::CannotAssignToConst { name, .. } => {
+                write!(
+                    f,
+                    "Cannot assign to constant '{}'",
+                    name
+                )
+            }
+
             FusionError::InvalidOperation {
                 left,
                 operator,
-                right
-            }=>
-                write!(f,"Invalid operation: {} {} {}",left,operator,right),
+                right,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Invalid operation: {} {} {}",
+                    left,
+                    operator,
+                    right
+                )
+            }
         }
     }
 }
+
+impl std::error::Error for FusionError {}
