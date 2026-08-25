@@ -99,14 +99,14 @@ pub struct Lexer {
     column: usize,
     line_start: bool,
     indentation_stack: Vec<usize>,
-    pending_tokens: VecDeque<Token>,
+    pending_tokens: VecDeque<Spanned<Token>>,
     block_mode: BlockMode,
     brace_depth: usize,
 }
 
 impl Lexer {
 
-    fn detect_block_mode(source: &str) -> BlockMode {
+    fn detect_block_mode(source: &str) -> Result<BlockMode, LexError> {
     for line in source.lines() {
         let trimmed = line.trim();
 
@@ -119,112 +119,57 @@ impl Lexer {
             continue;
         }
 
-        // Valid indentation-style main:
-        // main:
+        // Valid indentation-style main.
         if trimmed == "main:" {
-            return BlockMode::Indentation;
+            return Ok(BlockMode::Indentation);
         }
 
-        // Valid brace-style main:
-        // main{
+        // Valid brace-style main.
         if trimmed == "main{" {
-            return BlockMode::Braces;
+            return Ok(BlockMode::Braces);
         }
 
-        // Invalid forms:
-        // main :
-        // main {
+        // Invalid forms.
         if trimmed == "main :" || trimmed == "main {" {
-            panic!(
-                "Invalid main declaration: use `main:` or `main{{` without whitespace"
-            );
+            return Err(LexError {
+                message: "Invalid main declaration: use `main:` or `main{` without whitespace"
+                    .into(),
+                position: 0,
+                line: 1,
+                column: 1,
+            });
         }
-
-        // If this is some other non-comment code, continue looking
-        // for the main declaration.
     }
 
-    panic!("Could not determine block mode: expected `main:` or `main{{`");
+    Err(LexError {
+        message: "Could not determine block mode: expected `main:` or `main{`".into(),
+        position: 0,
+        line: 1,
+        column: 1,
+    })
 }
 
     pub fn new(source: &str, block_mode: BlockMode) -> Self {
-        let detected_mode = match block_mode {
-            BlockMode::Unknown => Self::detect_block_mode(source),
-            mode => mode,
-        };
+    let detected_mode = match block_mode {
+        BlockMode::Unknown => Self::detect_block_mode(source)
+            .expect("Failed to detect block mode"),
+        mode => mode,
+    };
 
-        Self {
-            input: source.chars().collect(),
-            position: 0,
-            line: 1,
-            column: 1,
-            line_start: true,
-            indentation_stack: vec![0],
-            pending_tokens: VecDeque::new(),
-            block_mode: detected_mode,
-            brace_depth: 0,
-        }
+    Self {
+        input: source.chars().collect(),
+        position: 0,
+        line: 1,
+        column: 1,
+        line_start: true,
+        indentation_stack: vec![0],
+        pending_tokens: VecDeque::new(),
+        block_mode: detected_mode,
+        brace_depth: 0,
     }
+}
 
-    fn handle_indentation(&mut self) -> Result<(), LexError> {
-        if self.block_mode != BlockMode::Indentation {
-            self.skip_spaces();
-            return Ok(());
-        }
 
-        let mut spaces = 0;
-
-        while let Some(ch) = self.peek() {
-            match ch {
-                ' ' => {
-                    spaces += 1;
-                    self.advance();
-                }
-
-                '\t' => {
-                    spaces += 4;
-                    self.advance();
-                }
-
-                _ => break,
-            }
-        }
-
-        // Blank line: don't modify indentation state.
-        if self.peek() == Some('\n') {
-            return Ok(());
-        }
-
-        // EOF on a whitespace-only line.
-        if self.peek().is_none() {
-            return Ok(());
-        }
-
-        let current = *self.indentation_stack.last().unwrap();
-
-        if spaces > current {
-            self.indentation_stack.push(spaces);
-            self.pending_tokens.push_back(Token::Indent);
-        } else if spaces < current {
-            while self.indentation_stack.len() > 1
-                && spaces < *self.indentation_stack.last().unwrap()
-            {
-                self.indentation_stack.pop();
-                self.pending_tokens.push_back(Token::Dedent);
-            }
-
-            if spaces != *self.indentation_stack.last().unwrap() {
-                return Err(LexError {
-                    message: "Invalid indentation level".into(),
-                    position: self.position,
-                    line: self.line,
-                    column: self.column,
-                });
-            }
-        }
-
-        Ok(())
-    }
     fn peek(&self) -> Option<char> {
         self.input.get(self.position).copied()
     }
@@ -323,11 +268,95 @@ impl Lexer {
         column: self.column,
     })
 }
+
+    fn read_indentation(&mut self) -> (usize, usize) {
+    let mut index = self.position;
+    let mut width = 0;
+
+    while let Some(&ch) = self.input.get(index) {
+        match ch {
+            ' ' => {
+                width += 1;
+                index += 1;
+            }
+
+            '\t' => {
+                width += 8 - (width % 8);
+                index += 1;
+            }
+
+            _ => break,
+        }
+    }
+
+    (index, width)
+}
+
+    fn handle_indentation(&mut self) -> Result<(), LexError> {
+    if self.block_mode != BlockMode::Indentation {
+        self.skip_spaces();
+        return Ok(());
+    }
+
+    let start = self.position;
+    let (indent_end, width) = self.read_indentation();
+
+    // Consume the indentation characters so position/column stay correct.
+    while self.position < indent_end {
+        self.advance();
+    }
+
+    // Blank line: indentation does not affect the stack.
+    if matches!(self.peek(), Some('\n')) {
+        return Ok(());
+    }
+
+    // EOF after whitespace.
+    if self.peek().is_none() {
+        return Ok(());
+    }
+
+    let current = *self.indentation_stack.last().unwrap();
+
+    if width > current {
+        self.indentation_stack.push(width);
+
+        self.pending_tokens.push_back(Spanned::new(
+            Token::Indent,
+            start,
+            indent_end,
+        ));
+    } else if width < current {
+        while self.indentation_stack.len() > 1
+            && width < *self.indentation_stack.last().unwrap()
+        {
+            self.indentation_stack.pop();
+
+            self.pending_tokens.push_back(Spanned::new(
+                Token::Dedent,
+                start,
+                indent_end,
+            ));
+        }
+
+        if width != *self.indentation_stack.last().unwrap() {
+            return Err(LexError {
+                message: "Unindent does not match any outer indentation level".into(),
+                position: start,
+                line: self.line,
+                column: self.column,
+            });
+        }
+    }
+
+    Ok(())
+}
+
     fn next_token(&mut self) -> Result<Token, LexError> {
         
         if let Some(token) = self.pending_tokens.pop_front() {
-            return Ok(token);
-        }
+    return Ok(token.node);
+}
         if self.line_start {
     // Check for completely blank lines first.
     let mut lookahead = self.position;
@@ -340,24 +369,30 @@ impl Lexer {
         }
     }
 
-    // Blank line: consume whitespace/newline without changing indentation.
-    if self.input.get(lookahead) == Some(&'\n') {
-        while matches!(self.peek(), Some(' ' | '\t' | '\n')) {
-            self.advance();
-        }
-
-        self.line_start = true;
-
-        return self.next_token();
+    // Blank line: consume only the whitespace belonging to this
+// blank line and its newline. Do NOT consume indentation from
+// the next non-empty line.
+if self.input.get(lookahead) == Some(&'\n') {
+    while matches!(self.peek(), Some(' ' | '\t')) {
+        self.advance();
     }
+
+    if self.peek() == Some('\n') {
+        self.advance();
+    }
+
+    self.line_start = true;
+
+    return self.next_token();
+}
 
     self.handle_indentation()?;
 
     self.line_start = false;
 
     if let Some(token) = self.pending_tokens.pop_front() {
-        return Ok(token);
-    }
+    return Ok(token.node);
+}
 }
         while matches!(self.peek(), Some(' ' | '\t')) {
     self.advance();
@@ -380,17 +415,6 @@ impl Lexer {
 {
     self.indentation_stack.pop();
     return Ok(Token::Dedent);
-}
-
-if self.block_mode == BlockMode::Braces
-    && self.brace_depth > 0
-{
-    return Err(LexError {
-        message: "Unclosed '{' at end of file".into(),
-        position: self.position,
-        line: self.line,
-        column: self.column,
-    });
 }
 
     return Ok(Token::Eof);

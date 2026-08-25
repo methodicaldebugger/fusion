@@ -39,7 +39,50 @@ multiple toolchains, package systems, build systems, runtimes, development envir
 
 
 
+We are currently implementing:
+I'd do these in this exact order:
 
+Phase 1 — Stabilize
+cargo fmt
+cargo clippy
+Restore Spanned<Token> inside lexer pending queues
+Remove compiler panic!() paths for user errors
+Introduce LexError / ParseError
+Make parser return Result
+Make assignment require declaration
+
+Phase 2 — Semantics
+Define scope rules
+Define defer rules
+Finish function return checking
+Make type checker/interpreter rules identical
+Centralize type conversion
+Finish array typing
+Finish enum/match semantics
+
+Phase 3 — Diagnostics
+Add spans to all major AST nodes
+Build a proper diagnostic type
+Add source snippets
+Add error codes
+
+Phase 4 — Tests
+Lexer unit tests
+Parser unit tests
+Type checker tests
+Interpreter tests
+Full integration tests
+Invalid-program tests
+
+Phase 5 — Features
+Only after that I'd start adding major language features such as:
+generics
+traits
+imports
+async/await
+interoperability
+modules
+compiler backend
 
 
 
