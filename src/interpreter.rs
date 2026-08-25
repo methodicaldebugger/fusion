@@ -454,7 +454,7 @@ Flow::Continue => {
     statement: &Statement,
     ) -> Flow {
         match statement {
-            Statement::VariableDeclarations { declarations } => {
+            Statement::VariableDeclarations { declarations, .. } => {
     for declaration in declarations {
         let result = self.evaluate(&declaration.value);
 

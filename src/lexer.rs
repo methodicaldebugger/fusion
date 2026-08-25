@@ -1,5 +1,6 @@
 //contents of lexer.rs
 use std::collections::VecDeque;
+use crate::span::{Span, Spanned};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlockMode {
@@ -688,18 +689,26 @@ if self.block_mode == BlockMode::Braces
             }
         }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token>, LexError> {
-        let mut tokens = Vec::new();
-        loop {
-            let token = self.next_token()?;
-            let end = token == Token::Eof;
-            tokens.push(token);
-            if end {
-                 break;
-            }
+    pub fn tokenize(&mut self) -> Result<Vec<Spanned<Token>>, LexError> {
+    let mut tokens = Vec::new();
+
+    loop {
+        let start = self.position;
+
+        let token = self.next_token()?;
+
+        let end = self.position;
+        let is_eof = token == Token::Eof;
+
+        tokens.push(Spanned::new(token, start, end));
+
+        if is_eof {
+            break;
         }
-    Ok(tokens)
     }
+
+    Ok(tokens)
+}
     fn read_number(&mut self) -> Result<Token, LexError> {
     let mut value = String::new();
     let mut has_dot = false;

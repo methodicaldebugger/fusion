@@ -1041,7 +1041,7 @@ pub fn check_statement(&mut self,statement:&Statement)
         Ok(())
     }
 
-    Statement::VariableDeclarations { declarations } => {
+    Statement::VariableDeclarations { declarations, .. } => {
         for declaration in declarations {
             let inferred = self.infer_expression(&declaration.value)?;
 
@@ -1264,6 +1264,7 @@ match &expression_type {
     name,
     declared_type,
     value,
+    ..
 } => {
     let inferred =
         self.infer_expression(value)?;

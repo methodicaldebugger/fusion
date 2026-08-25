@@ -1,5 +1,11 @@
 //contents of ast.rs
 
+use crate::span::Span;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeInfo {
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct Program {
     pub statements: Vec<Statement>,
@@ -8,25 +14,30 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: String,
+    pub name_span: Span,
     pub type_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct VariableDeclaration {
     pub name: String,
+    pub name_span: Span,
     pub declared_type: Option<String>,
     pub value: Expression,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructField {
     pub name: String,
+    pub name_span: Span,
     pub type_name: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
+    pub name_span: Span,
     pub fields: Vec<String>,
 }
 
@@ -60,15 +71,17 @@ pub enum Pattern {
 
 #[derive(Debug, Clone)]
 pub enum Statement {
-
     VariableDeclarations {
         declarations: Vec<VariableDeclaration>,
+        span: Span,
     },
 
     ConstDeclaration {
         name: String,
+        name_span: Span,
         declared_type: Option<String>,
         value: Expression,
+        span: Span,
     },
 
     Assignment {

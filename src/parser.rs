@@ -2,6 +2,7 @@
 //contents of parser.rs
 use crate::lexer::Token;
 use crate::ast::*;
+use crate::span::{Span, Spanned};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BlockStyle {
@@ -11,7 +12,7 @@ enum BlockStyle {
 }
 
 pub struct Parser {
-    tokens: Vec<Token>,
+    tokens: Vec<Spanned<Token>>,
     position: usize,
     allow_struct_constructor: bool,
 
@@ -107,7 +108,7 @@ impl Parser {
         self.seen_main = true;
     }
 
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Spanned<Token>>) -> Self {
         Self {
             tokens,
             position: 0,
@@ -240,16 +241,20 @@ impl Parser {
         }
 
         Token::Const => {
-            self.advance();
+    let statement_start = self.current_span().start;
 
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-                _ => return None,
-            };
+    self.advance();
+
+    let name_span = self.current_span();
+
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            name
+        }
+        _ => return None,
+    };
 
             let declared_type = if self.consume(&Token::Colon) {
                 Some(self.parse_type()?)
@@ -264,10 +269,15 @@ impl Parser {
             let value = self.parse_expression()?;
 
             Some(Statement::ConstDeclaration {
-                name,
-                declared_type,
-                value,
-            })
+    name,
+    name_span,
+    declared_type,
+    value,
+    span: Span::new(
+        statement_start,
+        self.current_span().end,
+    ),
+})
         }
 
 
@@ -284,27 +294,39 @@ impl Parser {
             // -------------------------------------------------
 
             if let Some(Token::Identifier(_)) =
-                self.tokens.get(self.position + 1)
+                self.peek_at(self.position + 1)
             {
+                let statement_start = self.current_span().start;
                 let mut lookahead = self.position + 1;
 
                 let mut names = Vec::new();
+                let mut name_spans = Vec::new();
 
                 if let Some(Token::Identifier(name)) =
-                    self.tokens.get(lookahead)
+                self.peek_at(lookahead)
                 {
                     names.push(name.clone());
+
+                    if let Some(token) = self.tokens.get(lookahead) {
+                        name_spans.push(token.span);
+                    }
+
                     lookahead += 1;
 
                     while matches!(
-                        self.tokens.get(lookahead),
+                        self.peek_at(lookahead),
                         Some(Token::Comma)
                     ) {
                         lookahead += 1;
 
-                        match self.tokens.get(lookahead) {
+                        match self.peek_at(lookahead) {
                             Some(Token::Identifier(name)) => {
                                 names.push(name.clone());
+
+                                if let Some(token) = self.tokens.get(lookahead) {
+                                    name_spans.push(token.span);
+                                }
+
                                 lookahead += 1;
                             }
 
@@ -313,9 +335,9 @@ impl Parser {
                     }
 
                     if matches!(
-                        self.tokens.get(lookahead),
+                        self.peek_at(lookahead),
                         Some(Token::Equal)
-                    ) {
+                        ) {
                         // Move from the type name to the first variable.
                         self.advance();
 
@@ -352,23 +374,31 @@ impl Parser {
 
                         let declarations = names
                             .into_iter()
+                            .zip(name_spans.into_iter())
                             .zip(values.into_iter())
-                            .map(|(name, value)| {
-                                VariableDeclaration {
-                                    name,
-                                    declared_type: Some(
-                                        first_name.clone()
+                            .map(|((name, name_span), value)| {
+                            VariableDeclaration {
+                                name,
+                                name_span,
+                                declared_type: Some(first_name.clone()),
+                                value,
+                                span: Span::new(
+                                    statement_start,
+                                    self.current_span().end,
                                     ),
-                                    value,
                                 }
                             })
-                            .collect();
+                        .collect();
 
                         return Some(
                             Statement::VariableDeclarations {
-                                declarations,
-                            }
-                        );
+                            declarations,
+                            span: Span::new(
+                                statement_start,
+                                self.current_span().end,
+                            ),
+                        }
+                    );
                     }
                 }
             }
@@ -460,14 +490,16 @@ impl Parser {
             continue;
         }
 
+        let field_name_span = self.current_span();
+
         let field_name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-            _ => return None,
-        };
+    Token::Identifier(name) => {
+        let name = name.clone();
+        self.advance();
+        name
+    }
+    _ => return None,
+};
 
         if !self.consume(&Token::Colon) {
             return None;
@@ -477,6 +509,7 @@ impl Parser {
 
         fields.push(StructField {
             name: field_name,
+            name_span: field_name_span,
             type_name,
         });
 
@@ -523,14 +556,16 @@ impl Parser {
             continue;
         }
 
-        let variant_name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-            _ => return None,
-        };
+        let variant_name_span = self.current_span();
+
+let variant_name = match self.current() {
+    Token::Identifier(name) => {
+        let name = name.clone();
+        self.advance();
+        name
+    }
+    _ => return None,
+};
 
         let mut fields = Vec::new();
 
@@ -555,9 +590,10 @@ impl Parser {
         }
 
         variants.push(EnumVariant {
-            name: variant_name,
-            fields,
-        });
+    name: variant_name,
+    name_span: variant_name_span,
+    fields,
+});
 
         if self.current() == &Token::Comma {
             self.advance();
@@ -582,78 +618,59 @@ impl Parser {
     fn parse_pattern(&mut self) -> Option<Pattern> {
     match self.current() {
         Token::Identifier(name) => {
-            let first = name.clone();
-            self.advance();
+    let first = name.clone();
+    self.advance();
 
-            // Wildcard pattern:
-            //
-            // _
-            //
-            if first == "_" {
-                return Some(Pattern::Wildcard);
+    if first == "_" {
+        return Some(Pattern::Wildcard);
+    }
+
+    if self.consume(&Token::DoubleColon) {
+        let variant = match self.current() {
+            Token::Identifier(name) => {
+                let variant = name.clone();
+                self.advance();
+                variant
             }
+            _ => return None,
+        };
 
-            // Variant pattern:
-            //
-            // Result::Ok(value)
-            if self.consume(&Token::DoubleColon) {
-                let variant = match self.current() {
+        let mut bindings = Vec::new();
+
+        if self.consume(&Token::LeftParen) {
+            while self.current() != &Token::RightParen
+                && self.current() != &Token::Eof
+            {
+                match self.current() {
                     Token::Identifier(name) => {
-                        let variant = name.clone();
+                        bindings.push(name.clone());
                         self.advance();
-                        variant
                     }
                     _ => return None,
-                };
-
-                let mut bindings = Vec::new();
-
-                // Optional bindings:
-                //
-                // Result::Ok(value)
-                if self.consume(&Token::LeftParen) {
-                    while self.current() != &Token::RightParen
-                        && self.current() != &Token::Eof
-                    {
-                        match self.current() {
-                            Token::Identifier(name) => {
-                                bindings.push(name.clone());
-                                self.advance();
-                            }
-
-                            _ => return None,
-                        }
-
-                        if self.consume(&Token::Comma) {
-                            continue;
-                        }
-
-                        if self.current() != &Token::RightParen {
-                            return None;
-                        }
-                    }
-
-                    if !self.consume(&Token::RightParen) {
-                        return None;
-                    }
                 }
 
-                return Some(Pattern::Variant {
-                    name: format!("{}::{}", first, variant),
-                    bindings,
-                });
+                if self.consume(&Token::Comma) {
+                    continue;
+                }
+
+                if self.current() != &Token::RightParen {
+                    return None;
+                }
             }
 
-            // Wildcard:
-// _
-if first == "_" {
-    Some(Pattern::Wildcard)
-} else {
-    // Bare identifier:
-    // value
+            if !self.consume(&Token::RightParen) {
+                return None;
+            }
+        }
+
+        return Some(Pattern::Variant {
+            name: format!("{}::{}", first, variant),
+            bindings,
+        });
+    }
+
     Some(Pattern::Identifier(first))
 }
-        }
 
         Token::Num(value) => {
             let value = *value;
@@ -839,7 +856,15 @@ let expression = expression?;
 
 
     fn current(&self) -> &Token {
-        &self.tokens[self.position]
+        &self.tokens[self.position].node
+    }
+
+    fn peek_at(&self, position: usize) -> Option<&Token> {
+    self.tokens.get(position).map(|token| &token.node)
+}
+
+    fn current_span(&self) -> Span {
+        self.tokens[self.position].span
     }
 
     fn advance(&mut self) {
@@ -938,20 +963,28 @@ let expression = expression?;
                 continue;
             }
             if let Token::Identifier(param) = self.current() {
-                let name = param.clone();
-                self.advance();
-                let mut type_name = None;
-                if self.current() == &Token::Colon {
-                    self.advance();
-                    type_name = self.parse_type();
-                    if type_name.is_none() {
-                        return None;
-                    }
-                }
-                parameters.push(Parameter {name,type_name,});
-                } else {
-                    self.advance();
-                    }
+    let name_span = self.current_span();
+
+    let name = param.clone();
+    self.advance();
+
+    let mut type_name = None;
+
+    if self.current() == &Token::Colon {
+        self.advance();
+        type_name = self.parse_type();
+
+        if type_name.is_none() {
+            return None;
+        }
+    }
+
+    parameters.push(Parameter {
+        name,
+        name_span,
+        type_name,
+    });
+}
                 if self.current() == &Token::Comma {
                     self.advance();
                 }
