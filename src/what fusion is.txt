@@ -501,3 +501,15 @@ I would build a very small Fusion language that can call C libraries first, whil
 The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain."
 
 So you need to prove that claim early.
+
+
+Current status:
+Finish defer semantics
+Finish return/control-flow analysis
+Give every AST node a real span
+Replace parser panic-based errors with Result
+Make interpreter and type checker agree on every supported operation
+Build the conformance test suite
+Then begin bootstrapping the lexer
+
+At that point I'd consider Fusion bootstrap-ready.
