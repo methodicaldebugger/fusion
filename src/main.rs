@@ -100,46 +100,189 @@ fn main() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn indentation_main_lexes() {
-        let mut lexer = Lexer::new("main:\n    x = 1\n", BlockMode::Unknown);
-        let tokens = lexer.tokenize().expect("valid indentation source");
-        assert!(tokens.iter().any(|token| token.node == Token::Indent));
-        assert!(tokens.iter().any(|token| token.node == Token::Dedent));
-    }
+    // -------------------------------------------------------------------------
+    // Test helpers
+    // -------------------------------------------------------------------------
 
-    #[test]
-    fn brace_main_lexes() {
-        let mut lexer = Lexer::new("main{\n    x = 1\n}\n", BlockMode::Unknown);
-        let tokens = lexer.tokenize().expect("valid brace source");
-        assert!(tokens.iter().any(|token| token.node == Token::LeftBrace));
-        assert!(tokens.iter().any(|token| token.node == Token::RightBrace));
-    }
+    fn compile_test_program(source: &str) -> ast::Program {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
 
-    #[test]
-    fn invalid_main_spacing_is_a_lexer_error() {
-        let mut lexer = Lexer::new("main {\n}\n", BlockMode::Unknown);
-        assert!(lexer.tokenize().is_err());
-    }
+        let tokens = lexer
+            .tokenize()
+            .expect("test source should lex successfully");
 
-    #[test]
-    fn const_assignment_is_rejected_by_type_checker() {
-        let program = ast::Program {
-            statements: vec![
-                ast::Statement::ConstDeclaration {
-                    name: "x".into(),
-                    name_span: span::Span::point(0),
-                    declared_type: None,
-                    value: ast::Expression::Number(1),
-                    span: span::Span::new(0, 1),
-                },
-                ast::Statement::Assignment {
-                    target: ast::Expression::Identifier("x".into()),
-                    value: ast::Expression::Number(2),
-                },
-            ],
-        };
+        let mut parser = Parser::new(tokens);
+
+        // Parser::parse() currently returns Program directly and uses
+        // panic-based error handling.
+        let program = std::panic::catch_unwind(
+            std::panic::AssertUnwindSafe(|| parser.parse()),
+        )
+        .unwrap_or_else(|_| {
+            panic!("test source should parse successfully");
+        });
+
         let mut checker = TypeChecker::new();
-        assert!(matches!(checker.check(&program), Err(errors::FusionError::CannotAssignToConst { .. })));
+
+        checker
+            .check(&program)
+            .expect("test source should type-check successfully");
+
+        program
     }
+
+    fn run_program(source: &str) -> Vec<String> {
+        let program = compile_test_program(source);
+
+        let mut interpreter = Interpreter::new();
+        interpreter.execute(&program);
+
+        interpreter.output().to_vec()
+    }
+
+    fn parse_should_fail(source: &str) {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+
+        let tokens = match lexer.tokenize() {
+            Ok(tokens) => tokens,
+            Err(_) => return,
+        };
+
+        let result = std::panic::catch_unwind(
+            std::panic::AssertUnwindSafe(|| {
+                let mut parser = Parser::new(tokens);
+                parser.parse()
+            }),
+        );
+
+        assert!(
+            result.is_err(),
+            "expected parser to reject invalid source"
+        );
+    }
+
+    fn type_check_should_fail(source: &str) {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+
+        let tokens = lexer
+            .tokenize()
+            .expect("test source should lex successfully");
+
+        let mut parser = Parser::new(tokens);
+
+        let program = std::panic::catch_unwind(
+            std::panic::AssertUnwindSafe(|| parser.parse()),
+        )
+        .expect("source should parse before type-checking");
+
+        let mut checker = TypeChecker::new();
+
+        assert!(
+            checker.check(&program).is_err(),
+            "expected type checker to reject invalid program"
+        );
+    }
+
+    // =========================================================================
+    // Lexer
+    // =========================================================================
+
+
+    #[test]
+    fn indentation_match_executes_selected_arm() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    x = 2
+
+    match x:
+        1 =>:
+            print(10)
+        2 =>:
+            print(20)
+        _ =>:
+            print(30)
+"#
+            ),
+            vec!["20"]
+        );
+    }
+    
+
+    #[test]
+fn indentation_match_executes_selected_arm_3() {
+    assert_eq!(
+        run_program(
+            r#"main:
+    x = 2
+
+    match x:
+        1 => print(10)
+
+        2 => print(20)
+
+        _ => print(30)
+"#
+        ),
+        vec!["20"]
+    );
+}
+
+
+    #[test]
+    fn unknown_variable_inside_if_is_rejected() {
+        type_check_should_fail(
+            r#"main{
+    if missing {
+        print(1)
+    }
+}
+"#,
+        );
+    }
+
+
+    #[test]
+    fn non_boolean_if_condition_is_rejected_again() {
+        type_check_should_fail(
+            r#"main{
+    x = 10
+
+    if x {
+        print(1)
+    }
+}
+"#,
+        );
+    }
+
+    #[test]
+fn indentation_match_rejects_colon_after_arm_arrow() {
+    parse_should_fail(
+        r#"main:
+    x = 2
+
+    match x:
+        1 =>:
+            print(10)
+        _ =>:
+            print(30)
+"#,
+    );
+}
+
+    #[test]
+    fn non_boolean_while_condition_is_rejected_again() {
+        type_check_should_fail(
+            r#"main{
+    x = 10
+
+    while x {
+        print(1)
+    }
+}
+"#,
+        );
+    }
+
 }

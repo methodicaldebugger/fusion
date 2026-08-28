@@ -702,25 +702,124 @@ let variant_name = match self.current() {
 
 
     fn parse_match(&mut self) -> Option<Statement> {
+    self.advance(); // consume `match`
 
-    self.advance(); // consume match
-
-    // The `{` after the match expression belongs to the
-    // match statement, not to a struct constructor.
+    // The `{` after a match expression is a match block delimiter,
+    // not a struct constructor.
     let previous = self.allow_struct_constructor;
-self.allow_struct_constructor = false;
+    self.allow_struct_constructor = false;
 
-let expression = self.parse_expression();
+    let expression = self.parse_expression()?;
 
-self.allow_struct_constructor = previous;
+    self.allow_struct_constructor = previous;
 
-let expression = expression?;
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
 
-    if !self.consume(&Token::LeftBrace) {
-        println!(
-            "DEBUG: expected LeftBrace, got {:?}",
-            self.current()
+        Token::LeftBrace => BlockStyle::Braces,
+
+        _ => return None,
+    };
+
+    // Match blocks must obey the same global block style as main.
+    if self.seen_main && self.block_style != style {
+        panic!(
+            "Block style mismatch: main uses {:?}, but match uses {:?}",
+            self.block_style,
+            style
         );
+    }
+
+    self.use_block_style(style);
+
+    let arms = match style {
+        BlockStyle::Indentation => self.parse_indentation_match_arms()?,
+
+        BlockStyle::Braces => self.parse_brace_match_arms()?,
+
+        BlockStyle::Unknown => unreachable!(),
+    };
+
+    Some(Statement::Match {
+        expression,
+        arms,
+    })
+}
+
+    fn parse_indentation_match_arms(&mut self) -> Option<Vec<MatchArm>> {
+    let mut arms = Vec::new();
+
+    // Skip blank lines before the first arm.
+    while self.current() == &Token::NewLine {
+        self.advance();
+    }
+
+    // The match arms themselves form an indentation block.
+    if !self.consume(&Token::Indent) {
+        return None;
+    }
+
+    while self.current() != &Token::Dedent
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
+
+        let pattern = self.parse_pattern()?;
+
+        if !self.consume(&Token::FatArrow) {
+            return None;
+        }
+
+        // Two valid indentation forms:
+        //
+        //     1 =>
+        //         print(10)
+        //
+        // and:
+        //
+        //     1 => print(10)
+        //
+        let body = if self.current() == &Token::NewLine {
+            // Newline means the arm body must be indented.
+            self.advance();
+
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            self.parse_indentation_block()
+        } else {
+            // Inline single-statement arm.
+            let statement = self.parse_statement()?;
+            vec![statement]
+        };
+
+        arms.push(MatchArm {
+            pattern,
+            body,
+        });
+
+        // Consume blank lines between arms.
+        while self.current() == &Token::NewLine {
+            self.advance();
+        }
+    }
+
+    if self.current() == &Token::Dedent {
+        self.advance();
+    }
+
+    Some(arms)
+}
+
+    fn parse_brace_match_arms(&mut self) -> Option<Vec<MatchArm>> {
+    if !self.consume(&Token::LeftBrace) {
         return None;
     }
 
@@ -761,10 +860,7 @@ let expression = expression?;
         return None;
     }
 
-    Some(Statement::Match {
-        expression,
-        arms,
-    })
+    Some(arms)
 }
 
 
