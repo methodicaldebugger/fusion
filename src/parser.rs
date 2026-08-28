@@ -188,7 +188,12 @@ impl Parser {
         Token::While => {
     self.advance();
 
+    let previous = self.allow_struct_constructor;
+    self.allow_struct_constructor = false;
+
     let condition = self.parse_expression()?;
+
+    self.allow_struct_constructor = previous;
 
     let body = self.parse_style_block()?;
 
@@ -201,7 +206,12 @@ impl Parser {
         Token::If => {
     self.advance();
 
+    let previous = self.allow_struct_constructor;
+    self.allow_struct_constructor = false;
+
     let condition = self.parse_expression()?;
+
+    self.allow_struct_constructor = previous;
 
     let body = self.parse_style_block()?;
 
@@ -772,33 +782,27 @@ let variant_name = match self.current() {
 
         let pattern = self.parse_pattern()?;
 
-        if !self.consume(&Token::FatArrow) {
-            return None;
-        }
+if !self.consume(&Token::FatArrow) {
+    return None;
+}
 
-        // Two valid indentation forms:
-        //
-        //     1 =>
-        //         print(10)
-        //
-        // and:
-        //
-        //     1 => print(10)
-        //
-        let body = if self.current() == &Token::NewLine {
-            // Newline means the arm body must be indented.
-            self.advance();
+// `=>:` is invalid in indentation mode.
+if self.current() == &Token::Colon {
+    return None;
+}
 
-            while self.current() == &Token::NewLine {
-                self.advance();
-            }
+let body = if self.current() == &Token::NewLine {
+    self.advance();
 
-            self.parse_indentation_block()
-        } else {
-            // Inline single-statement arm.
-            let statement = self.parse_statement()?;
-            vec![statement]
-        };
+    while self.current() == &Token::NewLine {
+        self.advance();
+    }
+
+    self.parse_indentation_block()
+} else {
+    let statement = self.parse_statement()?;
+    vec![statement]
+};
 
         arms.push(MatchArm {
             pattern,
@@ -865,24 +869,35 @@ let variant_name = match self.current() {
 
 
     fn parse_arguments(&mut self) -> Option<Vec<Expression>> {
-        let mut arguments = Vec::new();
-        if !self.consume(&Token::LeftParen) {
-            return None;
-        }
-        while self.current() != &Token::RightParen&& self.current() != &Token::Eof
-        {
-            let argument =
-            self.parse_expression()?;
-            arguments.push(argument);
-            if self.current() == &Token::Comma {
-                self.advance();
-            }
-        }
-        if !self.consume(&Token::RightParen) {
-            return None;
-        }
-        Some(arguments)
+    let mut arguments = Vec::new();
+
+    if !self.consume(&Token::LeftParen) {
+        return None;
     }
+
+    if self.current() == &Token::RightParen {
+        self.advance();
+        return Some(arguments);
+    }
+
+    loop {
+        let argument = self.parse_expression()?;
+        arguments.push(argument);
+
+        if self.current() == &Token::Comma {
+            self.advance();
+            continue;
+        }
+
+        break;
+    }
+
+    if !self.consume(&Token::RightParen) {
+        return None;
+    }
+
+    Some(arguments)
+}
 
 
 
@@ -1338,11 +1353,11 @@ fn parse_unary(&mut self) -> Option<Expression> {
 {
     let fields = self.parse_struct_fields()?;
 
-        Expression::StructConstructor {
-            name,
-            fields,
-        }
-    } else {
+    Expression::StructConstructor {
+        name,
+        fields,
+    }
+} else {
         Expression::Identifier(name)
     }
 }

@@ -188,26 +188,21 @@ mod tests {
     // =========================================================================
 
 
-    #[test]
-    fn indentation_match_executes_selected_arm() {
-        assert_eq!(
-            run_program(
-                r#"main:
+ #[test]
+fn indentation_match_rejects_colon_after_arm_arrow() {
+    parse_should_fail(
+        r#"main:
     x = 2
 
     match x:
         1 =>:
             print(10)
-        2 =>:
-            print(20)
         _ =>:
             print(30)
-"#
-            ),
-            vec!["20"]
-        );
-    }
-    
+"#,
+    );
+}
+
 
     #[test]
 fn indentation_match_executes_selected_arm_3() {
@@ -255,21 +250,6 @@ fn indentation_match_executes_selected_arm_3() {
 "#,
         );
     }
-
-    #[test]
-fn indentation_match_rejects_colon_after_arm_arrow() {
-    parse_should_fail(
-        r#"main:
-    x = 2
-
-    match x:
-        1 =>:
-            print(10)
-        _ =>:
-            print(30)
-"#,
-    );
-}
 
     #[test]
     fn non_boolean_while_condition_is_rejected_again() {
