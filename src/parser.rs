@@ -475,7 +475,7 @@ impl Parser {
 
 
     fn parse_struct(&mut self) -> Option<Statement> {
-    self.advance(); // consume 'struct'
+    self.advance(); // consume `struct`
 
     let name = match self.current() {
         Token::Identifier(name) => {
@@ -486,6 +486,108 @@ impl Parser {
         _ => return None,
     };
 
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
+
+        Token::LeftBrace => BlockStyle::Braces,
+
+        _ => return None,
+    };
+
+    // Struct declarations must use the same block style
+    // established by `main`.
+    if self.seen_main && self.block_style != style {
+        panic!(
+            "Block style mismatch: main uses {:?}, but struct uses {:?}",
+            self.block_style,
+            style
+        );
+    }
+
+    self.use_block_style(style);
+
+    let fields = match style {
+        BlockStyle::Indentation => {
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            self.parse_indentation_struct_fields()?
+        }
+
+        BlockStyle::Braces => {
+            self.parse_brace_struct_fields()?
+        }
+
+        BlockStyle::Unknown => unreachable!(),
+    };
+
+    Some(Statement::Struct {
+        name,
+        fields,
+    })
+}
+
+    fn parse_indentation_struct_fields(&mut self) -> Option<Vec<StructField>> {
+    let mut fields = Vec::new();
+
+    if !self.consume(&Token::Indent) {
+        return None;
+    }
+
+    while self.current() != &Token::Dedent
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
+
+        let field_name_span = self.current_span();
+
+        let field_name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+            _ => return None,
+        };
+
+        if !self.consume(&Token::Colon) {
+            return None;
+        }
+
+        let type_name = self.parse_type()?;
+
+        fields.push(StructField {
+            name: field_name,
+            name_span: field_name_span,
+            type_name,
+        });
+
+        // Optional comma.
+        if self.current() == &Token::Comma {
+            self.advance();
+        }
+
+        // Newline is consumed naturally by the loop.
+        if self.current() == &Token::NewLine {
+            self.advance();
+        }
+    }
+
+    if self.current() == &Token::Dedent {
+        self.advance();
+    }
+
+    Some(fields)
+}
+
+    fn parse_brace_struct_fields(&mut self) -> Option<Vec<StructField>> {
     if !self.consume(&Token::LeftBrace) {
         return None;
     }
@@ -503,13 +605,13 @@ impl Parser {
         let field_name_span = self.current_span();
 
         let field_name = match self.current() {
-    Token::Identifier(name) => {
-        let name = name.clone();
-        self.advance();
-        name
-    }
-    _ => return None,
-};
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+            _ => return None,
+        };
 
         if !self.consume(&Token::Colon) {
             return None;
@@ -523,7 +625,6 @@ impl Parser {
             type_name,
         });
 
-        // optional comma
         if self.current() == &Token::Comma {
             self.advance();
         }
@@ -533,10 +634,7 @@ impl Parser {
         return None;
     }
 
-    Some(Statement::Struct {
-        name,
-        fields,
-    })
+    Some(fields)
 }
 
 

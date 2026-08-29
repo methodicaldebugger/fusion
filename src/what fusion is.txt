@@ -373,7 +373,7 @@ Anyone who suffers from fragmentation: Companies that already use many languages
 
 When to switch to another languag within fusion?
 Only when you need capabilities that Fusion intentionally doesn't try to optimize for. These are almost always libraries, not entire applications.
-the programmer shouldn't think... "Should I use Rust?" They should think: "Should I optimize this?"
+If you can't build it in fusion, build it in another ecosystem.
 
 
 

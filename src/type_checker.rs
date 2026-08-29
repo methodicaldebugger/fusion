@@ -30,7 +30,8 @@ pub struct TypeEnvironment {
 }
 
 struct FunctionContext {
-    return_type: Option<Type>,
+    declared_return_type: Option<Type>,
+    inferred_return_type: Option<Type>,
 }
 
 #[derive(Clone)]
@@ -42,7 +43,7 @@ pub struct VariableInfo {
 #[derive(Clone)]
 pub struct FunctionType {
     pub parameters: Vec<Type>,
-    pub return_type: Option<Type>,
+    pub return_type: Type,
 }
 
 pub struct TypeChecker {
@@ -59,12 +60,12 @@ impl TypeChecker {
         let mut functions = HashMap::new();
 
         functions.insert(
-            "print".into(),
-            FunctionType {
-                parameters: vec![Type::Unknown],
-                return_type: Some(Type::Void),
-            },
-        );
+    "print".into(),
+    FunctionType {
+        parameters: vec![Type::Unknown],
+        return_type: Type::Void,
+    },
+);
 
         Self {
             environment: TypeEnvironment {
@@ -609,47 +610,53 @@ impl TypeChecker {
                     self.infer_expression(right)?;
 
                 match operator {
-                    Operator::Plus
-                    | Operator::Minus
-                    | Operator::Multiply
-                    | Operator::Divide => {
-                        if left_type == Type::Num
-                            && right_type == Type::Num
-                        {
-                            Ok(Type::Num)
-                        } else if left_type == Type::Float
-                            && right_type == Type::Float
-                        {
-                            Ok(Type::Float)
-                        } else if *operator == Operator::Plus
-                            && left_type == Type::String
-                            && right_type == Type::String
-                        {
-                            Ok(Type::String)
-                        } else {
-                            Err(FusionError::InvalidOperation {
-                                left: format!("{:?}", left_type),
-                                operator: self
-                                    .operator_name(operator),
-                                right: format!("{:?}", right_type),
-                                span: expression_span(expression),
-                            })
-                        }
-                    }
+    Operator::Plus
+    | Operator::Minus
+    | Operator::Multiply
+    | Operator::Divide => {
+        if left_type == Type::Unknown
+            || right_type == Type::Unknown
+        {
+            Ok(Type::Unknown)
+        } else if left_type == Type::Num
+            && right_type == Type::Num
+        {
+            Ok(Type::Num)
+        } else if left_type == Type::Float
+            && right_type == Type::Float
+        {
+            Ok(Type::Float)
+        } else if *operator == Operator::Plus
+            && left_type == Type::String
+            && right_type == Type::String
+        {
+            Ok(Type::String)
+        } else {
+            Err(FusionError::InvalidOperation {
+                left: format!("{:?}", left_type),
+                operator: self.operator_name(operator),
+                right: format!("{:?}", right_type),
+                span: expression_span(expression),
+            })
+        }
+    }
 
                     Operator::Equal | Operator::NotEqual => {
-                        if left_type == right_type {
-                            Ok(Type::Bool)
-                        } else {
-                            Err(FusionError::InvalidOperation {
-                                left: format!("{:?}", left_type),
-                                operator: self
-                                    .operator_name(operator),
-                                right: format!("{:?}", right_type),
-                                span: expression_span(expression),
-                            })
-                        }
-                    }
+    if left_type == Type::Unknown
+        || right_type == Type::Unknown
+    {
+        Ok(Type::Bool)
+    } else if left_type == right_type {
+        Ok(Type::Bool)
+    } else {
+        Err(FusionError::InvalidOperation {
+            left: format!("{:?}", left_type),
+            operator: self.operator_name(operator),
+            right: format!("{:?}", right_type),
+            span: expression_span(expression),
+        })
+    }
+}
 
                     Operator::Less
                     | Operator::LessEqual
@@ -673,20 +680,23 @@ impl TypeChecker {
                     }
 
                     Operator::And | Operator::Or => {
-                        if left_type == Type::Bool
-                            && right_type == Type::Bool
-                        {
-                            Ok(Type::Bool)
-                        } else {
-                            Err(FusionError::InvalidOperation {
-                                left: format!("{:?}", left_type),
-                                operator: self
-                                    .operator_name(operator),
-                                right: format!("{:?}", right_type),
-                                span: expression_span(expression),
-                            })
-                        }
-                    }
+    if left_type == Type::Unknown
+        || right_type == Type::Unknown
+    {
+        Ok(Type::Bool)
+    } else if left_type == Type::Bool
+        && right_type == Type::Bool
+    {
+        Ok(Type::Bool)
+    } else {
+        Err(FusionError::InvalidOperation {
+            left: format!("{:?}", left_type),
+            operator: self.operator_name(operator),
+            right: format!("{:?}", right_type),
+            span: expression_span(expression),
+        })
+    }
+}
                 }
             }
 
@@ -742,10 +752,7 @@ impl TypeChecker {
                     }
                 }
 
-                match &function.return_type {
-                    Some(ty) => Ok(ty.clone()),
-                    None => Ok(Type::Void),
-                }
+                Ok(function.return_type.clone())
             }
 
             // ---------------------------------------------
@@ -1642,59 +1649,47 @@ impl TypeChecker {
             // ---------------------------------------------
 
             Statement::Return(expression) => {
-                let actual =
-                    self.infer_expression(expression)?;
+    let actual = self.infer_expression(expression)?;
 
-                match &self.current_function {
-                    Some(context) => match &context.return_type {
-                        Some(expected) => {
-                            if expected != &actual {
-                                return Err(
-                                    FusionError::TypeMismatch {
-                                        expected: format!(
-                                            "{:?}",
-                                            expected
-                                        ),
-                                        found: format!(
-                                            "{:?}",
-                                            actual
-                                        ),
-                                        span: expression_span(
-                                            expression,
-                                        ),
-                                    },
-                                );
-                            }
-                        }
+    let context = self.current_function.as_mut().ok_or_else(|| {
+        FusionError::TypeMismatch {
+            expected: "inside function".into(),
+            found: "return".into(),
+            span: expression_span(expression),
+        }
+    })?;
 
-                        None => {
-                            return Err(
-                                FusionError::TypeMismatch {
-                                    expected:
-                                        "no return value".into(),
-                                    found: format!(
-                                        "{:?}",
-                                        actual
-                                    ),
-                                    span: expression_span(
-                                        expression,
-                                    ),
-                                },
-                            );
-                        }
-                    },
-
-                    None => {
-                        return Err(FusionError::TypeMismatch {
-                            expected: "inside function".into(),
-                            found: "return".into(),
-                            span: expression_span(expression),
-                        });
-                    }
-                }
-
-                Ok(())
+    if let Some(expected) = &context.declared_return_type {
+        if expected != &actual && actual != Type::Unknown {
+            return Err(FusionError::TypeMismatch {
+                expected: format!("{:?}", expected),
+                found: format!("{:?}", actual),
+                span: expression_span(expression),
+            });
+        }
+    } else {
+        match &context.inferred_return_type {
+            None => {
+                context.inferred_return_type = Some(actual);
             }
+
+            Some(previous) => {
+                if *previous != actual
+                    && actual != Type::Unknown
+                    && *previous != Type::Unknown
+                {
+                    return Err(FusionError::TypeMismatch {
+                        expected: format!("{:?}", previous),
+                        found: format!("{:?}", actual),
+                        span: expression_span(expression),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
 
             // ---------------------------------------------
             // Defer
@@ -1789,6 +1784,7 @@ impl TypeChecker {
             Statement::Impl { methods, .. } => {
                 for method in methods {
                     if let Statement::Function {
+                        name,
                         parameters,
                         return_type,
                         body,
@@ -1796,6 +1792,7 @@ impl TypeChecker {
                     } = method
                     {
                         self.check_function_body(
+                            name,
                             parameters,
                             return_type,
                             body,
@@ -1813,11 +1810,12 @@ impl TypeChecker {
     // ---------------------------------------------------------
 
     fn check_function_body(
-        &mut self,
-        parameters: &[Parameter],
-        return_type: &Option<String>,
-        body: &[Statement],
-    ) -> Result<(), FusionError> {
+    &mut self,
+    function_name: &str,
+    parameters: &[Parameter],
+    return_type: &Option<String>,
+    body: &[Statement],
+) -> Result<(), FusionError> {
         self.push_scope();
 
         for parameter in parameters {
@@ -1841,14 +1839,12 @@ impl TypeChecker {
             self.current_function.take();
 
         self.current_function = Some(FunctionContext {
-            return_type: match return_type {
-                Some(type_name) => {
-                    Some(self.convert_type(type_name)?)
-                }
-
-                None => None,
-            },
-        });
+    declared_return_type: match return_type {
+        Some(type_name) => Some(self.convert_type(type_name)?),
+        None => None,
+    },
+    inferred_return_type: None,
+});
 
         for statement in body {
             if let Err(error) =
@@ -2074,20 +2070,17 @@ impl TypeChecker {
                 }
 
                 let return_ty = match return_type {
-                    Some(type_name) => {
-                        Some(self.convert_type(type_name)?)
-                    }
+    Some(type_name) => self.convert_type(type_name)?,
+    None => Type::Unknown,
+};
 
-                    None => None,
-                };
-
-                self.environment.functions.insert(
-                    name.clone(),
-                    FunctionType {
-                        parameters: parameter_types,
-                        return_type: return_ty,
-                    },
-                );
+self.environment.functions.insert(
+    name.clone(),
+    FunctionType {
+        parameters: parameter_types,
+        return_type: return_ty,
+    },
+);
             }
         }
 
@@ -2103,12 +2096,14 @@ impl TypeChecker {
                 | Statement::Enum { .. } => {}
 
                 Statement::Function {
+                    name,
                     parameters,
                     return_type,
                     body,
                     ..
                 } => {
                     self.check_function_body(
+                        name,
                         parameters,
                         return_type,
                         body,

@@ -236,6 +236,25 @@ fn indentation_match_executes_selected_arm_3() {
         );
     }
 
+    #[test]
+fn indentation_match_executes_selected_arm_without_space_after_arrow() {
+    assert_eq!(
+        run_program(
+            r#"main:
+    x = 2
+
+    match x:
+        1 =>print(10)
+
+        2 =>print(20)
+
+        _ =>print(30)
+"#
+        ),
+        vec!["20"]
+    );
+}
+
 
     #[test]
     fn non_boolean_if_condition_is_rejected_again() {
@@ -264,5 +283,420 @@ fn indentation_match_executes_selected_arm_3() {
 "#,
         );
     }
+
+    // =========================================================================
+    // Functions
+    // =========================================================================
+
+    #[test]
+    fn function_without_parameters_executes() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    greet()
+
+fn greet():
+    print(42)
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn function_with_one_parameter_executes() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    print_double(21)
+
+fn print_double(x):
+    print(x + x)
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn function_with_multiple_parameters_executes() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    add(10, 32)
+
+fn add(a, b):
+    print(a + b)
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn function_can_return_value() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    x = add(20, 22)
+    print(x)
+
+fn add(a, b):
+    return a + b
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn function_return_value_can_be_used_in_expression() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    x = double(21) + 1
+    print(x)
+
+fn double(x):
+    return x * 2
+"#
+            ),
+            vec!["43"]
+        );
+    }
+
+    #[test]
+    fn function_can_be_called_multiple_times() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    print(double(10))
+    print(double(20))
+
+fn double(x):
+    return x * 2
+"#
+            ),
+            vec!["20", "40"]
+        );
+    }
+
+    #[test]
+    fn function_can_call_another_function() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    print(double_and_add(20))
+
+fn double_and_add(x):
+    return double(x) + 2
+
+fn double(x):
+    return x * 2
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn function_parameters_can_have_types() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    print(add(20, 22))
+
+fn add(a: num, b: num):
+    return a + b
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn function_can_have_return_type() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    x = add(20, 22)
+    print(x)
+
+fn add(a: num, b: num) -> num:
+    return a + b
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    // =========================================================================
+    // Function type-checking failures
+    // =========================================================================
+
+    #[test]
+    fn calling_unknown_function_is_rejected() {
+        type_check_should_fail(
+            r#"main:
+    does_not_exist()
+"#,
+        );
+    }
+
+    #[test]
+    fn function_argument_type_mismatch_is_rejected() {
+        type_check_should_fail(
+            r#"main:
+    add("hello", 2)
+
+fn add(a: num, b: num):
+    return a + b
+"#,
+        );
+    }
+
+    #[test]
+    fn function_return_type_mismatch_is_rejected() {
+        type_check_should_fail(
+            r#"main:
+    x = get_number()
+    print(x)
+
+fn get_number() -> num:
+    return "not a number"
+"#,
+        );
+    }
+
+    // =========================================================================
+    // Structs
+    // =========================================================================
+
+    #[test]
+    fn struct_can_be_declared_and_constructed() {
+        assert_eq!(
+            run_program(
+                r#"struct Person {
+    name: string
+    age: num
+}
+
+main:
+    person = Person {
+        name: "Alice",
+        age: 30
+    }
+
+    print(person.name)
+    print(person.age)
+"#
+            ),
+            vec!["Alice", "30"]
+        );
+    }
+
+    #[test]
+    fn struct_fields_can_be_read() {
+        assert_eq!(
+            run_program(
+                r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    point = Point {
+        x: 10,
+        y: 32
+    }
+
+    print(point.x)
+    print(point.y)
+"#
+            ),
+            vec!["10", "32"]
+        );
+    }
+
+    #[test]
+    fn struct_fields_can_be_used_in_expressions() {
+        assert_eq!(
+            run_program(
+                r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    point = Point {
+        x: 10,
+        y: 32
+    }
+
+    print(point.x + point.y)
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn multiple_struct_instances_are_independent() {
+        assert_eq!(
+            run_program(
+                r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    first = Point {
+        x: 10,
+        y: 20
+    }
+
+    second = Point {
+        x: 30,
+        y: 40
+    }
+
+    print(first.x)
+    print(second.x)
+"#
+            ),
+            vec!["10", "30"]
+        );
+    }
+
+    #[test]
+    fn struct_constructor_can_use_expressions() {
+        assert_eq!(
+            run_program(
+                r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    a = 20
+    b = 22
+
+    point = Point {
+        x: a,
+        y: b
+    }
+
+    print(point.x + point.y)
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+    // =========================================================================
+    // Struct type-checking failures
+    // =========================================================================
+
+    #[test]
+    fn unknown_struct_type_is_rejected() {
+        type_check_should_fail(
+            r#"main:
+    point = DoesNotExist {
+        x: 10
+    }
+"#,
+        );
+    }
+
+    #[test]
+    fn unknown_struct_field_is_rejected() {
+        type_check_should_fail(
+            r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    point = Point {
+        x: 10,
+        y: 20
+    }
+
+    print(point.z)
+"#,
+        );
+    }
+
+    #[test]
+    fn struct_field_type_mismatch_is_rejected() {
+        type_check_should_fail(
+            r#"struct Person {
+    name: string
+    age: num
+}
+
+main:
+    person = Person {
+        name: "Alice",
+        age: "thirty"
+    }
+"#,
+        );
+    }
+
+    #[test]
+    fn missing_struct_field_is_rejected() {
+        type_check_should_fail(
+            r#"struct Person {
+    name: string
+    age: num
+}
+
+main:
+    person = Person {
+        name: "Alice"
+    }
+"#,
+        );
+    }
+
+    #[test]
+fn indentation_mode_rejects_left_brace() {
+    let source = r#"main:
+    print(10) {
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+
+    assert!(lexer.tokenize().is_err());
+}
+
+#[test]
+fn indentation_mode_rejects_right_brace() {
+    let source = r#"main:
+    print(10)
+}
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+
+    assert!(lexer.tokenize().is_err());
+}
+
+#[test]
+fn brace_mode_does_not_generate_indentation_tokens() {
+    let source = r#"main{
+    print(10)
+}
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    let tokens = lexer.tokenize().expect("should lex");
+
+    assert!(!tokens.iter().any(|t| matches!(
+        t.node,
+        Token::Indent | Token::Dedent
+    )));
+}
 
 }

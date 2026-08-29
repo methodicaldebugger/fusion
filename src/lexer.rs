@@ -273,11 +273,32 @@ impl Lexer {
                     if !closed { return Err(LexError { message: "unterminated block comment".into(), position: comment_start, line: self.line, column: self.column }); }
                     continue;
                 }
-                '{' => { self.advance(); self.brace_depth += 1; return Ok(Spanned::new(Token::LeftBrace, start, self.position)); }
-                '}' => {
-                    if self.brace_depth == 0 { return self.error("unexpected `}`"); }
-                    self.advance(); self.brace_depth -= 1; return Ok(Spanned::new(Token::RightBrace, start, self.position));
-                }
+                '{' => {
+    if self.block_mode == BlockMode::Indentation {
+        return self.error(
+            "`{` is not allowed in indentation mode; use `:` and indentation"
+        );
+    }
+
+    self.advance();
+    self.brace_depth += 1;
+    return Ok(Spanned::new(Token::LeftBrace, start, self.position));
+}
+
+'}' => {
+    if self.brace_depth == 0 {
+        return self.error("unexpected `}`");
+    }
+
+    self.advance();
+    self.brace_depth -= 1;
+
+    return Ok(Spanned::new(
+        Token::RightBrace,
+        start,
+        self.position,
+    ));
+}
                 ';' => return self.error("semicolons are not allowed in Fusion"),
                 '"' => return Ok(Spanned::new(Token::String(self.read_string()?), start, self.position)),
                 '[' => { self.advance(); return Ok(Spanned::new(Token::LeftBracket, start, self.position)); }
