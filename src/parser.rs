@@ -23,90 +23,90 @@ pub struct Parser {
 
 impl Parser {
 
-    fn parse_style_block(&mut self) -> Option<Vec<Statement>> {
-        let style = match self.current() {
-            Token::Colon => {
+
+fn parse_style_block(&mut self) -> Option<Vec<Statement>> {
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
+
+        Token::LeftBrace => BlockStyle::Braces,
+
+        _ => return None,
+    };
+
+    // Every block in the program must use the same global style.
+    self.use_block_style(style);
+
+    match style {
+        BlockStyle::Indentation => {
+            while self.current() == &Token::NewLine {
                 self.advance();
-                BlockStyle::Indentation
             }
 
-            Token::LeftBrace => BlockStyle::Braces,
+            Some(self.parse_indentation_block())
+        }
 
-            _ => return None,
-        };
+        BlockStyle::Braces => {
+            Some(self.parse_brace_block())
+        }
 
-        // Once main has established the block style, every
-        // subsequent block must use exactly the same style.
-        if self.seen_main && self.block_style != style {
+        BlockStyle::Unknown => unreachable!(),
+    }
+}
+
+
+fn use_block_style(&mut self, style: BlockStyle) {
+    match self.block_style {
+        BlockStyle::Unknown => {
+            // main has not appeared yet.
+            //
+            // Remember every style used before main.
+            // main must eventually agree with all of them.
+            self.pending_block_styles.push(style);
+        }
+
+        existing if existing != style => {
             panic!(
-                "Block style mismatch: main uses {:?}, but this block uses {:?}",
-                self.block_style,
+                "Block style mismatch: program uses {:?}, but this construct uses {:?}",
+                existing,
                 style
             );
         }
 
-        self.use_block_style(style);
+        _ => {}
+    }
+}
 
-        match style {
-            BlockStyle::Indentation => {
-                while self.current() == &Token::NewLine {
-                    self.advance();
-                }
 
-                Some(self.parse_indentation_block())
-            }
 
-            BlockStyle::Braces => {
-                Some(self.parse_brace_block())
-            }
+fn establish_main_style(&mut self, style: BlockStyle) {
+    if self.seen_main {
+        panic!("Multiple 'main' declarations are not allowed");
+    }
 
-            BlockStyle::Unknown => unreachable!(),
+    // main establishes the single global block style.
+    //
+    // Every block that appeared before main must already use
+    // exactly the same style.
+    for previous in &self.pending_block_styles {
+        if *previous != style {
+            panic!(
+                "Block style mismatch: main uses {:?}, but an earlier construct uses {:?}",
+                style,
+                previous
+            );
         }
     }
 
-    fn use_block_style(&mut self, style: BlockStyle) {
-        match self.block_style {
-            BlockStyle::Unknown => {
-                // Before main appears, remember the style used by
-                // earlier constructs. main must eventually match it.
-                self.pending_block_styles.push(style);
-            }
+    self.pending_block_styles.clear();
 
-            existing if existing != style => {
-                panic!(
-                    "Block style mismatch: main uses {:?}, but this construct uses {:?}",
-                    existing,
-                    style
-                );
-            }
+    self.block_style = style;
+    self.seen_main = true;
+}
 
-            _ => {}
-        }
-    }
 
-    fn establish_main_style(&mut self, style: BlockStyle) {
-        if self.seen_main {
-            panic!("Multiple 'main' declarations are not allowed");
-        }
-
-        // main establishes the global block style.
-        //
-        // Every block that appeared before main must use
-        // the same style as main.
-        for previous in &self.pending_block_styles {
-            if *previous != style {
-                panic!(
-                    "Block style mismatch: main uses {:?}, but an earlier construct uses {:?}",
-                    style,
-                    previous
-                );
-            }
-        }
-
-        self.pending_block_styles.clear();
-        self.block_style = style;
-        self.seen_main = true;
-    }
 
     pub fn new(tokens: Vec<Spanned<Token>>) -> Self {
         Self {
@@ -132,9 +132,17 @@ impl Parser {
             self.parse_statement()
         }
 
-        Token::Main => {
+Token::Main => {
     self.advance();
 
+    // `main` is intentionally strict.
+    //
+    // These are the only valid forms:
+    //
+    //     main:
+    //     main {
+    //
+    // `main` followed by anything else is invalid.
     let style = match self.current() {
         Token::Colon => {
             self.advance();
@@ -148,6 +156,7 @@ impl Parser {
         _ => return None,
     };
 
+    // main establishes the global program-wide block style.
     self.establish_main_style(style);
 
     let body = match style {
@@ -168,6 +177,8 @@ impl Parser {
 
     Some(Statement::Main { body })
 }
+
+
 
         Token::Fn => self.parse_function(),
 
@@ -499,13 +510,7 @@ impl Parser {
 
     // Struct declarations must use the same block style
     // established by `main`.
-    if self.seen_main && self.block_style != style {
-        panic!(
-            "Block style mismatch: main uses {:?}, but struct uses {:?}",
-            self.block_style,
-            style
-        );
-    }
+
 
     self.use_block_style(style);
 
@@ -638,8 +643,8 @@ impl Parser {
 }
 
 
-    fn parse_enum(&mut self) -> Option<Statement> {
-    self.advance(); // consume 'enum'
+fn parse_enum(&mut self) -> Option<Statement> {
+    self.advance(); // consume `enum`
 
     let name = match self.current() {
         Token::Identifier(name) => {
@@ -647,9 +652,48 @@ impl Parser {
             self.advance();
             name
         }
+
         _ => return None,
     };
 
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
+
+        Token::LeftBrace => BlockStyle::Braces,
+
+        _ => return None,
+    };
+
+    // Enum declarations must use the single global block style.
+    self.use_block_style(style);
+
+    let variants = match style {
+        BlockStyle::Indentation => {
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            self.parse_indentation_enum_variants()?
+        }
+
+        BlockStyle::Braces => {
+            self.parse_brace_enum_variants()?
+        }
+
+        BlockStyle::Unknown => unreachable!(),
+    };
+
+    Some(Statement::Enum {
+        name,
+        variants,
+    })
+}
+
+
+fn parse_brace_enum_variants(&mut self) -> Option<Vec<EnumVariant>> {
     if !self.consume(&Token::LeftBrace) {
         return None;
     }
@@ -666,14 +710,15 @@ impl Parser {
 
         let variant_name_span = self.current_span();
 
-let variant_name = match self.current() {
-    Token::Identifier(name) => {
-        let name = name.clone();
-        self.advance();
-        name
-    }
-    _ => return None,
-};
+        let variant_name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+
+            _ => return None,
+        };
 
         let mut fields = Vec::new();
 
@@ -698,10 +743,10 @@ let variant_name = match self.current() {
         }
 
         variants.push(EnumVariant {
-    name: variant_name,
-    name_span: variant_name_span,
-    fields,
-});
+            name: variant_name,
+            name_span: variant_name_span,
+            fields,
+        });
 
         if self.current() == &Token::Comma {
             self.advance();
@@ -716,11 +761,86 @@ let variant_name = match self.current() {
         return None;
     }
 
-    Some(Statement::Enum {
-        name,
-        variants,
-    })
+    Some(variants)
 }
+
+
+
+fn parse_indentation_enum_variants(&mut self) -> Option<Vec<EnumVariant>> {
+    let mut variants = Vec::new();
+
+    while self.current() == &Token::NewLine {
+        self.advance();
+    }
+
+    if !self.consume(&Token::Indent) {
+        return None;
+    }
+
+    while self.current() != &Token::Dedent
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::NewLine {
+            self.advance();
+            continue;
+        }
+
+        let variant_name_span = self.current_span();
+
+        let variant_name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+
+            _ => return None,
+        };
+
+        let mut fields = Vec::new();
+
+        // Tuple-style enum variant:
+        //
+        // Rgb(num, num, num)
+        if self.consume(&Token::LeftParen) {
+            while self.current() != &Token::RightParen
+                && self.current() != &Token::Eof
+            {
+                let field_type = self.parse_type()?;
+                fields.push(field_type);
+
+                if self.current() == &Token::Comma {
+                    self.advance();
+                }
+            }
+
+            if !self.consume(&Token::RightParen) {
+                return None;
+            }
+        }
+
+        variants.push(EnumVariant {
+            name: variant_name,
+            name_span: variant_name_span,
+            fields,
+        });
+
+        if self.current() == &Token::Comma {
+            self.advance();
+        }
+
+        while self.current() == &Token::NewLine {
+            self.advance();
+        }
+    }
+
+    if self.current() == &Token::Dedent {
+        self.advance();
+    }
+
+    Some(variants)
+}
+
 
 
     fn parse_pattern(&mut self) -> Option<Pattern> {
@@ -833,13 +953,7 @@ let variant_name = match self.current() {
     };
 
     // Match blocks must obey the same global block style as main.
-    if self.seen_main && self.block_style != style {
-        panic!(
-            "Block style mismatch: main uses {:?}, but match uses {:?}",
-            self.block_style,
-            style
-        );
-    }
+
 
     self.use_block_style(style);
 
@@ -1092,26 +1206,33 @@ let body = if self.current() == &Token::NewLine {
     }
 
     pub fn parse(&mut self) -> Program {
-        let mut statements = Vec::new();
-        while self.current() != &Token::Eof {
-            let result = self.parse_statement();
-            if let Some(statement) = result {
-                statements.push(statement);
+    let mut statements = Vec::new();
+
+    while self.current() != &Token::Eof {
+        let result = self.parse_statement();
+
+        if let Some(statement) = result {
+            statements.push(statement);
+        } else {
+            if self.current() == &Token::Eof {
+                break;
             }
-            else {
-                if self.current() == &Token::Eof {
-                    break;
-                }
+
             panic!(
                 "Unexpected token at top level: {:?}",
                 self.current()
-                );
-            }
-        }
-        Program {
-            statements,
+            );
         }
     }
+
+    if !self.seen_main {
+        panic!("Program must contain a 'main' declaration");
+    }
+
+    Program {
+        statements,
+    }
+}
 
 
     fn parse_type(&mut self) -> Option<String> {
