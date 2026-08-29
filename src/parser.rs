@@ -1151,98 +1151,111 @@ let body = if self.current() == &Token::NewLine {
 
 
     fn parse_function(&mut self) -> Option<Statement> {
-        self.advance();
-        let name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-            _ => return None,
-        };
-        if !self.consume(&Token::LeftParen) {
-            return None;
-        }
-        let mut parameters = Vec::new();
-        while self.current() != &Token::RightParen
-            && self.current() != &Token::Eof
-        {
-            if self.current() == &Token::Comma {
-                self.advance();
-                continue;
-            }
-            if let Token::Identifier(param) = self.current() {
-    let name_span = self.current_span();
-
-    let name = param.clone();
     self.advance();
 
-    let mut type_name = None;
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            name
+        }
+        _ => return None,
+    };
 
-    if self.current() == &Token::Colon {
+    if !self.consume(&Token::LeftParen) {
+        return None;
+    }
+
+    let mut parameters = Vec::new();
+
+    while self.current() != &Token::RightParen
+        && self.current() != &Token::Eof
+    {
+        if self.current() == &Token::Comma {
+            self.advance();
+            continue;
+        }
+
+        if let Token::Identifier(param) = self.current() {
+            let name_span = self.current_span();
+            let name = param.clone();
+            self.advance();
+
+            let mut type_name = None;
+
+            if self.current() == &Token::Colon {
+                self.advance();
+                type_name = self.parse_type();
+
+                if type_name.is_none() {
+                    return None;
+                }
+            }
+
+            parameters.push(Parameter {
+                name,
+                name_span,
+                type_name,
+            });
+        }
+
+        if self.current() == &Token::Comma {
+            self.advance();
+        }
+    }
+
+    if !self.consume(&Token::RightParen) {
+        return None;
+    }
+
+    let mut return_type = None;
+
+    if self.current() == &Token::Arrow {
         self.advance();
-        type_name = self.parse_type();
+        return_type = self.parse_type();
 
-        if type_name.is_none() {
+        if return_type.is_none() {
             return None;
         }
     }
 
-    parameters.push(Parameter {
-        name,
-        name_span,
-        type_name,
-    });
-}
-                if self.current() == &Token::Comma {
-                    self.advance();
-                }
-            }
-            if !self.consume(&Token::RightParen) {
-                return None;
-            }
-            let mut return_type = None;
-            if self.current() == &Token::Arrow {
-                self.advance();
-                return_type = self.parse_type();
-            if return_type.is_none() {
-                return None;
-            }
-        }
-        let style = match self.current() {
-    Token::Colon => {
-        self.advance();
-        BlockStyle::Indentation
-    }
-
-    Token::LeftBrace => {
-        BlockStyle::Braces
-    }
-
-    _ => return None,
-};
-
-self.use_block_style(style);
-
-let body = match style {
-    BlockStyle::Indentation => {
-        while self.current() == &Token::NewLine {
+    let style = match self.current() {
+        Token::Colon => {
             self.advance();
+            BlockStyle::Indentation
         }
 
-        self.parse_indentation_block()
-    }
+        Token::LeftBrace => BlockStyle::Braces,
 
-    BlockStyle::Braces => {
-        self.parse_brace_block()
-    }
+        _ => return None,
+    };
 
-    BlockStyle::Unknown => unreachable!(),
-};
-        Some(Statement::Function {
-            name,generic_parameters: Vec::new(),parameters,return_type,body,
-        })
-    }
+    self.use_block_style(style);
+
+    let body = match style {
+        BlockStyle::Indentation => {
+            while self.current() == &Token::NewLine {
+                self.advance();
+            }
+
+            self.parse_indentation_block()
+        }
+
+        BlockStyle::Braces => {
+            self.parse_brace_block()
+        }
+
+        BlockStyle::Unknown => unreachable!(),
+    };
+
+    Some(Statement::Function {
+        name,
+        generic_parameters: Vec::new(),
+        parameters,
+        return_type,
+        body,
+    })
+}
 
 
 

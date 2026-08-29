@@ -53,33 +53,41 @@ pub struct Lexer {
 
 impl Lexer {
     fn detect_block_mode(source: &str) -> Result<BlockMode, LexError> {
-        for (line_no, line) in source.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
-                continue;
-            }
-            if trimmed == "main:" {
-                return Ok(BlockMode::Indentation);
-            }
-            if trimmed == "main{" {
-                return Ok(BlockMode::Braces);
-            }
-            if trimmed == "main :" || trimmed == "main {" {
-                return Err(LexError {
-                    message: "invalid main declaration; use `main:` or `main{`".into(),
-                    position: 0,
-                    line: line_no + 1,
-                    column: 1,
-                });
-            }
+    for (line_no, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed.starts_with("//")
+        {
+            continue;
         }
-        Err(LexError {
-            message: "missing main block; expected `main:` or `main{`".into(),
-            position: 0,
-            line: 1,
-            column: 1,
-        })
+
+        if trimmed == "main:" {
+            return Ok(BlockMode::Indentation);
+        }
+
+        if trimmed == "main{" || trimmed == "main {" {
+            return Ok(BlockMode::Braces);
+        }
+
+        if trimmed.starts_with("main") {
+            return Err(LexError {
+                message: "invalid main declaration; use `main:` or `main {`".into(),
+                position: 0,
+                line: line_no + 1,
+                column: 1,
+            });
+        }
     }
+
+    Err(LexError {
+        message: "missing main block; expected `main:` or `main {`".into(),
+        position: 0,
+        line: 1,
+        column: 1,
+    })
+}
 
     pub fn new(source: &str, block_mode: BlockMode) -> Self {
         let (mode, init_error) = match block_mode {
@@ -215,7 +223,10 @@ impl Lexer {
             "await" => Token::Await, "return" => Token::Return, "true" => Token::Boolean(true),
             "false" => Token::Boolean(false), _ => Token::Identifier(ident.into()),
         }
-    }
+
+
+
+}
 
     fn next_spanned(&mut self) -> Result<Spanned<Token>, LexError> {
         loop {
@@ -273,16 +284,17 @@ impl Lexer {
                     if !closed { return Err(LexError { message: "unterminated block comment".into(), position: comment_start, line: self.line, column: self.column }); }
                     continue;
                 }
-                '{' => {
-    if self.block_mode == BlockMode::Indentation {
-        return self.error(
-            "`{` is not allowed in indentation mode; use `:` and indentation"
-        );
-    }
 
+
+                '{' => {
     self.advance();
     self.brace_depth += 1;
-    return Ok(Spanned::new(Token::LeftBrace, start, self.position));
+
+    return Ok(Spanned::new(
+        Token::LeftBrace,
+        start,
+        self.position,
+    ));
 }
 
 '}' => {
@@ -321,9 +333,6 @@ impl Lexer {
                 c if c.is_ascii_digit() => return Ok(Spanned::new(self.read_number()?, start, self.position)),
                 c if c.is_alphabetic() || c == '_' => {
                     let ident = self.read_identifier();
-                    if ident == "main" && matches!(self.peek(), Some(' ') | Some('\t')) {
-                        return self.error("`main` must be immediately followed by `:` or `{`");
-                    }
                     return Ok(Spanned::new(Self::keyword(&ident), start, self.position));
                 }
                 _ => return self.error(format!("unexpected character `{}`", ch)),

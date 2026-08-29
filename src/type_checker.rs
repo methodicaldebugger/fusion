@@ -1811,7 +1811,7 @@ impl TypeChecker {
 
     fn check_function_body(
     &mut self,
-    function_name: &str,
+    _function_name: &str,
     parameters: &[Parameter],
     return_type: &Option<String>,
     body: &[Statement],
