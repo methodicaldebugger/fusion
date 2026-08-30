@@ -36,24 +36,12 @@ fn source_from_args() -> Result<String, String> {
     }
 }
 
-fn parse_program(tokens: Vec<span::Spanned<Token>>) -> Result<ast::Program, String> {
-    // The parser currently exposes a legacy `parse()` API.  Keep malformed
-    // source from terminating the process while the parser is being migrated
-    // to structured Result-based diagnostics.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut parser = Parser::new(tokens);
-        parser.parse()
-    }));
+    fn parse_program(tokens: Vec<span::Spanned<Token>>) -> Result<ast::Program, String> {
+    let mut parser = Parser::new(tokens);
 
-    result.map_err(|payload| {
-        if let Some(message) = payload.downcast_ref::<String>() {
-            format!("error: parser: {}", message)
-        } else if let Some(message) = payload.downcast_ref::<&str>() {
-            format!("error: parser: {}", message)
-        } else {
-            "error: parser failed while parsing the input".into()
-        }
-    })
+    parser
+        .parse()
+        .map_err(|error| format!("error: parser: {}", error))
 }
 
 fn main() {
@@ -115,12 +103,9 @@ mod tests {
 
         // Parser::parse() currently returns Program directly and uses
         // panic-based error handling.
-        let program = std::panic::catch_unwind(
-            std::panic::AssertUnwindSafe(|| parser.parse()),
-        )
-        .unwrap_or_else(|_| {
-            panic!("test source should parse successfully");
-        });
+        let program = parser
+    .parse()
+    .expect("test source should parse successfully");
 
         let mut checker = TypeChecker::new();
 
@@ -170,10 +155,9 @@ mod tests {
 
         let mut parser = Parser::new(tokens);
 
-        let program = std::panic::catch_unwind(
-            std::panic::AssertUnwindSafe(|| parser.parse()),
-        )
-        .expect("source should parse before type-checking");
+        let program = parser
+    .parse()
+    .expect("source should parse before type-checking");
 
         let mut checker = TypeChecker::new();
 
