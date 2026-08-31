@@ -19,6 +19,7 @@ pub struct Parser {
     block_style: BlockStyle,
     seen_main: bool,
     pending_block_styles: Vec<BlockStyle>,
+    current_function_return_type: Option<Option<String>>,
 }
 
 impl Parser {
@@ -29,6 +30,7 @@ impl Parser {
         block_style: BlockStyle::Unknown,
         pending_block_styles: Vec::new(),
         seen_main: false,
+        current_function_return_type: None,
     }
 }
 
@@ -278,16 +280,20 @@ impl Parser {
             }
 
             Token::Return => {
-                let start = self.current_span().start;
-                self.advance();
+    let start = self.current_span().start;
+    self.advance();
 
-                let value = self.parse_expression()?;
+    let value = if self.is_statement_boundary() {
+        None
+    } else {
+        Some(self.parse_expression()?)
+    };
 
-                Ok(Some(Statement::Return {
-                    value,
-                    span: self.span_from(start),
-                }))
-            }
+    Ok(Some(Statement::Return {
+        value,
+        span: self.span_from(start),
+    }))
+}
 
             Token::Break => {
                 let start = self.current_span().start;
@@ -646,8 +652,73 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_struct(&mut self) -> Result<Statement, ParseError> {
+    let start = self.current_span().start;
+    self.advance(); // consume 'struct'
+
+    let name = match self.current() {
+        Token::Identifier(name) => {
+            let name = name.clone();
+            self.advance();
+            name
+        }
+
+        _ => {
+            return self.error("Expected identifier after 'struct'");
+        }
+    };
+
+    let style = match self.current() {
+        Token::Colon => {
+            self.advance();
+            BlockStyle::Indentation
+        }
+
+        Token::LeftBrace => BlockStyle::Braces,
+
+        _ => {
+            return self.error("Expected ':' or '{' after struct name");
+        }
+    };
+
+    // IMPORTANT: don't ignore this Result.
+    self.use_block_style(style)?;
+
+    let fields = match style {
+        BlockStyle::Indentation => {
+            self.skip_newlines();
+            self.parse_indentation_struct_fields()?
+        }
+
+        BlockStyle::Braces => {
+            self.parse_brace_struct_fields()?
+        }
+
+        BlockStyle::Unknown => unreachable!(),
+    };
+
+    Ok(Statement::Struct {
+        name,
+        fields,
+        span: self.span_from(start),
+    })
+}
+
+    fn parse_indentation_struct_fields(
+    &mut self,
+) -> Result<Vec<StructField>, ParseError> {
+    if !self.consume(&Token::Indent) {
+        return self.error("Expected indentation after struct declaration");
+    }
+
+    let mut fields = Vec::new();
+
+    self.skip_newlines();
+
+    while self.current() != &Token::Dedent
+        && self.current() != &Token::Eof
+    {
         let start = self.current_span().start;
-        self.advance();
+        let name_span = self.current_span();
 
         let name = match self.current() {
             Token::Identifier(name) => {
@@ -657,100 +728,39 @@ impl Parser {
             }
 
             _ => {
-                return self.error("Expected identifier after 'struct'");
+                return self.error(
+                    "Expected field name in struct declaration",
+                );
             }
         };
 
-        let style = match self.current() {
-            Token::Colon => {
-                self.advance();
-                BlockStyle::Indentation
-            }
+        if !self.consume(&Token::Colon) {
+            return self.error(
+                "Expected ':' after struct field name",
+            );
+        }
 
-            Token::LeftBrace => BlockStyle::Braces,
+        let type_name = self.parse_type()?;
 
-            _ => {
-                return self.error("Expected ':' or '{' after struct name");
-            }
-        };
+        let span = Span::new(start, self.previous_span().end);
 
-        self.use_block_style(style)?;
-
-        let fields = match style {
-            BlockStyle::Indentation => {
-                self.skip_newlines();
-                self.parse_indentation_struct_fields()?
-            }
-
-            BlockStyle::Braces => self.parse_brace_struct_fields()?,
-
-            BlockStyle::Unknown => unreachable!(),
-        };
-
-        Ok(Statement::Struct {
+        fields.push(StructField {
             name,
-            fields,
-            span: self.span_from(start),
-        })
+            name_span,
+            type_name,
+            span,
+        });
+
+        self.consume(&Token::Comma);
+        self.skip_newlines();
     }
 
-    fn parse_indentation_struct_fields(
-        &mut self,
-    ) -> Result<Vec<StructField>, ParseError> {
-        if !self.consume(&Token::Indent) {
-            return self.error("Expected indentation after struct declaration");
-        }
-
-        let mut fields = Vec::new();
-
-        while self.current() != &Token::Dedent
-            && self.current() != &Token::Eof
-        {
-            if self.current() == &Token::NewLine {
-                self.advance();
-                continue;
-            }
-
-            let start = self.current_span().start;
-            let name_span = self.current_span();
-
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-
-                _ => {
-                    return self.error("Expected field name in struct declaration");
-                }
-            };
-
-            if !self.consume(&Token::Colon) {
-                return self.error("Expected ':' after struct field name");
-            }
-
-            let type_name = self.parse_type()?;
-
-            let span = Span::new(start, self.previous_span().end);
-
-            fields.push(StructField {
-                name,
-                name_span,
-                type_name,
-                span,
-            });
-
-            self.consume(&Token::Comma);
-            self.skip_newlines();
-        }
-
-        if self.current() == &Token::Dedent {
-            self.advance();
-        }
-
-        Ok(fields)
+    if self.current() == &Token::Dedent {
+        self.advance();
     }
+
+    Ok(fields)
+}
 
     fn parse_brace_struct_fields(
         &mut self,
@@ -792,20 +802,24 @@ impl Parser {
 
             let type_name = self.parse_type()?;
 
-            let span = Span::new(start, self.previous_span().end);
+let span = Span::new(start, self.previous_span().end);
 
-            fields.push(StructField {
-                name,
-                name_span,
-                type_name,
-                span,
-            });
+fields.push(StructField {
+    name,
+    name_span,
+    type_name,
+    span,
+});
 
-            if !self.consume(&Token::Comma)
-                && self.current() != &Token::RightBrace
-            {
-                return self.error("Expected ',' or '}' after struct field");
-            }
+self.skip_newlines();
+
+if !self.consume(&Token::Comma)
+    && self.current() != &Token::RightBrace
+{
+    return self.error("Expected ',' or '}' after struct field");
+}
+
+self.skip_newlines();
         }
 
         if !self.consume(&Token::RightBrace) {
@@ -1407,16 +1421,27 @@ impl Parser {
 
         self.use_block_style(style)?;
 
-        let body = match style {
-            BlockStyle::Indentation => {
-                self.skip_newlines();
-                self.parse_indentation_block()?
-            }
+        let previous_return_type = self.current_function_return_type.clone();
+self.current_function_return_type = Some(return_type.clone());
 
-            BlockStyle::Braces => self.parse_brace_block()?,
+let previous_return_type = self.current_function_return_type.clone();
 
-            BlockStyle::Unknown => unreachable!(),
-        };
+self.current_function_return_type = Some(return_type.clone());
+
+let body_result = match style {
+    BlockStyle::Indentation => {
+        self.skip_newlines();
+        self.parse_indentation_block()
+    }
+
+    BlockStyle::Braces => self.parse_brace_block(),
+
+    BlockStyle::Unknown => unreachable!(),
+};
+
+self.current_function_return_type = previous_return_type;
+
+let body = body_result?;
 
         Ok(Statement::Function {
             name,
@@ -2037,17 +2062,9 @@ impl Parser {
             generic_arguments: Vec::new(),
             span: Span::new(start, end),
         }
-    } else if self.current() == &Token::LeftBrace {
-        let fields = self.parse_struct_fields()?;
-        let end = self.previous_span().end;
 
-        Expression::StructConstructor {
-            name,
-            fields,
-            span: Span::new(start, end),
-        }
-    } else {
-        Expression::Identifier {
+} else {
+    Expression::Identifier {
             name,
             span: Span::new(start, self.previous_span().end),
         }

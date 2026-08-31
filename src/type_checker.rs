@@ -1615,68 +1615,67 @@ impl TypeChecker {
             // -------------------------------------------------
 
             Statement::Return { value, span } => {
-                let actual_type =
-                    self.infer_expression(value)?;
+    // First make sure we're inside a function.
+    if self.current_function.is_none() {
+        return Err(FusionError::TypeMismatch {
+            expected: "inside function".to_string(),
+            found: "return".to_string(),
+            span: *span,
+        });
+    }
 
-                let context =
-                    self.current_function.as_mut().ok_or_else(
-                        || FusionError::TypeMismatch {
-                            expected: "inside function".to_string(),
-                            found: "return".to_string(),
-                            span: *span,
-                        },
-                    )?;
+    match value {
+        None => {
+            // Now take the mutable borrow only for the fields
+            // that need to be checked/updated.
+            let context = self.current_function.as_mut().unwrap();
 
-                context.has_return = true;
+            context.has_return = true;
 
-                if let Some(expected) =
-                    &context.declared_return_type
-                {
-                    if !Self::types_compatible(
-                        expected,
-                        &actual_type,
-                    ) {
-                        return Err(FusionError::TypeMismatch {
-                            expected: expected.name(),
-                            found: actual_type.name(),
-                            span: *span,
-                        });
-                    }
-                } else {
-                    match &context.inferred_return_type {
-                        None => {
-                            context.inferred_return_type =
-                                Some(actual_type);
-                        }
-
-                        Some(previous) => {
-                            if !Self::types_compatible(
-                                previous,
-                                &actual_type,
-                            ) {
-                                return Err(
-                                    FusionError::TypeMismatch {
-                                        expected: previous.name(),
-                                        found: actual_type.name(),
-                                        span: *span,
-                                    },
-                                );
-                            }
-
-                            // If the previous value was unknown and this
-                            // return is concrete, refine the inferred type.
-                            if *previous == Type::Unknown
-                                && actual_type != Type::Unknown
-                            {
-                                context.inferred_return_type =
-                                    Some(actual_type);
-                            }
-                        }
-                    }
-                }
-
-                Ok(())
+            if let Some(expected) = &context.declared_return_type {
+                return Err(FusionError::TypeMismatch {
+                    expected: expected.name(),
+                    found: "void return".to_string(),
+                    span: *span,
+                });
             }
+
+            Ok(())
+        }
+
+        Some(value) => {
+            // IMPORTANT:
+            // infer_expression() borrows self, so do this BEFORE
+            // taking a mutable borrow of current_function.
+            let actual_type = self.infer_expression(value)?;
+
+            let context = self.current_function.as_mut().unwrap();
+
+            context.has_return = true;
+
+            if let Some(expected) = &context.declared_return_type {
+                if !Self::types_compatible(
+                    expected,
+                    &actual_type,
+                ) {
+                    return Err(FusionError::TypeMismatch {
+                        expected: expected.name(),
+                        found: actual_type.name(),
+                        span: *span,
+                    });
+                }
+            } else {
+                return Err(FusionError::TypeMismatch {
+                    expected: "void return".to_string(),
+                    found: actual_type.name(),
+                    span: *span,
+                });
+            }
+
+            Ok(())
+        }
+    }
+}
 
             // -------------------------------------------------
             // Defer

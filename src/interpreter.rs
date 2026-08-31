@@ -704,12 +704,16 @@ impl Interpreter {
             // -----------------------------------------------------------------
 
             Statement::Return {
-                value,
-                ..
-            } => {
-                let result = self.evaluate(value);
-                Flow::Return(result)
-            }
+    value,
+    ..
+} => {
+    let result = match value {
+        Some(expr) => self.evaluate(expr),
+        None => Value::None,
+    };
+
+    Flow::Return(result)
+}
 
             // -----------------------------------------------------------------
             // Break

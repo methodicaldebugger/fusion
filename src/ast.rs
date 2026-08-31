@@ -175,7 +175,7 @@ pub enum Statement {
     },
 
     Return {
-        value: Expression,
+        value: Option<Expression>,
         span: Span,
     },
 

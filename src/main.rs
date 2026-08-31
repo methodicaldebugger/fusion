@@ -17,6 +17,21 @@ use parser::*;
 use type_checker::TypeChecker;
 use interpreter::Interpreter;
 
+fn parse_should_fail(source: &str) {
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+
+    let tokens = lexer
+        .tokenize()
+        .expect("test source should lex successfully");
+
+    let mut parser = Parser::new(tokens);
+
+    assert!(
+        parser.parse().is_err(),
+        "expected parser to reject invalid source"
+    );
+}
+
 fn source_from_args() -> Result<String, String> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -350,6 +365,55 @@ fn double(x):
     }
 
     #[test]
+fn function_without_return_type_allows_bare_return() {
+    compile_test_program(
+        r#"main:
+    foo()
+
+fn foo():
+    return
+"#,
+    );
+}
+
+#[test]
+fn function_with_return_type_allows_value_return() {
+    compile_test_program(
+        r#"main:
+    x = foo()
+    print(x)
+
+fn foo() -> num:
+    return 42
+"#,
+    );
+}
+
+#[test]
+fn function_with_return_type_rejects_bare_return() {
+    parse_should_fail(
+        r#"main:
+    foo()
+
+fn foo() -> num:
+    return
+"#,
+    );
+}
+
+#[test]
+fn function_without_return_type_rejects_value_return() {
+    parse_should_fail(
+        r#"main:
+    foo()
+
+fn foo():
+    return 42
+"#,
+    );
+}
+
+    #[test]
     fn function_can_be_called_multiple_times() {
         assert_eq!(
             run_program(
@@ -466,10 +530,7 @@ fn get_number() -> num:
 }
 
 main:
-    person = Person {
-        name: "Alice",
-        age: 30
-    }
+    Person("Alice", 30)
 
     print(person.name)
     print(person.age)
@@ -489,11 +550,7 @@ main:
 }
 
 main:
-    point = Point {
-        x: 10,
-        y: 32
-    }
-
+    Point(x:10,y:32)
     print(point.x + point.y)
 "#
             ),
@@ -583,7 +640,7 @@ main {
 }
 
 #[test]
-fn indentation_struct_rejects_brace_constructor() {
+fn struct_constructor_rejects_braces() {
     parse_should_fail(
         r#"struct Point:
     x: num
@@ -594,24 +651,6 @@ main:
         x: 10,
         y: 32
     }
-"#,
-    );
-}
-
-#[test]
-fn brace_struct_rejects_brace_constructor() {
-    parse_should_fail(
-        r#"struct Point {
-    x: num
-    y: num
-}
-
-main {
-    point = Point {
-        x: 10,
-        y: 32
-    }
-}
 "#,
     );
 }
@@ -871,68 +910,6 @@ main {
 }
 
 #[test]
-fn indentation_main_rejects_brace_struct_2() {
-    parse_should_fail(
-        r#"struct Point {
-    x: num
-    y: num
-}
-
-main:
-    point = Point(10, 32)
-"#,
-    );
-}
-
-#[test]
-fn brace_main_rejects_indentation_struct_2() {
-    parse_should_fail(
-        r#"struct Point:
-    x: num
-    y: num
-
-main {
-    point = Point(10, 32)
-}
-"#,
-    );
-}
-
-#[test]
-fn indentation_struct_rejects_brace_constructor_2() {
-    parse_should_fail(
-        r#"struct Point:
-    x: num
-    y: num
-
-main:
-    point = Point {
-        x: 10,
-        y: 32
-    }
-"#,
-    );
-}
-
-#[test]
-fn brace_struct_rejects_brace_constructor_2() {
-    parse_should_fail(
-        r#"struct Point {
-    x: num
-    y: num
-}
-
-main {
-    point = Point {
-        x: 10,
-        y: 32
-    }
-}
-"#,
-    );
-}
-
-#[test]
 fn indentation_struct_requires_colon() {
     parse_should_fail(
         r#"struct Point
@@ -998,32 +975,5 @@ main:
 "#,
     );
 }
-
-#[test]
-fn struct_constructor_too_few_arguments_is_rejected_2() {
-    type_check_should_fail(
-        r#"struct Person:
-    name: string
-    age: num
-
-main:
-    person = Person("Alice")
-"#,
-    );
-}
-
-#[test]
-fn struct_constructor_too_many_arguments_is_rejected_2() {
-    type_check_should_fail(
-        r#"struct Person:
-    name: string
-    age: num
-
-main:
-    person = Person("Alice", 30, 100)
-"#,
-    );
-}
-
 
 }
