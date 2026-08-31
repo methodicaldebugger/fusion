@@ -480,29 +480,6 @@ main:
     }
 
     #[test]
-    fn struct_fields_can_be_read() {
-        assert_eq!(
-            run_program(
-                r#"struct Point {
-    x: num
-    y: num
-}
-
-main:
-    point = Point {
-        x: 10,
-        y: 32
-    }
-
-    print(point.x)
-    print(point.y)
-"#
-            ),
-            vec!["10", "32"]
-        );
-    }
-
-    #[test]
     fn struct_fields_can_be_used_in_expressions() {
         assert_eq!(
             run_program(
@@ -524,92 +501,10 @@ main:
         );
     }
 
-    #[test]
-    fn multiple_struct_instances_are_independent() {
-        assert_eq!(
-            run_program(
-                r#"struct Point {
-    x: num
-    y: num
-}
-
-main:
-    first = Point {
-        x: 10,
-        y: 20
-    }
-
-    second = Point {
-        x: 30,
-        y: 40
-    }
-
-    print(first.x)
-    print(second.x)
-"#
-            ),
-            vec!["10", "30"]
-        );
-    }
-
-    #[test]
-    fn struct_constructor_can_use_expressions() {
-        assert_eq!(
-            run_program(
-                r#"struct Point {
-    x: num
-    y: num
-}
-
-main:
-    a = 20
-    b = 22
-
-    point = Point {
-        x: a,
-        y: b
-    }
-
-    print(point.x + point.y)
-"#
-            ),
-            vec!["42"]
-        );
-    }
 
     // =========================================================================
     // Struct type-checking failures
     // =========================================================================
-
-    #[test]
-    fn unknown_struct_type_is_rejected() {
-        type_check_should_fail(
-            r#"main:
-    point = DoesNotExist {
-        x: 10
-    }
-"#,
-        );
-    }
-
-    #[test]
-    fn unknown_struct_field_is_rejected() {
-        type_check_should_fail(
-            r#"struct Point {
-    x: num
-    y: num
-}
-
-main:
-    point = Point {
-        x: 10,
-        y: 20
-    }
-
-    print(point.z)
-"#,
-        );
-    }
 
     #[test]
     fn struct_field_type_mismatch_is_rejected() {
@@ -628,21 +523,98 @@ main:
         );
     }
 
-    #[test]
-    fn missing_struct_field_is_rejected() {
-        type_check_should_fail(
-            r#"struct Person {
+#[test]
+fn struct_constructor_too_few_arguments_is_rejected() {
+    type_check_should_fail(
+        r#"struct Person:
     name: string
     age: num
-}
 
 main:
-    person = Person {
-        name: "Alice"
+    person = Person("Alice")
+"#,
+    );
+}
+
+#[test]
+fn struct_constructor_too_many_arguments_is_rejected() {
+    type_check_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", 30, 100)
+"#,
+    );
+}
+
+#[test]
+fn struct_constructor_is_parenthesized_in_both_modes() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point(20, 22)
+    print(point.x + point.y)
+"#
+        ),
+        vec!["42"]
+    );
+
+    assert_eq!(
+        run_program(
+            r#"struct Point {
+    x: num
+    y: num
+}
+
+main {
+    point = Point(20, 22)
+    print(point.x + point.y)
+}
+"#
+        ),
+        vec!["42"]
+    );
+}
+
+#[test]
+fn indentation_struct_rejects_brace_constructor() {
+    parse_should_fail(
+        r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point {
+        x: 10,
+        y: 32
     }
 "#,
-        );
+    );
+}
+
+#[test]
+fn brace_struct_rejects_brace_constructor() {
+    parse_should_fail(
+        r#"struct Point {
+    x: num
+    y: num
+}
+
+main {
+    point = Point {
+        x: 10,
+        y: 32
     }
+}
+"#,
+    );
+}
 
     #[test]
 fn indentation_mode_rejects_left_brace() {
@@ -682,5 +654,376 @@ fn brace_mode_does_not_generate_indentation_tokens() {
         Token::Indent | Token::Dedent
     )));
 }
+
+
+// =========================================================================
+// Structs
+// =========================================================================
+
+#[test]
+fn indentation_struct_can_be_declared_and_constructed() {
+    assert_eq!(
+        run_program(
+            r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", 30)
+
+    print(person.name)
+    print(person.age)
+"#
+        ),
+        vec!["Alice", "30"]
+    );
+}
+
+#[test]
+fn brace_struct_can_be_declared_and_constructed() {
+    assert_eq!(
+        run_program(
+            r#"struct Person {
+    name: string
+    age: num
+}
+
+main {
+    person = Person("Alice", 30)
+
+    print(person.name)
+    print(person.age)
+}
+"#
+        ),
+        vec!["Alice", "30"]
+    );
+}
+
+#[test]
+fn struct_constructor_uses_parentheses_in_indentation_mode() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point(10, 32)
+
+    print(point.x + point.y)
+"#
+        ),
+        vec!["42"]
+    );
+}
+
+#[test]
+fn struct_constructor_uses_parentheses_in_brace_mode() {
+    assert_eq!(
+        run_program(
+            r#"struct Point {
+    x: num
+    y: num
+}
+
+main {
+    point = Point(10, 32)
+
+    print(point.x + point.y)
+}
+"#
+        ),
+        vec!["42"]
+    );
+}
+
+#[test]
+fn multiple_struct_instances_are_independent() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    first = Point(10, 20)
+    second = Point(30, 40)
+
+    print(first.x)
+    print(second.x)
+"#
+        ),
+        vec!["10", "30"]
+    );
+}
+
+#[test]
+fn struct_constructor_can_use_expressions() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    a = 20
+    b = 22
+
+    point = Point(a, b)
+
+    print(point.x + point.y)
+"#
+        ),
+        vec!["42"]
+    );
+}
+
+#[test]
+fn struct_fields_can_be_read() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point(10, 32)
+
+    print(point.x)
+    print(point.y)
+"#
+        ),
+        vec!["10", "32"]
+    );
+}
+
+// =========================================================================
+// Struct syntax failures
+// =========================================================================
+
+#[test]
+fn indentation_main_rejects_brace_struct() {
+    parse_should_fail(
+        r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    point = Point(10, 32)
+"#,
+    );
+}
+
+#[test]
+fn brace_main_rejects_indentation_struct() {
+    parse_should_fail(
+        r#"main {
+    point = Point(10, 32)
+}
+
+struct Point:
+    x: num
+    y: num
+"#,
+    );
+}
+
+#[test]
+fn indentation_struct_matches_indentation_main() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point(10, 32)
+
+    print(point.x)
+    print(point.y)
+"#
+        ),
+        vec!["10", "32"]
+    );
+}
+
+#[test]
+fn brace_struct_matches_brace_main() {
+    assert_eq!(
+        run_program(
+            r#"struct Point {
+    x: num
+    y: num
+}
+
+main {
+    point = Point(10, 32)
+
+    print(point.x)
+    print(point.y)
+}
+"#
+        ),
+        vec!["10", "32"]
+    );
+}
+
+#[test]
+fn indentation_main_rejects_brace_struct_2() {
+    parse_should_fail(
+        r#"struct Point {
+    x: num
+    y: num
+}
+
+main:
+    point = Point(10, 32)
+"#,
+    );
+}
+
+#[test]
+fn brace_main_rejects_indentation_struct_2() {
+    parse_should_fail(
+        r#"struct Point:
+    x: num
+    y: num
+
+main {
+    point = Point(10, 32)
+}
+"#,
+    );
+}
+
+#[test]
+fn indentation_struct_rejects_brace_constructor_2() {
+    parse_should_fail(
+        r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point {
+        x: 10,
+        y: 32
+    }
+"#,
+    );
+}
+
+#[test]
+fn brace_struct_rejects_brace_constructor_2() {
+    parse_should_fail(
+        r#"struct Point {
+    x: num
+    y: num
+}
+
+main {
+    point = Point {
+        x: 10,
+        y: 32
+    }
+}
+"#,
+    );
+}
+
+#[test]
+fn indentation_struct_requires_colon() {
+    parse_should_fail(
+        r#"struct Point
+    x: num
+    y: num
+
+main:
+    point = Point(10, 32)
+"#,
+    );
+}
+
+#[test]
+fn brace_struct_requires_left_brace() {
+    parse_should_fail(
+        r#"struct Point:
+    x: num
+    y: num
+
+main {
+    point = Point(10, 32)
+}
+"#,
+    );
+}
+
+// =========================================================================
+// Struct type-checking failures
+// =========================================================================
+
+#[test]
+fn unknown_struct_type_is_rejected() {
+    type_check_should_fail(
+        r#"main:
+    point = DoesNotExist(10, 20)
+"#,
+    );
+}
+
+#[test]
+fn unknown_struct_field_is_rejected() {
+    type_check_should_fail(
+        r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point(10, 20)
+    print(point.z)
+"#,
+    );
+}
+
+#[test]
+fn struct_constructor_argument_type_mismatch_is_rejected() {
+    type_check_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", "thirty")
+"#,
+    );
+}
+
+#[test]
+fn struct_constructor_too_few_arguments_is_rejected_2() {
+    type_check_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice")
+"#,
+    );
+}
+
+#[test]
+fn struct_constructor_too_many_arguments_is_rejected_2() {
+    type_check_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", 30, 100)
+"#,
+    );
+}
+
 
 }

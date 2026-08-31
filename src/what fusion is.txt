@@ -496,11 +496,10 @@ and Library integration "Can my Fusion program call this existing library?" you 
 
 Fusion 2.0 can be used to make CLI applications, Backend services, Developer tools, Desktop applications(once UI framework exists), Data processing, Scientific computing, Games and graphics, Cloud applications, distributed systems.
 
-I would build a very small Fusion language that can call C libraries first, while deliberately designing the compiler so that self-hosting becomes easy later.
+I would build a very small Fusion language that can call C libraries first, while deliberately designing the compiler so that self-hosting becomes easy later. The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain." Fusion needs to access the ecosystems of other languages, to connect them, foreign languages and libraries are a valuable asset fusion cannot live without.
 
-The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain."
-
-So you need to prove that claim early.
+So you need to prove that claim early. If Fusion 1.0 can make C libraries feel like ordinary Fusion libraries, I've demonstrated the central idea.
+Fusion should be able to integrate or embeed a foreign language NOT inside a .fusion file but in run/compile a separate file(like .c). Foreign languages are project-level dependencies, not syntax-level extensions. If that experience genuinely feels like “I installed Fusion, imported a C library, and never had to think about the C toolchain”, you've demonstrated the central idea behind Fusion.
 
 
 Current status:

@@ -1,3 +1,5 @@
+//contents of lexer.rs
+
 use std::collections::VecDeque;
 
 use crate::span::{Span, Spanned};
@@ -47,8 +49,8 @@ pub struct Lexer {
     indentation_stack: Vec<usize>,
     pending_tokens: VecDeque<Spanned<Token>>,
     block_mode: BlockMode,
-    brace_depth: usize,
     init_error: Option<LexError>,
+    brace_depth: usize,
 }
 
 impl Lexer {
@@ -63,15 +65,17 @@ impl Lexer {
             continue;
         }
 
-        if trimmed == "main:" {
-            return Ok(BlockMode::Indentation);
-        }
+        if let Some(rest) = trimmed.strip_prefix("main") {
+            let rest = rest.trim_start();
 
-        if trimmed == "main{" || trimmed == "main {" {
-            return Ok(BlockMode::Braces);
-        }
+            if rest.starts_with(':') {
+                return Ok(BlockMode::Indentation);
+            }
 
-        if trimmed.starts_with("main") {
+            if rest.starts_with('{') {
+                return Ok(BlockMode::Braces);
+            }
+
             return Err(LexError {
                 message: "invalid main declaration; use `main:` or `main {`".into(),
                 position: 0,
@@ -228,6 +232,27 @@ impl Lexer {
 
 }
 
+    fn skip_line_start_whitespace(&mut self) {
+    while matches!(self.peek(), Some(' ' | '\t')) {
+        self.advance();
+    }
+}
+
+    fn line_is_ignorable(&self, position: usize) -> bool {
+    let mut pos = position;
+
+    while matches!(self.input.get(pos), Some(' ' | '\t')) {
+        pos += 1;
+    }
+
+    match self.input.get(pos) {
+        None | Some('\n') => true,
+        Some('#') => true,
+        Some('/') if self.input.get(pos + 1) == Some(&'/') => true,
+        _ => false,
+    }
+}
+
     fn next_spanned(&mut self) -> Result<Spanned<Token>, LexError> {
         loop {
             if let Some(token) = self.pending_tokens.pop_front() { return Ok(token); }
@@ -258,7 +283,6 @@ impl Lexer {
                         self.indentation_stack.pop();
                         return Ok(Spanned::new(Token::Dedent, start, start));
                     }
-                    if self.brace_depth != 0 { return self.error("unclosed `{` at end of file"); }
                     return Ok(Spanned::new(Token::Eof, start, start));
                 }
             };

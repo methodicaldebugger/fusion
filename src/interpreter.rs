@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::environment::Environment;
-use crate::types::{EnumDefinition, StructDefinition};
+use crate::types::{EnumDefinition, EnumVariantDefinition, StructDefinition, Type};
 use crate::value::Value;
 
 #[derive(Debug)]
@@ -33,27 +33,75 @@ pub struct Function {
 impl Interpreter {
     pub fn new() -> Self {
         Self {
+            enums: HashMap::new(),
             environment: Environment::new(),
             functions: HashMap::new(),
             structs: HashMap::new(),
-            enums: HashMap::new(),
             loop_depth: 0,
             output: Vec::new(),
         }
     }
 
     pub fn output(&self) -> &[String] {
-    &self.output
-}
+        &self.output
+    }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Type helpers
+    // =========================================================================
+
+    fn type_from_name(&self, name: &str) -> Type {
+        match name {
+            "num" => Type::Num,
+            "float" => Type::Float,
+            "bool" => Type::Bool,
+            "string" => Type::String,
+            other => Type::Struct(other.to_string()),
+        }
+    }
+
+    fn value_matches_type(&self, value: &Value, expected: &str) -> bool {
+        match expected {
+            "num" => matches!(value, Value::Number(_)),
+            "float" => matches!(value, Value::Float(_)),
+            "bool" => matches!(value, Value::Boolean(_)),
+            "string" => matches!(value, Value::String(_)),
+
+            struct_name => match value {
+                Value::Struct { name, .. } => name == struct_name,
+                _ => false,
+            },
+        }
+    }
+
+    fn check_value_type(
+        &self,
+        context: &str,
+        expected: Option<&String>,
+        value: &Value,
+    ) {
+        let Some(expected) = expected else {
+            return;
+        };
+
+        if !self.value_matches_type(value, expected) {
+            panic!(
+                "{}: expected {}, got {:?}",
+                context,
+                expected,
+                value
+            );
+        }
+    }
+
+    // =========================================================================
     // Scope / defer handling
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn exit_scope(&mut self) {
         let deferred = self.environment.take_deferred();
 
-        // Defer is LIFO, like Zig-style defer semantics.
+        // LIFO defer semantics.
         for expression in deferred.into_iter().rev() {
             self.evaluate(&expression);
         }
@@ -74,24 +122,14 @@ impl Interpreter {
             }
         }
 
-        // IMPORTANT:
-        //
-        // Defers execute before the flow leaves this scope.
-        //
-        // Therefore:
-        //
-        //   defer x()
-        //   return 123
-        //
-        // executes x() before the Return reaches the caller.
         self.exit_scope();
 
         flow
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Property assignment
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn assign_property(
         &mut self,
@@ -100,7 +138,10 @@ impl Interpreter {
         value: Value,
     ) {
         match object {
-            Expression::Identifier(variable_name) => {
+            Expression::Identifier {
+                name: variable_name,
+                ..
+            } => {
                 let object_value = self
                     .environment
                     .get(variable_name)
@@ -139,9 +180,7 @@ impl Interpreter {
                     }
 
                     _ => {
-                        panic!(
-                            "Property assignment requires a struct"
-                        );
+                        panic!("Property assignment requires a struct");
                     }
                 }
             }
@@ -149,6 +188,7 @@ impl Interpreter {
             Expression::Property {
                 object: parent,
                 name: parent_field,
+                ..
             } => {
                 let object_value = self.evaluate(object);
 
@@ -178,9 +218,7 @@ impl Interpreter {
                     }
 
                     _ => {
-                        panic!(
-                            "Property assignment requires a struct"
-                        );
+                        panic!("Property assignment requires a struct");
                     }
                 }
             }
@@ -191,9 +229,9 @@ impl Interpreter {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Function calls
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Function handling
+    // =========================================================================
 
     fn check_parameter_type(
         &self,
@@ -205,19 +243,7 @@ impl Interpreter {
             return;
         };
 
-        let valid = match expected.as_str() {
-            "num" => matches!(value, Value::Number(_)),
-            "float" => matches!(value, Value::Float(_)),
-            "string" => matches!(value, Value::String(_)),
-            "bool" => matches!(value, Value::Boolean(_)),
-
-            struct_name => match value {
-                Value::Struct { name, .. } => name == struct_name,
-                _ => false,
-            },
-        };
-
-        if !valid {
+        if !self.value_matches_type(value, expected) {
             panic!(
                 "Function '{}' parameter '{}' expects {}, got {:?}",
                 function_name,
@@ -232,6 +258,7 @@ impl Interpreter {
         &mut self,
         name: &str,
         arguments: &[Expression],
+        _generic_arguments: &[String],
     ) -> Value {
         // ---------------------------------------------------------------------
         // Built-ins
@@ -241,26 +268,22 @@ impl Interpreter {
             "print" => {
                 for argument in arguments {
                     let value = self.evaluate(argument);
-
                     self.output.push(format!("{}", value));
                 }
 
-            return Value::None;
+                return Value::None;
             }
 
             _ => {}
         }
 
         // ---------------------------------------------------------------------
-        // Find user-defined function
+        // User-defined function
         // ---------------------------------------------------------------------
 
         let function = match self.functions.get(name) {
             Some(function) => function.clone(),
-
-            None => {
-                panic!("Unknown function '{}'", name);
-            }
+            None => panic!("Unknown function '{}'", name),
         };
 
         if arguments.len() != function.parameters.len() {
@@ -272,64 +295,37 @@ impl Interpreter {
             );
         }
 
-        // ---------------------------------------------------------------------
-        // Evaluate arguments before entering the function scope
-        // ---------------------------------------------------------------------
-
+        // Arguments are evaluated in the caller's scope.
         let values: Vec<Value> = arguments
             .iter()
             .map(|argument| self.evaluate(argument))
             .collect();
 
-        // ---------------------------------------------------------------------
-        // Check parameter types
-        // ---------------------------------------------------------------------
-
+        // Type-check before entering function scope.
         for (parameter, value) in
             function.parameters.iter().zip(values.iter())
         {
-            self.check_parameter_type(
-                name,
-                parameter,
-                value,
-            );
+            self.check_parameter_type(name, parameter, value);
         }
 
-        // ---------------------------------------------------------------------
-        // A function starts a new control-flow context.
-        //
-        // This is particularly important for:
-        //
-        //     while (...) {
-        //         foo();
-        //     }
-        //
-        // `break` inside foo() must NOT break the caller's loop.
-        // ---------------------------------------------------------------------
-
+        // A function gets its own loop context.
         let previous_loop_depth = self.loop_depth;
         self.loop_depth = 0;
 
         self.environment.push_scope();
 
-        // ---------------------------------------------------------------------
-        // Bind parameters
-        // ---------------------------------------------------------------------
-
+        // Bind parameters.
         for (parameter, value) in
-            function.parameters.iter().zip(values.iter())
+            function.parameters.iter().zip(values.into_iter())
         {
             self.environment.declare(
                 parameter.name.clone(),
-                value.clone(),
+                value,
                 true,
             );
         }
 
-        // ---------------------------------------------------------------------
-        // Execute function body
-        // ---------------------------------------------------------------------
-
+        // Execute body.
         let mut flow = Flow::Normal;
 
         for statement in &function.body {
@@ -340,14 +336,11 @@ impl Interpreter {
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Leaving the function scope always executes its defers.
-        // ---------------------------------------------------------------------
-
+        // A return value has already been evaluated.
+        //
+        // Defers must execute before the function scope disappears.
         let returned_value = match flow {
-            Flow::Return(value) => {
-                value
-            }
+            Flow::Return(value) => value,
 
             Flow::Normal => {
                 if function.return_type.is_some() {
@@ -368,7 +361,7 @@ impl Interpreter {
                 self.loop_depth = previous_loop_depth;
 
                 panic!(
-                    "break outside loop in function '{}'",
+                    "break escaped function '{}'",
                     name
                 );
             }
@@ -378,17 +371,12 @@ impl Interpreter {
                 self.loop_depth = previous_loop_depth;
 
                 panic!(
-                    "continue outside loop in function '{}'",
+                    "continue escaped function '{}'",
                     name
                 );
             }
         };
 
-        // IMPORTANT:
-        //
-        // Return value has already been evaluated, but the function's
-        // deferred expressions must execute before the function actually
-        // returns to its caller.
         self.exit_scope();
 
         self.loop_depth = previous_loop_depth;
@@ -402,9 +390,9 @@ impl Interpreter {
         returned_value
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Program execution
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     pub fn execute(&mut self, program: &Program) {
         // ---------------------------------------------------------------------
@@ -415,27 +403,27 @@ impl Interpreter {
             if let Statement::Struct {
                 name,
                 fields,
+                ..
             } = statement
             {
+                if self.structs.contains_key(name) {
+                    panic!("Duplicate struct '{}'", name);
+                }
+
                 let mut field_map = HashMap::new();
 
                 for field in fields {
-                    let field_type = match field.type_name.as_str() {
-                        "num" => crate::types::Type::Num,
-                        "float" => crate::types::Type::Float,
-                        "bool" => crate::types::Type::Bool,
-                        "string" => crate::types::Type::String,
-
-                        other => {
-                            crate::types::Type::Struct(
-                                other.to_string()
-                            )
-                        }
-                    };
+                    if field_map.contains_key(&field.name) {
+                        panic!(
+                            "Duplicate field '{}' in struct '{}'",
+                            field.name,
+                            name
+                        );
+                    }
 
                     field_map.insert(
                         field.name.clone(),
-                        field_type,
+                        self.type_from_name(&field.type_name),
                     );
                 }
 
@@ -449,18 +437,71 @@ impl Interpreter {
         }
 
         // ---------------------------------------------------------------------
-        // Pass 2: register functions
+        // Pass 2: register enums
+        // ---------------------------------------------------------------------
+
+        for statement in &program.statements {
+            if let Statement::Enum {
+                name,
+                variants,
+                ..
+            } = statement
+            {
+                if self.enums.contains_key(name) {
+                    panic!("Duplicate enum '{}'", name);
+                }
+
+                let mut variant_map = HashMap::new();
+
+                for variant in variants {
+                    if variant_map.contains_key(&variant.name) {
+                        panic!(
+                            "Duplicate variant '{}' in enum '{}'",
+                            variant.name,
+                            name
+                        );
+                    }
+
+                    let fields = variant
+                        .fields
+                        .iter()
+                        .map(|field| self.type_from_name(field))
+                        .collect();
+
+                    variant_map.insert(
+                        variant.name.clone(),
+                        EnumVariantDefinition {
+                            fields,
+                        },
+                    );
+                }
+
+                self.enums.insert(
+                    name.clone(),
+                    EnumDefinition {
+                        variants: variant_map,
+                    },
+                );
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Pass 3: register functions
         // ---------------------------------------------------------------------
 
         for statement in &program.statements {
             if let Statement::Function {
                 name,
                 parameters,
-                body,
                 return_type,
+                body,
                 ..
             } = statement
             {
+                if self.functions.contains_key(name) {
+                    panic!("Duplicate function '{}'", name);
+                }
+
                 self.functions.insert(
                     name.clone(),
                     Function {
@@ -473,35 +514,42 @@ impl Interpreter {
         }
 
         // ---------------------------------------------------------------------
-        // Pass 3: execute top-level statements
+        // Pass 4: execute top-level declarations/statements
         // ---------------------------------------------------------------------
 
         for statement in &program.statements {
-            if matches!(statement, Statement::Function { .. }) {
-                continue;
-            }
+            match statement {
+                // Declarations are already registered.
+                Statement::Function { .. }
+                | Statement::Struct { .. }
+                | Statement::Enum { .. }
+                | Statement::Trait { .. }
+                | Statement::Impl { .. } => {}
 
-            match self.execute_statement(statement) {
-                Flow::Normal => {}
+                _ => {
+                    match self.execute_statement(statement) {
+                        Flow::Normal => {}
 
-                Flow::Return(_) => {
-                    panic!("return outside function");
-                }
+                        Flow::Return(_) => {
+                            panic!("return outside function");
+                        }
 
-                Flow::Break => {
-                    panic!("break outside loop");
-                }
+                        Flow::Break => {
+                            panic!("break outside loop");
+                        }
 
-                Flow::Continue => {
-                    panic!("continue outside loop");
+                        Flow::Continue => {
+                            panic!("continue outside loop");
+                        }
+                    }
                 }
             }
         }
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Statement execution
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn execute_statement(
         &mut self,
@@ -509,7 +557,7 @@ impl Interpreter {
     ) -> Flow {
         match statement {
             // -----------------------------------------------------------------
-            // Variables
+            // Variable declarations
             // -----------------------------------------------------------------
 
             Statement::VariableDeclarations {
@@ -517,12 +565,20 @@ impl Interpreter {
                 ..
             } => {
                 for declaration in declarations {
-                    let result =
-                        self.evaluate(&declaration.value);
+                    let value = self.evaluate(&declaration.value);
+
+                    self.check_value_type(
+                        &format!(
+                            "Variable '{}' type error",
+                            declaration.name
+                        ),
+                        declaration.declared_type.as_ref(),
+                        &value,
+                    );
 
                     self.environment.declare(
                         declaration.name.clone(),
-                        result,
+                        value,
                         true,
                     );
                 }
@@ -530,12 +586,23 @@ impl Interpreter {
                 Flow::Normal
             }
 
+            // -----------------------------------------------------------------
+            // Constant declaration
+            // -----------------------------------------------------------------
+
             Statement::ConstDeclaration {
                 name,
+                declared_type,
                 value,
                 ..
             } => {
                 let result = self.evaluate(value);
+
+                self.check_value_type(
+                    &format!("Constant '{}' type error", name),
+                    declared_type.as_ref(),
+                    &result,
+                );
 
                 self.environment.declare(
                     name.clone(),
@@ -553,21 +620,21 @@ impl Interpreter {
             Statement::Assignment {
                 target,
                 value,
+                ..
             } => {
                 let result = self.evaluate(value);
 
                 match target {
-                    Expression::Identifier(name) => {
+                    Expression::Identifier { name, .. } => {
                         if self.environment.get(name).is_some() {
                             if let Err(error) =
-                                self.environment.assign(
-                                    name,
-                                    result,
-                                )
+                                self.environment.assign(name, result)
                             {
                                 panic!("{}", error);
                             }
                         } else {
+                            // Preserve the existing language behavior:
+                            // assigning an unknown name creates a variable.
                             self.environment.declare(
                                 name.clone(),
                                 result,
@@ -579,6 +646,7 @@ impl Interpreter {
                     Expression::Property {
                         object,
                         name,
+                        ..
                     } => {
                         self.assign_property(
                             object,
@@ -588,9 +656,7 @@ impl Interpreter {
                     }
 
                     _ => {
-                        panic!(
-                            "Invalid assignment target"
-                        );
+                        panic!("Invalid assignment target");
                     }
                 }
 
@@ -598,16 +664,26 @@ impl Interpreter {
             }
 
             // -----------------------------------------------------------------
-            // Expression / call
+            // Expression statement
             // -----------------------------------------------------------------
 
-            Statement::Expression(expr) => {
-                self.evaluate(expr);
+            Statement::Expression {
+                expression,
+                ..
+            } => {
+                self.evaluate(expression);
                 Flow::Normal
             }
 
-            Statement::Call(expr) => {
-                self.evaluate(expr);
+            // -----------------------------------------------------------------
+            // Call statement
+            // -----------------------------------------------------------------
+
+            Statement::Call {
+                expression,
+                ..
+            } => {
+                self.evaluate(expression);
                 Flow::Normal
             }
 
@@ -615,10 +691,11 @@ impl Interpreter {
             // Defer
             // -----------------------------------------------------------------
 
-            Statement::Defer(expression) => {
-                self.environment
-                    .add_defer(expression.clone());
-
+            Statement::Defer {
+                expression,
+                ..
+            } => {
+                self.environment.add_defer(expression.clone());
                 Flow::Normal
             }
 
@@ -626,17 +703,19 @@ impl Interpreter {
             // Return
             // -----------------------------------------------------------------
 
-            Statement::Return(expression) => {
-                let value = self.evaluate(expression);
-
-                Flow::Return(value)
+            Statement::Return {
+                value,
+                ..
+            } => {
+                let result = self.evaluate(value);
+                Flow::Return(result)
             }
 
             // -----------------------------------------------------------------
             // Break
             // -----------------------------------------------------------------
 
-            Statement::Break => {
+            Statement::Break { .. } => {
                 if self.loop_depth == 0 {
                     panic!("break outside loop");
                 }
@@ -648,7 +727,7 @@ impl Interpreter {
             // Continue
             // -----------------------------------------------------------------
 
-            Statement::Continue => {
+            Statement::Continue { .. } => {
                 if self.loop_depth == 0 {
                     panic!("continue outside loop");
                 }
@@ -660,37 +739,30 @@ impl Interpreter {
             // Main
             // -----------------------------------------------------------------
 
-            Statement::Main { body } => {
-                let previous_loop_depth =
-                    self.loop_depth;
-
+            Statement::Main {
+                body,
+                ..
+            } => {
+                let previous_loop_depth = self.loop_depth;
                 self.loop_depth = 0;
 
-                let flow =
-                    self.execute_scoped_block(body);
+                let flow = self.execute_scoped_block(body);
 
-                self.loop_depth =
-                    previous_loop_depth;
+                self.loop_depth = previous_loop_depth;
 
                 match flow {
                     Flow::Normal => Flow::Normal,
 
                     Flow::Return(_) => {
-                        panic!(
-                            "return outside function"
-                        );
+                        panic!("return outside function");
                     }
 
                     Flow::Break => {
-                        panic!(
-                            "break outside loop"
-                        );
+                        panic!("break outside loop");
                     }
 
                     Flow::Continue => {
-                        panic!(
-                            "continue outside loop"
-                        );
+                        panic!("continue outside loop");
                     }
                 }
             }
@@ -703,6 +775,7 @@ impl Interpreter {
                 condition,
                 body,
                 else_body,
+                ..
             } => {
                 let value = self.evaluate(condition);
 
@@ -714,9 +787,7 @@ impl Interpreter {
                     Value::Boolean(false) => {
                         match else_body {
                             Some(statements) => {
-                                self.execute_scoped_block(
-                                    statements,
-                                )
+                                self.execute_scoped_block(statements)
                             }
 
                             None => Flow::Normal,
@@ -724,9 +795,7 @@ impl Interpreter {
                     }
 
                     _ => {
-                        panic!(
-                            "If condition must be boolean"
-                        );
+                        panic!("If condition must be boolean");
                     }
                 }
             }
@@ -736,160 +805,160 @@ impl Interpreter {
             // -----------------------------------------------------------------
 
             Statement::While {
-    condition,
-    body,
-} => {
-    self.environment.push_scope();
-    self.loop_depth += 1;
+                condition,
+                body,
+                ..
+            } => {
+                self.environment.push_scope();
+                self.loop_depth += 1;
 
-    loop {
-        match self.evaluate(condition) {
-            Value::Boolean(true) => {}
+                loop {
+                    let condition_value = self.evaluate(condition);
 
-            Value::Boolean(false) => {
-                break;
-            }
+                    match condition_value {
+                        Value::Boolean(true) => {}
 
-            _ => {
-                self.loop_depth -= 1;
-                self.exit_scope();
-                panic!("While condition must be boolean");
-            }
-        }
+                        Value::Boolean(false) => {
+                            break;
+                        }
 
-        // Fresh scope for THIS iteration.
-        self.environment.push_scope();
+                        _ => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
 
-        let mut flow = Flow::Normal;
+                            panic!(
+                                "While condition must be boolean"
+                            );
+                        }
+                    }
 
-        for statement in body {
-            flow = self.execute_statement(statement);
+                    // Every iteration receives a fresh scope.
+                    self.environment.push_scope();
 
-            match flow {
-                Flow::Normal => {}
+                    let mut flow = Flow::Normal;
 
-                Flow::Continue
-                | Flow::Break
-                | Flow::Return(_) => {
-                    break;
+                    for statement in body {
+                        flow = self.execute_statement(statement);
+
+                        if !matches!(flow, Flow::Normal) {
+                            break;
+                        }
+                    }
+
+                    // Iteration defers execute before control leaves
+                    // this iteration.
+                    self.exit_scope();
+
+                    match flow {
+                        Flow::Normal => {}
+
+                        Flow::Continue => {
+                            continue;
+                        }
+
+                        Flow::Break => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
+                            return Flow::Normal;
+                        }
+
+                        Flow::Return(value) => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
+                            return Flow::Return(value);
+                        }
+                    }
                 }
-            }
-        }
 
-        // Always unwind iteration scope first.
-        self.exit_scope();
-
-        match flow {
-            Flow::Normal => {}
-
-            Flow::Continue => {
-                continue;
-            }
-
-            Flow::Break => {
                 self.loop_depth -= 1;
                 self.exit_scope();
-                return Flow::Normal;
+
+                Flow::Normal
             }
-
-            Flow::Return(value) => {
-                self.loop_depth -= 1;
-                self.exit_scope();
-                return Flow::Return(value);
-            }
-        }
-    }
-
-    self.loop_depth -= 1;
-    self.exit_scope();
-
-    Flow::Normal
-}
 
             // -----------------------------------------------------------------
             // For
             // -----------------------------------------------------------------
 
             Statement::For {
-    variable,
-    start,
-    end,
-    body,
-} => {
-    let start_value = self.evaluate(start);
-    let end_value = self.evaluate(end);
+                variable,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                let start_value = self.evaluate(start);
+                let end_value = self.evaluate(end);
 
-    let start_number = match start_value {
-        Value::Number(v) => v,
-        _ => panic!("For loop start must be integer"),
-    };
+                let start_number = match start_value {
+                    Value::Number(value) => value,
+                    _ => {
+                        panic!(
+                            "For loop start must be an integer"
+                        );
+                    }
+                };
 
-    let end_number = match end_value {
-        Value::Number(v) => v,
-        _ => panic!("For loop end must be integer"),
-    };
+                let end_number = match end_value {
+                    Value::Number(value) => value,
+                    _ => {
+                        panic!(
+                            "For loop end must be an integer"
+                        );
+                    }
+                };
 
-    self.environment.push_scope();
-    self.loop_depth += 1;
+                self.environment.push_scope();
+                self.loop_depth += 1;
 
-    for i in start_number..end_number {
-        // Every iteration gets a fresh scope.
-        self.environment.push_scope();
+                for i in start_number..end_number {
+                    // Fresh scope per iteration.
+                    self.environment.push_scope();
 
-        self.environment.set(
-            variable.clone(),
-            Value::Number(i),
-        );
+                    self.environment.set(
+                        variable.clone(),
+                        Value::Number(i),
+                    );
 
-        let mut flow = Flow::Normal;
+                    let mut flow = Flow::Normal;
 
-        for statement in body {
-            flow = self.execute_statement(statement);
+                    for statement in body {
+                        flow = self.execute_statement(statement);
 
-            match flow {
-                Flow::Normal => {}
+                        if !matches!(flow, Flow::Normal) {
+                            break;
+                        }
+                    }
 
-                Flow::Continue => {
-                    break;
+                    // Iteration defers execute here.
+                    self.exit_scope();
+
+                    match flow {
+                        Flow::Normal => {}
+
+                        Flow::Continue => {
+                            continue;
+                        }
+
+                        Flow::Break => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
+                            return Flow::Normal;
+                        }
+
+                        Flow::Return(value) => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
+                            return Flow::Return(value);
+                        }
+                    }
                 }
 
-                Flow::Break | Flow::Return(_) => {
-                    break;
-                }
-            }
-        }
-
-        // IMPORTANT:
-        // This runs iteration defers before continuing,
-        // breaking, or returning.
-        self.exit_scope();
-
-        match flow {
-            Flow::Normal => {}
-
-            Flow::Continue => {
-                continue;
-            }
-
-            Flow::Break => {
                 self.loop_depth -= 1;
                 self.exit_scope();
-                return Flow::Normal;
+
+                Flow::Normal
             }
-
-            Flow::Return(value) => {
-                self.loop_depth -= 1;
-                self.exit_scope();
-                return Flow::Return(value);
-            }
-        }
-    }
-
-    self.loop_depth -= 1;
-    self.exit_scope();
-
-    Flow::Normal
-}
 
             // -----------------------------------------------------------------
             // Match
@@ -898,31 +967,26 @@ impl Interpreter {
             Statement::Match {
                 expression,
                 arms,
+                ..
             } => {
-                let value =
-                    self.evaluate(expression);
+                let value = self.evaluate(expression);
 
                 for arm in arms {
                     if let Some(bindings) =
-                        self.pattern_matches(
-                            &arm.pattern,
-                            &value,
-                        )
+                        self.pattern_matches(&arm.pattern, &value)
                     {
                         self.environment.push_scope();
 
-                        for (name, value) in bindings {
+                        for (name, binding_value) in bindings {
                             self.environment.declare(
                                 name,
-                                value,
+                                binding_value,
                                 true,
                             );
                         }
 
                         let flow =
-                            self.execute_statement_list(
-                                &arm.body
-                            );
+                            self.execute_statement_list(&arm.body);
 
                         self.exit_scope();
 
@@ -934,74 +998,14 @@ impl Interpreter {
             }
 
             // -----------------------------------------------------------------
-            // Enum
-            // -----------------------------------------------------------------
-
-            Statement::Enum {
-                name,
-                variants,
-            } => {
-                let mut variant_map =
-                    HashMap::new();
-
-                for variant in variants {
-                    let fields = variant
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            match field.as_str() {
-                                "num" => {
-                                    crate::types::Type::Num
-                                }
-
-                                "float" => {
-                                    crate::types::Type::Float
-                                }
-
-                                "bool" => {
-                                    crate::types::Type::Bool
-                                }
-
-                                "string" => {
-                                    crate::types::Type::String
-                                }
-
-                                other => {
-                                    crate::types::Type::Struct(
-                                        other.to_string()
-                                    )
-                                }
-                            }
-                        })
-                        .collect();
-
-                    variant_map.insert(
-                        variant.name.clone(),
-                        crate::types::EnumVariantDefinition {
-                            fields,
-                        },
-                    );
-                }
-
-                self.enums.insert(
-                    name.clone(),
-                    EnumDefinition {
-                        variants: variant_map,
-                    },
-                );
-
-                Flow::Normal
-            }
-
-            // -----------------------------------------------------------------
             // Function declaration
             // -----------------------------------------------------------------
 
             Statement::Function {
                 name,
                 parameters,
-                body,
                 return_type,
+                body,
                 ..
             } => {
                 self.functions.insert(
@@ -1021,14 +1025,47 @@ impl Interpreter {
             // -----------------------------------------------------------------
 
             Statement::Struct { .. } => {
-                // Structs were registered during the first pass.
+                Flow::Normal
+            }
+
+            // -----------------------------------------------------------------
+            // Enum declaration
+            // -----------------------------------------------------------------
+
+            Statement::Enum {
+                name,
+                variants,
+                ..
+            } => {
+                let mut variant_map = HashMap::new();
+
+                for variant in variants {
+                    let fields = variant
+                        .fields
+                        .iter()
+                        .map(|field| self.type_from_name(field))
+                        .collect();
+
+                    variant_map.insert(
+                        variant.name.clone(),
+                        EnumVariantDefinition {
+                            fields,
+                        },
+                    );
+                }
+
+                self.enums.insert(
+                    name.clone(),
+                    EnumDefinition {
+                        variants: variant_map,
+                    },
+                );
+
                 Flow::Normal
             }
 
             // -----------------------------------------------------------------
             // Trait / impl
-            //
-            // These remain declarations for now.
             // -----------------------------------------------------------------
 
             Statement::Trait { .. } => {
@@ -1038,29 +1075,6 @@ impl Interpreter {
             Statement::Impl { .. } => {
                 Flow::Normal
             }
-
-            // -----------------------------------------------------------------
-            // Unsupported / currently declaration-only statements
-            // -----------------------------------------------------------------
-
-            Statement::For { .. }
-            | Statement::While { .. }
-            | Statement::If { .. }
-            | Statement::Match { .. }
-            | Statement::Main { .. }
-            | Statement::Return(_)
-            | Statement::Break
-            | Statement::Continue
-            | Statement::Defer(_)
-            | Statement::Assignment { .. }
-            | Statement::VariableDeclarations { .. }
-            | Statement::ConstDeclaration { .. }
-            | Statement::Expression(_)
-            | Statement::Call(_) => {
-                unreachable!(
-                    "statement variant handled above"
-                );
-            }
         }
     }
 
@@ -1069,8 +1083,7 @@ impl Interpreter {
         statements: &[Statement],
     ) -> Flow {
         for statement in statements {
-            let flow =
-                self.execute_statement(statement);
+            let flow = self.execute_statement(statement);
 
             if !matches!(flow, Flow::Normal) {
                 return flow;
@@ -1080,52 +1093,80 @@ impl Interpreter {
         Flow::Normal
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Pattern matching
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn pattern_matches(
         &self,
         pattern: &Pattern,
         value: &Value,
     ) -> Option<Vec<(String, Value)>> {
-        match (pattern, value) {
-            (Pattern::Wildcard, _) => {
+        match (&pattern.kind, value) {
+            // -----------------------------------------------------------------
+            // Wildcard
+            // -----------------------------------------------------------------
+
+            (PatternKind::Wildcard, _) => {
                 Some(Vec::new())
             }
 
-            (Pattern::Identifier(name), value) => {
+            // -----------------------------------------------------------------
+            // Identifier binding
+            // -----------------------------------------------------------------
+
+            (PatternKind::Identifier(name), value) => {
                 Some(vec![
                     (name.clone(), value.clone())
                 ])
             }
 
-            (Pattern::Number(a), Value::Number(b))
-                if a == b =>
+            // -----------------------------------------------------------------
+            // Number
+            // -----------------------------------------------------------------
+
+            (PatternKind::Number(expected), Value::Number(actual))
+                if expected == actual =>
             {
                 Some(Vec::new())
             }
 
-            (Pattern::Float(a), Value::Float(b))
-                if a == b =>
+            // -----------------------------------------------------------------
+            // Float
+            // -----------------------------------------------------------------
+
+            (PatternKind::Float(expected), Value::Float(actual))
+                if expected == actual =>
             {
                 Some(Vec::new())
             }
 
-            (Pattern::String(a), Value::String(b))
-                if a == b =>
+            // -----------------------------------------------------------------
+            // String
+            // -----------------------------------------------------------------
+
+            (PatternKind::String(expected), Value::String(actual))
+                if expected == actual =>
             {
                 Some(Vec::new())
             }
 
-            (Pattern::Boolean(a), Value::Boolean(b))
-                if a == b =>
+            // -----------------------------------------------------------------
+            // Boolean
+            // -----------------------------------------------------------------
+
+            (PatternKind::Boolean(expected), Value::Boolean(actual))
+                if expected == actual =>
             {
                 Some(Vec::new())
             }
+
+            // -----------------------------------------------------------------
+            // Enum variant
+            // -----------------------------------------------------------------
 
             (
-                Pattern::Variant {
+                PatternKind::Variant {
                     name,
                     bindings,
                 },
@@ -1135,10 +1176,10 @@ impl Interpreter {
                     values,
                 },
             ) => {
-                let expected =
+                let expected_name =
                     format!("{}::{}", enum_name, variant);
 
-                if name != &expected {
+                if name != &expected_name {
                     return None;
                 }
 
@@ -1159,68 +1200,236 @@ impl Interpreter {
         }
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Expression evaluation
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
-    fn evaluate(
-        &mut self,
-        expr: &Expression,
-    ) -> Value {
+    fn evaluate(&mut self, expr: &Expression) -> Value {
         match expr {
-            Expression::Number(value) => {
+            // -----------------------------------------------------------------
+            // Literals
+            // -----------------------------------------------------------------
+
+            Expression::Number { value, .. } => {
                 Value::Number(*value)
             }
 
-            Expression::Float(value) => {
+            Expression::Float { value, .. } => {
                 Value::Float(*value)
             }
 
-            Expression::Boolean(value) => {
+            Expression::Boolean { value, .. } => {
                 Value::Boolean(*value)
             }
 
-            Expression::String(value) => {
+            Expression::String { value, .. } => {
                 Value::String(value.clone())
             }
 
-            Expression::Identifier(name) => {
-                match self.environment.get(name) {
-                    Some(value) => value.clone(),
+            // -----------------------------------------------------------------
+            // Identifier
+            // -----------------------------------------------------------------
 
-                    None => {
+            Expression::Identifier { name, .. } => {
+                self.environment
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| {
                         panic!(
-                            "Runtime error: unknown variable {}",
+                            "Runtime error: unknown variable '{}'",
                             name
+                        )
+                    })
+            }
+
+            // -----------------------------------------------------------------
+            // Array
+            // -----------------------------------------------------------------
+
+            Expression::Array {
+                elements,
+                ..
+            } => {
+                let values = elements
+                    .iter()
+                    .map(|element| self.evaluate(element))
+                    .collect();
+
+                Value::Array(values)
+            }
+
+            // -----------------------------------------------------------------
+            // Indexing
+            // -----------------------------------------------------------------
+
+            Expression::Index {
+                array,
+                index,
+                ..
+            } => {
+                let array_value = self.evaluate(array);
+                let index_value = self.evaluate(index);
+
+                match (array_value, index_value) {
+                    (
+                        Value::Array(values),
+                        Value::Number(index),
+                    ) => {
+                        if index < 0 {
+                            panic!("Array index out of bounds");
+                        }
+
+                        values
+                            .get(index as usize)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Array index out of bounds"
+                                )
+                            })
+                    }
+
+                    _ => {
+                        panic!(
+                            "Invalid array indexing: index must be a number and target must be an array"
                         );
                     }
                 }
             }
 
-            Expression::Array(values) => {
-                let mut result = Vec::new();
+            // -----------------------------------------------------------------
+            // Property access
+            // -----------------------------------------------------------------
 
-                for value in values {
-                    result.push(
-                        self.evaluate(value)
-                    );
+            Expression::Property {
+                object,
+                name,
+                ..
+            } => {
+                let value = self.evaluate(object);
+
+                match value {
+                    Value::Struct {
+                        fields,
+                        ..
+                    } => {
+                        fields
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Unknown field '{}'",
+                                    name
+                                )
+                            })
+                    }
+
+                    _ => {
+                        panic!(
+                            "Property access requires a struct"
+                        );
+                    }
                 }
-
-                Value::Array(result)
             }
+
+            // -----------------------------------------------------------------
+            // Method calls
+            // -----------------------------------------------------------------
+
+            Expression::MethodCall {
+                object,
+                method,
+                arguments,
+                ..
+            } => {
+                self.evaluate_method_call(
+                    object,
+                    method,
+                    arguments,
+                )
+            }
+
+            // -----------------------------------------------------------------
+            // Function calls
+            // -----------------------------------------------------------------
+
+            Expression::Call {
+                name,
+                arguments,
+                generic_arguments,
+                ..
+            } => {
+                self.call_function(
+                    name,
+                    arguments,
+                    generic_arguments,
+                )
+            }
+
+            // -----------------------------------------------------------------
+            // Struct constructor
+            // -----------------------------------------------------------------
 
             Expression::StructConstructor {
                 name,
                 fields,
+                ..
             } => {
-                let mut result =
-                    HashMap::new();
+                let definition = self.structs.get(name).cloned();
+
+                if definition.is_none() {
+                    panic!(
+                        "Unknown struct '{}'",
+                        name
+                    );
+                }
+
+                let definition = definition.unwrap();
+
+                let mut result = HashMap::new();
 
                 for (field_name, expression) in fields {
+                    let expected_type =
+                        definition.fields.get(field_name);
+
+                    let Some(expected_type) = expected_type else {
+                        panic!(
+                            "Unknown field '{}' on struct '{}'",
+                            field_name,
+                            name
+                        );
+                    };
+
+                    let value = self.evaluate(expression);
+
+                    if !self.value_matches_type_value(
+                        &value,
+                        expected_type,
+                    ) {
+                        panic!(
+                            "Invalid value for field '{}.{}': expected {:?}, got {:?}",
+                            name,
+                            field_name,
+                            expected_type,
+                            value
+                        );
+                    }
+
                     result.insert(
                         field_name.clone(),
-                        self.evaluate(expression),
+                        value,
                     );
+                }
+
+                // Require all declared fields.
+                for field_name in definition.fields.keys() {
+                    if !result.contains_key(field_name) {
+                        panic!(
+                            "Missing field '{}' in struct constructor '{}'",
+                            field_name,
+                            name
+                        );
+                    }
                 }
 
                 Value::Struct {
@@ -1229,17 +1438,70 @@ impl Interpreter {
                 }
             }
 
+            // -----------------------------------------------------------------
+            // Enum constructor
+            // -----------------------------------------------------------------
+
             Expression::EnumConstructor {
                 enum_name,
                 variant,
                 arguments,
+                ..
             } => {
-                let values = arguments
+                let enum_definition =
+                    self.enums.get(enum_name).cloned();
+
+                let Some(enum_definition) = enum_definition else {
+                    panic!(
+                        "Unknown enum '{}'",
+                        enum_name
+                    );
+                };
+
+                let variant_definition =
+                    enum_definition.variants.get(variant).cloned();
+
+                let Some(variant_definition) = variant_definition else {
+                    panic!(
+                        "Unknown variant '{}::{}'",
+                        enum_name,
+                        variant
+                    );
+                };
+
+                if arguments.len() != variant_definition.fields.len() {
+                    panic!(
+                        "Enum variant '{}::{}' expects {} arguments, got {}",
+                        enum_name,
+                        variant,
+                        variant_definition.fields.len(),
+                        arguments.len()
+                    );
+                }
+
+                let mut values = Vec::new();
+
+                for (argument, expected_type) in arguments
                     .iter()
-                    .map(|argument| {
-                        self.evaluate(argument)
-                    })
-                    .collect();
+                    .zip(variant_definition.fields.iter())
+                {
+                    let value = self.evaluate(argument);
+
+                    if !self.value_matches_type_value(
+                        &value,
+                        expected_type,
+                    ) {
+                        panic!(
+                            "Invalid value in enum variant '{}::{}': expected {:?}, got {:?}",
+                            enum_name,
+                            variant,
+                            expected_type,
+                            value
+                        );
+                    }
+
+                    values.push(value);
+                }
 
                 Value::Enum {
                     enum_name: enum_name.clone(),
@@ -1248,16 +1510,19 @@ impl Interpreter {
                 }
             }
 
+            // -----------------------------------------------------------------
+            // Binary expression
+            // -----------------------------------------------------------------
+
             Expression::Binary {
                 left,
                 operator,
                 right,
+                ..
             } => {
-                let left_value =
-                    self.evaluate(left);
+                let left_value = self.evaluate(left);
 
-                let right_value =
-                    self.evaluate(right);
+                let right_value = self.evaluate(right);
 
                 self.evaluate_binary(
                     left_value,
@@ -1266,21 +1531,27 @@ impl Interpreter {
                 )
             }
 
+            // -----------------------------------------------------------------
+            // Unary expression
+            // -----------------------------------------------------------------
+
             Expression::Unary {
                 operator,
                 expression,
+                ..
             } => {
-                let value =
-                    self.evaluate(expression);
+                let value = self.evaluate(expression);
 
                 match operator {
                     UnaryOperator::Negate => {
                         match value {
-                            Value::Number(v) =>
-                                Value::Number(-v),
+                            Value::Number(value) => {
+                                Value::Number(-value)
+                            }
 
-                            Value::Float(v) =>
-                                Value::Float(-v),
+                            Value::Float(value) => {
+                                Value::Float(-value)
+                            }
 
                             _ => {
                                 panic!(
@@ -1292,156 +1563,88 @@ impl Interpreter {
 
                     UnaryOperator::Not => {
                         match value {
-                            Value::Boolean(v) =>
-                                Value::Boolean(!v),
+                            Value::Boolean(value) => {
+                                Value::Boolean(!value)
+                            }
 
                             _ => {
                                 panic!(
-                                    "Unary '!' requires a boolean value"
+                                    "Unary 'not' requires a boolean value"
                                 );
                             }
                         }
                     }
                 }
             }
+        }
+    }
 
-            Expression::Call {
-                name,
-                arguments,
-                ..
-            } => {
-                self.call_function(
-                    name,
-                    arguments,
+    // =========================================================================
+    // Value / Type compatibility
+    // =========================================================================
+
+    fn value_matches_type_value(
+        &self,
+        value: &Value,
+        expected: &Type,
+    ) -> bool {
+        match expected {
+            Type::Num => matches!(value, Value::Number(_)),
+            Type::Float => matches!(value, Value::Float(_)),
+            Type::Bool => matches!(value, Value::Boolean(_)),
+            Type::String => matches!(value, Value::String(_)),
+
+            Type::Struct(expected_name) => {
+                matches!(
+                    value,
+                    Value::Struct { name, .. }
+                        if name == expected_name
                 )
             }
 
-            Expression::Index {
-                array,
-                index,
-            } => {
-                let array_value =
-                    self.evaluate(array);
+            _ => false,
+        }
+    }
 
-                let index_value =
-                    self.evaluate(index);
+    // =========================================================================
+    // Method calls
+    // =========================================================================
 
-                match (
-                    array_value,
-                    index_value,
-                ) {
-                    (
-                        Value::Array(values),
-                        Value::Number(index),
-                    ) => {
-                        if index < 0 {
-                            panic!(
-                                "Array index out of bounds"
-                            );
-                        }
+    fn evaluate_method_call(
+        &mut self,
+        object: &Expression,
+        method: &str,
+        arguments: &[Expression],
+    ) -> Value {
+        match method {
+            // -----------------------------------------------------------------
+            // Array.push(value)
+            // -----------------------------------------------------------------
 
-                        match values.get(
-                            index as usize
-                        ) {
-                            Some(value) =>
-                                value.clone(),
-
-                            None => {
-                                panic!(
-                                    "Array index out of bounds"
-                                );
-                            }
-                        }
-                    }
-
-                    _ => {
-                        panic!(
-                            "Invalid array indexing"
-                        );
-                    }
+            "push" => {
+                if arguments.len() != 1 {
+                    panic!(
+                        "push() expects exactly 1 argument"
+                    );
                 }
-            }
 
-            Expression::Property {
-                object,
-                name,
-            } => {
-                let value =
-                    self.evaluate(object);
+                let value = self.evaluate(&arguments[0]);
 
-                match value {
-                    Value::Struct {
-                        fields,
-                        ..
-                    } => {
-                        match fields.get(name) {
-                            Some(value) =>
-                                value.clone(),
-
-                            None => {
+                match object {
+                    Expression::Identifier { name, .. } => {
+                        let array = self
+                            .environment
+                            .get_mut(name)
+                            .unwrap_or_else(|| {
                                 panic!(
-                                    "Unknown field '{}'",
+                                    "Unknown variable '{}'",
                                     name
-                                );
-                            }
-                        }
-                    }
+                                )
+                            });
 
-                    _ => {
-                        panic!(
-                            "Property access requires a struct"
-                        );
-                    }
-                }
-            }
-
-            Expression::MethodCall {
-                object,
-                method,
-                arguments,
-            } => {
-                let object_value =
-                    self.evaluate(object);
-
-                match method.as_str() {
-                    "push" => {
-                        if arguments.len() != 1 {
-                            panic!(
-                                "push() expects exactly 1 argument"
-                            );
-                        }
-
-                        let value =
-                            self.evaluate(
-                                &arguments[0]
-                            );
-
-                        match object_value {
-                            Value::Array(
-                                mut values
-                            ) => {
+                        match array {
+                            Value::Array(values) => {
                                 values.push(value);
-
-                                if let Expression::Identifier(
-                                    name
-                                ) = object.as_ref()
-                                {
-                                    if let Err(error) =
-                                        self.environment.assign(
-                                            name,
-                                            Value::Array(
-                                                values
-                                            ),
-                                        )
-                                    {
-                                        panic!("{}", error);
-                                    }
-                                } else {
-                                    panic!(
-                                        "push() requires an array variable"
-                                    );
-                                }
-
                                 Value::None
                             }
 
@@ -1453,78 +1656,49 @@ impl Interpreter {
                         }
                     }
 
-                    "pop" => {
-                        if !arguments.is_empty() {
-                            panic!(
-                                "pop() expects no arguments"
-                            );
-                        }
-
-                        match object.as_ref() {
-                            Expression::Identifier(
-                                name
-                            ) => {
-                                let array =
-                                    self.environment
-                                        .get_mut(name)
-                                        .unwrap_or_else(
-                                            || {
-                                                panic!(
-                                                    "Unknown array variable '{}'",
-                                                    name
-                                                )
-                                            }
-                                        );
-
-                                match array {
-                                    Value::Array(
-                                        values
-                                    ) => {
-                                        values
-                                            .pop()
-                                            .unwrap_or_else(
-                                                || {
-                                                    panic!(
-                                                        "Cannot pop from an empty array"
-                                                    )
-                                                }
-                                            )
-                                    }
-
-                                    _ => {
-                                        panic!(
-                                            "pop() can only be called on an array"
-                                        );
-                                    }
-                                }
-                            }
-
-                            _ => {
-                                panic!(
-                                    "pop() requires an array variable"
-                                );
-                            }
-                        }
+                    _ => {
+                        panic!(
+                            "push() requires an array variable"
+                        );
                     }
+                }
+            }
 
-                    "length" => {
-                        if !arguments.is_empty() {
-                            panic!(
-                                "length() expects no arguments"
-                            );
-                        }
+            // -----------------------------------------------------------------
+            // Array.pop()
+            // -----------------------------------------------------------------
 
-                        match object_value {
-                            Value::Array(values) => {
-                                Value::Number(
-                                    values.len()
-                                        as i64
+            "pop" => {
+                if !arguments.is_empty() {
+                    panic!(
+                        "pop() expects no arguments"
+                    );
+                }
+
+                match object {
+                    Expression::Identifier { name, .. } => {
+                        let array = self
+                            .environment
+                            .get_mut(name)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Unknown array variable '{}'",
+                                    name
                                 )
+                            });
+
+                        match array {
+                            Value::Array(values) => {
+                                values.pop().unwrap_or_else(|| {
+                                    panic!(
+                                        "Cannot pop from an empty array"
+                                    )
+                                })
                             }
 
                             _ => {
                                 panic!(
-                                    "length() can only be called on an array"
+                                    "pop() can only be called on an array"
                                 );
                             }
                         }
@@ -1532,18 +1706,50 @@ impl Interpreter {
 
                     _ => {
                         panic!(
-                            "Unknown method '{}'",
-                            method
+                            "pop() requires an array variable"
                         );
                     }
                 }
             }
+
+            // -----------------------------------------------------------------
+            // Array.length()
+            // -----------------------------------------------------------------
+
+            "length" => {
+                if !arguments.is_empty() {
+                    panic!(
+                        "length() expects no arguments"
+                    );
+                }
+
+                let object_value = self.evaluate(object);
+
+                match object_value {
+                    Value::Array(values) => {
+                        Value::Number(values.len() as i64)
+                    }
+
+                    _ => {
+                        panic!(
+                            "length() can only be called on an array"
+                        );
+                    }
+                }
+            }
+
+            _ => {
+                panic!(
+                    "Unknown method '{}'",
+                    method
+                );
+            }
         }
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Return type checking
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn check_return_type(
         &self,
@@ -1555,35 +1761,7 @@ impl Interpreter {
             return;
         };
 
-        let valid = match expected.as_str() {
-            "num" => {
-                matches!(value, Value::Number(_))
-            }
-
-            "float" => {
-                matches!(value, Value::Float(_))
-            }
-
-            "string" => {
-                matches!(value, Value::String(_))
-            }
-
-            "bool" => {
-                matches!(value, Value::Boolean(_))
-            }
-
-            struct_name => {
-                match value {
-                    Value::Struct { name, .. } => {
-                        name == struct_name
-                    }
-
-                    _ => false,
-                }
-            }
-        };
-
-        if !valid {
+        if !self.value_matches_type(value, expected) {
             panic!(
                 "Function '{}' return type error: expected {}, got {:?}",
                 function_name,
@@ -1593,9 +1771,9 @@ impl Interpreter {
         }
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Binary operations
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn evaluate_binary(
         &self,
@@ -1604,47 +1782,58 @@ impl Interpreter {
         right: Value,
     ) -> Value {
         match (left, right) {
+            // -----------------------------------------------------------------
+            // Numbers
+            // -----------------------------------------------------------------
+
             (
                 Value::Number(a),
                 Value::Number(b),
             ) => {
                 match operator {
-                    Operator::Plus =>
-                        Value::Number(a + b),
+                    Operator::Plus => {
+                        Value::Number(a + b)
+                    }
 
-                    Operator::Minus =>
-                        Value::Number(a - b),
+                    Operator::Minus => {
+                        Value::Number(a - b)
+                    }
 
-                    Operator::Multiply =>
-                        Value::Number(a * b),
+                    Operator::Multiply => {
+                        Value::Number(a * b)
+                    }
 
                     Operator::Divide => {
                         if b == 0 {
-                            panic!(
-                                "Division by zero"
-                            );
+                            panic!("Division by zero");
                         }
 
                         Value::Number(a / b)
                     }
 
-                    Operator::Equal =>
-                        Value::Boolean(a == b),
+                    Operator::Equal => {
+                        Value::Boolean(a == b)
+                    }
 
-                    Operator::NotEqual =>
-                        Value::Boolean(a != b),
+                    Operator::NotEqual => {
+                        Value::Boolean(a != b)
+                    }
 
-                    Operator::Greater =>
-                        Value::Boolean(a > b),
+                    Operator::Greater => {
+                        Value::Boolean(a > b)
+                    }
 
-                    Operator::Less =>
-                        Value::Boolean(a < b),
+                    Operator::Less => {
+                        Value::Boolean(a < b)
+                    }
 
-                    Operator::GreaterEqual =>
-                        Value::Boolean(a >= b),
+                    Operator::GreaterEqual => {
+                        Value::Boolean(a >= b)
+                    }
 
-                    Operator::LessEqual =>
-                        Value::Boolean(a <= b),
+                    Operator::LessEqual => {
+                        Value::Boolean(a <= b)
+                    }
 
                     Operator::And
                     | Operator::Or => {
@@ -1654,48 +1843,59 @@ impl Interpreter {
                     }
                 }
             }
+
+            // -----------------------------------------------------------------
+            // Floats
+            // -----------------------------------------------------------------
 
             (
                 Value::Float(a),
                 Value::Float(b),
             ) => {
                 match operator {
-                    Operator::Plus =>
-                        Value::Float(a + b),
+                    Operator::Plus => {
+                        Value::Float(a + b)
+                    }
 
-                    Operator::Minus =>
-                        Value::Float(a - b),
+                    Operator::Minus => {
+                        Value::Float(a - b)
+                    }
 
-                    Operator::Multiply =>
-                        Value::Float(a * b),
+                    Operator::Multiply => {
+                        Value::Float(a * b)
+                    }
 
                     Operator::Divide => {
                         if b == 0.0 {
-                            panic!(
-                                "Division by zero"
-                            );
+                            panic!("Division by zero");
                         }
 
                         Value::Float(a / b)
                     }
 
-                    Operator::Equal =>
-                        Value::Boolean(a == b),
+                    Operator::Equal => {
+                        Value::Boolean(a == b)
+                    }
 
-                    Operator::NotEqual =>
-                        Value::Boolean(a != b),
+                    Operator::NotEqual => {
+                        Value::Boolean(a != b)
+                    }
 
-                    Operator::Greater =>
-                        Value::Boolean(a > b),
+                    Operator::Greater => {
+                        Value::Boolean(a > b)
+                    }
 
-                    Operator::Less =>
-                        Value::Boolean(a < b),
+                    Operator::Less => {
+                        Value::Boolean(a < b)
+                    }
 
-                    Operator::GreaterEqual =>
-                        Value::Boolean(a >= b),
+                    Operator::GreaterEqual => {
+                        Value::Boolean(a >= b)
+                    }
 
-                    Operator::LessEqual =>
-                        Value::Boolean(a <= b),
+                    Operator::LessEqual => {
+                        Value::Boolean(a <= b)
+                    }
 
                     Operator::And
                     | Operator::Or => {
@@ -1706,22 +1906,30 @@ impl Interpreter {
                 }
             }
 
+            // -----------------------------------------------------------------
+            // Booleans
+            // -----------------------------------------------------------------
+
             (
                 Value::Boolean(a),
                 Value::Boolean(b),
             ) => {
                 match operator {
-                    Operator::And =>
-                        Value::Boolean(a && b),
+                    Operator::And => {
+                        Value::Boolean(a && b)
+                    }
 
-                    Operator::Or =>
-                        Value::Boolean(a || b),
+                    Operator::Or => {
+                        Value::Boolean(a || b)
+                    }
 
-                    Operator::Equal =>
-                        Value::Boolean(a == b),
+                    Operator::Equal => {
+                        Value::Boolean(a == b)
+                    }
 
-                    Operator::NotEqual =>
-                        Value::Boolean(a != b),
+                    Operator::NotEqual => {
+                        Value::Boolean(a != b)
+                    }
 
                     _ => {
                         panic!(
@@ -1731,21 +1939,28 @@ impl Interpreter {
                 }
             }
 
+            // -----------------------------------------------------------------
+            // Strings
+            // -----------------------------------------------------------------
+
             (
                 Value::String(a),
                 Value::String(b),
             ) => {
                 match operator {
-                    Operator::Plus =>
+                    Operator::Plus => {
                         Value::String(
                             format!("{}{}", a, b)
-                        ),
+                        )
+                    }
 
-                    Operator::Equal =>
-                        Value::Boolean(a == b),
+                    Operator::Equal => {
+                        Value::Boolean(a == b)
+                    }
 
-                    Operator::NotEqual =>
-                        Value::Boolean(a != b),
+                    Operator::NotEqual => {
+                        Value::Boolean(a != b)
+                    }
 
                     _ => {
                         panic!(
@@ -1754,6 +1969,10 @@ impl Interpreter {
                     }
                 }
             }
+
+            // -----------------------------------------------------------------
+            // Everything else
+            // -----------------------------------------------------------------
 
             _ => {
                 panic!(
