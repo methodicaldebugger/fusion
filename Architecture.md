@@ -36,7 +36,7 @@ You can't make every arbitrary library magically interoperable so fusion needs a
 
 Fusion itself also needs good documentation and a rust-style debugger + many other things.
 Fusion would benefit greatly from other easily downloadable plugins or dependancies, such as:
-cloud builds, JIT + AOT, UI framework(like flutter), actors system(elixir/elang), SQLite, REPL + Jupyter.
+cloud builds, JIT + AOT, UI framework(like flutter), actors system(elixir/elang), SQLite, REPL + Jupyter. The architecture must support this!
 
 I'd avoid calling the executable component literally the "Fusion compiler" when it's compiling C/C#.
 
@@ -56,3 +56,91 @@ You don't have to write Fusion to use Fusion.
 
 You could use Fusion as the build/run/debug environment for an existing C project, an existing C# project, or eventually a project containing many languages.
 You could have a .fusion file, use foreign source through fusion(main.c->fusion->C integration) or a mixed project with a .fusion and a .c file.
+
+
+I want two separate concepts in the architecture:
+
+1. Foreign Language Toolchain
+
+Responsible for:
+
+detecting source files
+compiler
+linker
+compiler flags
+language versions
+dependencies
+build configuration
+debugging
+testing
+formatting
+language server
+
+For example:
+CPlugin
+CSharpPlugin
+GoPlugin
+SwiftPlugin
+JavaPlugin
+DartPlugin
+
+2. Interoperability Layer
+
+Responsible for:
+
+Native ABI
+Managed Runtime
+Embedded Runtime
+RPC
+WASM
+
+That gives you a much cleaner architecture:
+
+             FUSION TOOLCHAIN
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+   Language Toolchains   Interoperability
+          │                   │
+   ┌──────┼──────┐       ┌────┼────┐
+   │      │      │       │    │    │
+   C     C#     Go     ABI  .NET  RPC
+   │      │      │
+ compiler compiler compiler
+
+
+None of the five integration layers, by themselves, lets Fusion compile foreign source files.
+The foreign-language toolchain/plugin does that.
+
+The five layers determine how Fusion interoperates with the foreign code after/during the build.
+
+These are the folders that fusion will create/already has, for maintenance purposes.
+
+fusion/
+├── compiler/
+├── runtime/
+├── toolchain/
+├── interoperability/
+│   ├── native_abi/
+│   ├── managed_runtime/
+│   ├── embedded_runtime/
+│   ├── process_rpc/
+│   └── wasm/
+├── languages/
+│   ├── c/
+│   ├── cpp/
+│   ├── csharp/
+│   ├── go/
+│   ├── swift/
+│   ├── dart/
+│   └── java/
+├── platform/
+│   ├── jit/
+│   ├── aot/
+│   ├── repl/
+│   ├── jupyter/
+│   ├── sqlite/
+│   ├── actors/
+│   ├── ui/
+│   └── cloud/
+└── docs/

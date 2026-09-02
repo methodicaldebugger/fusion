@@ -12,18 +12,36 @@ UI framework(like flutter), SQLite, cloud builds,
 
 
 
-Fusion will create five OR MORE folders as following:
-Fusion/
-├── fusion/
-├── runtime_plugins/
-│   └── actors/
-├── library_integrations/
+Fusion will create/have folders as follows:
+
+fusion/
+├── compiler/
+├── runtime/
+├── toolchain/
+├── interoperability/
+│   ├── native_abi/
+│   ├── managed_runtime/
+│   ├── embedded_runtime/
+│   ├── process_rpc/
+│   └── wasm/
+├── languages/
+│   ├── c/
+│   ├── cpp/
+│   ├── csharp/
+│   ├── go/
+│   ├── swift/
+│   ├── dart/
+│   └── java/
+├── platform/
+│   ├── jit/
+│   ├── aot/
+│   ├── repl/
+│   ├── jupyter/
 │   ├── sqlite/
-│   └── rust/
-├── source_language_support/
-│   └── c/
-└── frameworks/
-    └── flutter/
+│   ├── actors/
+│   ├── ui/
+│   └── cloud/
+└── docs/
 
 The user will be able to drop new source_language_support and library_integrations files as they are created by the fusion community.
 
