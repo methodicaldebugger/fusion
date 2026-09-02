@@ -20,9 +20,10 @@ use interpreter::Interpreter;
 fn parse_should_fail(source: &str) {
     let mut lexer = Lexer::new(source, BlockMode::Unknown);
 
-    let tokens = lexer
-        .tokenize()
-        .expect("test source should lex successfully");
+    let tokens = match lexer.tokenize() {
+        Ok(tokens) => tokens,
+        Err(_) => return,
+    };
 
     let mut parser = Parser::new(tokens);
 
@@ -391,7 +392,7 @@ fn foo() -> num:
 
 #[test]
 fn function_with_return_type_rejects_bare_return() {
-    parse_should_fail(
+    type_check_should_fail(
         r#"main:
     foo()
 
@@ -402,10 +403,11 @@ fn foo() -> num:
 }
 
 #[test]
-fn function_without_return_type_rejects_value_return() {
-    parse_should_fail(
+fn function_without_return_type_infers_value_return() {
+    compile_test_program(
         r#"main:
-    foo()
+    x = foo()
+    print(x)
 
 fn foo():
     return 42
@@ -516,47 +518,64 @@ fn get_number() -> num:
         );
     }
 
-    // =========================================================================
-    // Structs
-    // =========================================================================
+// =========================================================================
+// Struct declarations and construction
+// =========================================================================
 
-    #[test]
-    fn struct_can_be_declared_and_constructed() {
-        assert_eq!(
-            run_program(
-                r#"struct Person {
+#[test]
+fn struct_can_be_declared_and_constructed() {
+    assert_eq!(
+        run_program(
+            r#"struct Person:
     name: string
     age: num
-}
 
 main:
-    Person("Alice", 30)
+    person = Person("Alice", 30)
 
     print(person.name)
     print(person.age)
 "#
-            ),
-            vec!["Alice", "30"]
-        );
-    }
-
-    #[test]
-    fn struct_fields_can_be_used_in_expressions() {
-        assert_eq!(
-            run_program(
-                r#"struct Point {
-    x: num
-    y: num
+        ),
+        vec!["Alice", "30"]
+    );
 }
 
+#[test]
+fn struct_fields_can_be_used_in_expressions() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
 main:
-    Point(x:10,y:32)
+    point = Point(10, 32)
+
     print(point.x + point.y)
 "#
-            ),
-            vec!["42"]
-        );
-    }
+        ),
+        vec!["42"]
+    );
+}
+
+
+// =========================================================================
+// Struct type-checking failures
+// =========================================================================
+
+#[test]
+fn struct_field_type_mismatch_is_rejected() {
+    type_check_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", "wrong")
+"#,
+    );
+}
 
 
     // =========================================================================
@@ -564,21 +583,147 @@ main:
     // =========================================================================
 
     #[test]
-    fn struct_field_type_mismatch_is_rejected() {
-        type_check_should_fail(
-            r#"struct Person {
+fn indentation_mode_accepts_indentation_struct() {
+    let source = r#"
+struct Person:
+    name: string
+    age: num
+
+main:
+    print("ok")
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    assert!(lexer.tokenize().is_ok());
+}
+
+#[test]
+fn brace_mode_accepts_brace_struct() {
+    let source = r#"
+struct Person{
+    name: string
+    age: num
+}
+
+main{
+    print("ok")
+}
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    assert!(lexer.tokenize().is_ok());
+}
+
+#[test]
+fn indentation_mode_rejects_brace_struct() {
+    let source = r#"
+struct Person{
     name: string
     age: num
 }
 
 main:
+    print("ok")
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    assert!(lexer.tokenize().is_err());
+}
+
+#[test]
+fn brace_mode_rejects_indentation_struct() {
+    let source = r#"
+struct Person:
+    name: string
+    age: num
+
+main{
+    print("ok")
+}
+"#;
+
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    assert!(lexer.tokenize().is_err());
+}
+
+
+    #[test]
+fn struct_constructor_cannot_use_braces() {
+    parse_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
     person = Person {
         name: "Alice",
-        age: "thirty"
+        age: 30
     }
 "#,
-        );
-    }
+    );
+} // we only construct structs with parentheses, not braces
+
+    #[test]
+fn struct_can_be_declared_and_constructed_2() {
+    assert_eq!(
+        run_program(
+            r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", 30)
+    print(person.name)
+    print(person.age)
+"#
+        ),
+        vec!["Alice", "30"]
+    );
+}
+
+#[test]
+fn struct_fields_can_be_used_in_expressions_2() {
+    assert_eq!(
+        run_program(
+            r#"struct Point:
+    x: num
+    y: num
+
+main:
+    point = Point(10, 32)
+    print(point.x + point.y)
+"#
+        ),
+        vec!["42"]
+    );
+}
+
+#[test]
+fn struct_field_type_mismatch_is_rejected_2() {
+    type_check_should_fail(
+        r#"struct Person:
+    name: string
+    age: num
+
+main:
+    person = Person("Alice", "thirty")
+"#,
+    );
+}
+#[test]
+fn struct_field_type_mismatch_is_rejected_3() {
+    type_check_should_fail(
+        r#"struct Person {
+    name: string
+    age: num
+}
+
+main {
+    person = Person("Alice", "thirty")
+}
+"#,
+    );
+}
 
 #[test]
 fn struct_constructor_too_few_arguments_is_rejected() {

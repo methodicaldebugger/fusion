@@ -374,8 +374,9 @@ impl TypeChecker {
 
                 definition
                     .fields
-                    .get(name)
-                    .cloned()
+                    .iter()
+    .find(|(field_name, _)| field_name == name)
+    .map(|(_, field_type)| field_type.clone())
                     .ok_or_else(|| {
                         self.unknown_variable(
                             format!(
@@ -920,58 +921,111 @@ impl TypeChecker {
             // -------------------------------------------------
 
             Expression::Call {
-                name,
-                arguments,
-                generic_arguments,
-                span,
-            } => {
-                let function =
-                    self.environment.functions.get(name).ok_or_else(
-                        || self.unknown_variable(name.clone(), *span),
-                    )?;
+    name,
+    arguments,
+    ..
+} => {
+    // Struct constructor.
+    //
+    // Structs always use parentheses:
+    //
+    // Person("Alice", 30)
+    //
+    // Never:
+    //
+    // Person { name: "Alice", age: 30 }
+    if let Some(struct_definition) =
+        self.environment.structs.get(name)
+    {
+        let fields = &struct_definition.fields;
 
-                if arguments.len() != function.parameters.len() {
-                    return Err(self.type_mismatch(
-                        format!(
-                            "{} arguments",
-                            function.parameters.len()
-                        ),
-                        format!("{} arguments", arguments.len()),
-                        *span,
-                    ));
-                }
+        if arguments.len() != fields.len() {
+            return Err(FusionError::TypeMismatch {
+                expected: format!(
+                    "{} arguments",
+                    fields.len()
+                ),
+                found: format!(
+                    "{} arguments",
+                    arguments.len()
+                ),
+                span: Self::expression_span(expression)
+            });
+        }
 
-                for (argument, expected_type) in arguments
-                    .iter()
-                    .zip(function.parameters.iter())
-                {
-                    let actual_type =
-                        self.infer_expression(argument)?;
+        for ((_, expected_type), argument) in
+            fields.iter().zip(arguments.iter())
+        {
+            let actual_type =
+                self.infer_expression(argument)?;
 
-                    if !Self::types_compatible(
-                        expected_type,
-                        &actual_type,
-                    ) {
-                        return Err(self.type_mismatch(
-                            expected_type.name(),
-                            actual_type.name(),
-                            argument.span(),
-                        ));
-                    }
-                }
-
-                // The current Type model has no generic function
-                // substitution information beyond Generic(String), so
-                // generic arguments are validated structurally here.
-                //
-                // An empty generic argument list is valid for non-generic
-                // functions. Since FunctionType intentionally remains
-                // compatible with the existing public API, we do not attach
-                // generic metadata to it.
-                let _ = generic_arguments;
-
-                Ok(function.return_type.clone())
+            if !Self::types_compatible(expected_type, &actual_type) {
+                return Err(FusionError::TypeMismatch {
+                    expected: format!(
+                        "{:?}",
+                        expected_type
+                    ),
+                    found: format!(
+                        "{:?}",
+                        actual_type
+                    ),
+                    span: Self::expression_span(argument),
+                });
             }
+        }
+
+        return Ok(Type::Struct(name.clone()));
+    }
+
+    // Normal function call.
+    let function =
+        self.environment.functions.get(name).ok_or_else(
+            || FusionError::UnknownVariable {
+                name: name.clone(),
+                span: Self::expression_span(expression),
+            },
+        )?;
+
+    if arguments.len() != function.parameters.len() {
+        return Err(FusionError::TypeMismatch {
+            expected: format!(
+                "{} arguments",
+                function.parameters.len()
+            ),
+            found: format!(
+                "{} arguments",
+                arguments.len()
+            ),
+            span: Self::expression_span(expression),
+        });
+    }
+
+    for (argument, expected_type) in arguments
+        .iter()
+        .zip(function.parameters.iter())
+    {
+        let actual_type =
+            self.infer_expression(argument)?;
+
+        if *expected_type != Type::Unknown
+            && actual_type != *expected_type
+        {
+            return Err(FusionError::TypeMismatch {
+                expected: format!(
+                    "{:?}",
+                    expected_type
+                ),
+                found: format!(
+                    "{:?}",
+                    actual_type
+                ),
+                span: Self::expression_span(argument),
+            });
+        }
+    }
+
+    Ok(function.return_type.clone())
+}
 
             // -------------------------------------------------
             // Method call
@@ -1097,18 +1151,20 @@ impl TypeChecker {
                         ));
                     }
 
-                    let expected_type =
-                        definition.fields.get(field_name).ok_or_else(
-                            || {
-                                self.unknown_variable(
-                                    format!(
-                                        "Unknown field '{}' on struct '{}'",
-                                        field_name, name
-                                    ),
-                                    field_expression.span(),
-                                )
-                            },
-                        )?;
+                    let expected_type = definition
+    .fields
+    .iter()
+    .find(|(name, _)| name == field_name)
+    .map(|(_, ty)| ty)
+    .ok_or_else(|| {
+        self.unknown_variable(
+            format!(
+                "Unknown field '{}' on struct '{}'",
+                field_name, name
+            ),
+            field_expression.span(),
+        )
+    })?;
 
                     let actual_type =
                         self.infer_expression(field_expression)?;
@@ -1125,7 +1181,7 @@ impl TypeChecker {
                     }
                 }
 
-                for field_name in definition.fields.keys() {
+                for (field_name, _) in &definition.fields {
                     if !supplied_fields.contains(field_name) {
                         return Err(self.unknown_variable(
                             format!(
@@ -1214,143 +1270,145 @@ impl TypeChecker {
     // =========================================================
 
     fn check_assignment(
-        &mut self,
-        target: &Expression,
-        value: &Expression,
-        span: Span,
-    ) -> Result<(), FusionError> {
-        let value_type = self.infer_expression(value)?;
+    &mut self,
+    target: &Expression,
+    value: &Expression,
+    span: Span,
+) -> Result<(), FusionError> {
+    let value_type = self.infer_expression(value)?;
 
-        match target {
-            Expression::Identifier { name, span: target_span } => {
-                let info =
-                    self.lookup_variable_info(name).ok_or_else(|| {
-                        self.unknown_variable(
-                            name.clone(),
-                            *target_span,
-                        )
-                    })?;
+    match target {
+        Expression::Identifier {
+            name,
+            span: target_span,
+        } => {
+            if let Some(info) = self.lookup_variable_info(name) {
+                if !Self::types_compatible(&info.ty, &value_type) {
+                    return Err(FusionError::TypeMismatch {
+                        expected: info.ty.name(),
+                        found: value_type.name(),
+                        span,
+                    });
+                }
 
                 if !info.mutable {
-                    return Err(
-                        FusionError::CannotAssignToConst {
-                            name: name.clone(),
-                            span: *target_span,
-                        },
-                    );
-                }
-
-                if !Self::types_compatible(
-                    &info.ty,
-                    &value_type,
-                ) {
-                    return Err(self.type_mismatch(
-                        info.ty.name(),
-                        value_type.name(),
-                        *target_span,
-                    ));
+                    return Err(FusionError::CannotAssignToConst {
+                        name: name.clone(),
+                        span: *target_span,
+                    });
                 }
 
                 Ok(())
-            }
-
-            Expression::Property { object, name, .. } => {
-                if !self.property_target_is_mutable(object)? {
-                    let variable_name =
-                        Self::property_root_name(object)
-                            .unwrap_or_else(|| "<unknown>".to_string());
-
-                    return Err(
-                        FusionError::CannotAssignToConst {
-                            name: variable_name,
-                            span: object.span(),
-                        },
-                    );
-                }
-
-                let field_type =
-                    self.lookup_property_type(object, name)?;
-
-                if !Self::types_compatible(
-                    &field_type,
-                    &value_type,
-                ) {
-                    return Err(self.type_mismatch(
-                        field_type.name(),
-                        value_type.name(),
-                        target.span(),
-                    ));
-                }
+            } else {
+                // First assignment introduces an inferred mutable variable.
+                self.declare_variable(
+                    name.clone(),
+                    value_type,
+                    true,
+                    *target_span,
+                )?;
 
                 Ok(())
             }
-
-            Expression::Index { array, index, .. } => {
-                let array_type =
-                    self.infer_expression(array)?;
-
-                let index_type =
-                    self.infer_expression(index)?;
-
-                if index_type != Type::Num
-                    && index_type != Type::Unknown
-                {
-                    return Err(self.type_mismatch(
-                        "num index",
-                        index_type.name(),
-                        index.span(),
-                    ));
-                }
-
-                if let Some(root_name) =
-                    Self::property_root_name(array)
-                {
-                    if let Some(info) =
-                        self.lookup_variable_info(&root_name)
-                    {
-                        if !info.mutable {
-                            return Err(
-                                FusionError::CannotAssignToConst {
-                                    name: root_name,
-                                    span: array.span(),
-                                },
-                            );
-                        }
-                    }
-                }
-
-                match array_type {
-                    Type::Array(element_type) => {
-                        if !Self::types_compatible(
-                            &element_type,
-                            &value_type,
-                        ) {
-                            return Err(self.type_mismatch(
-                                element_type.name(),
-                                value_type.name(),
-                                span,
-                            ));
-                        }
-
-                        Ok(())
-                    }
-
-                    Type::Unknown => Ok(()),
-
-                    other => Err(self.type_mismatch(
-                        "array",
-                        other.name(),
-                        array.span(),
-                    )),
-                }
-            }
-
-            _ => Err(self.unknown_variable(
-                "Invalid assignment target",
-                target.span(),
-            )),
         }
+
+        Expression::Property { object, name, .. } => {
+            if !self.property_target_is_mutable(object)? {
+                let variable_name =
+                    Self::property_root_name(object)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+
+                return Err(
+                    FusionError::CannotAssignToConst {
+                        name: variable_name,
+                        span: object.span(),
+                    },
+                );
+            }
+
+            let field_type =
+                self.lookup_property_type(object, name)?;
+
+            if !Self::types_compatible(
+                &field_type,
+                &value_type,
+            ) {
+                return Err(self.type_mismatch(
+                    field_type.name(),
+                    value_type.name(),
+                    target.span(),
+                ));
+            }
+
+            Ok(())
+        }
+
+        Expression::Index { array, index, .. } => {
+            let array_type =
+                self.infer_expression(array)?;
+
+            let index_type =
+                self.infer_expression(index)?;
+
+            if index_type != Type::Num
+                && index_type != Type::Unknown
+            {
+                return Err(self.type_mismatch(
+                    "num index",
+                    index_type.name(),
+                    index.span(),
+                ));
+            }
+
+            if let Some(root_name) =
+                Self::property_root_name(array)
+            {
+                if let Some(info) =
+                    self.lookup_variable_info(&root_name)
+                {
+                    if !info.mutable {
+                        return Err(
+                            FusionError::CannotAssignToConst {
+                                name: root_name,
+                                span: array.span(),
+                            },
+                        );
+                    }
+                }
+            }
+
+            match array_type {
+                Type::Array(element_type) => {
+                    if !Self::types_compatible(
+                        &element_type,
+                        &value_type,
+                    ) {
+                        return Err(self.type_mismatch(
+                            element_type.name(),
+                            value_type.name(),
+                            span,
+                        ));
+                    }
+
+                    Ok(())
+                }
+
+                Type::Unknown => Ok(()),
+
+                other => Err(self.type_mismatch(
+                    "array",
+                    other.name(),
+                    array.span(),
+                )),
+            }
+        }
+
+        _ => Err(self.unknown_variable(
+            "Invalid assignment target",
+            target.span(),
+        )),
     }
+}
 
     // =========================================================
     // Statement checking
@@ -1459,7 +1517,10 @@ impl TypeChecker {
                 target,
                 value,
                 span,
-            } => self.check_assignment(target, value, *span),
+            } => {
+    println!("ASSIGNMENT AST: {:?}", statement);
+    self.check_assignment(target, value, *span)
+}
 
             // -------------------------------------------------
             // Function call
@@ -1615,7 +1676,6 @@ impl TypeChecker {
             // -------------------------------------------------
 
             Statement::Return { value, span } => {
-    // First make sure we're inside a function.
     if self.current_function.is_none() {
         return Err(FusionError::TypeMismatch {
             expected: "inside function".to_string(),
@@ -1626,10 +1686,7 @@ impl TypeChecker {
 
     match value {
         None => {
-            // Now take the mutable borrow only for the fields
-            // that need to be checked/updated.
             let context = self.current_function.as_mut().unwrap();
-
             context.has_return = true;
 
             if let Some(expected) = &context.declared_return_type {
@@ -1640,24 +1697,29 @@ impl TypeChecker {
                 });
             }
 
+            if let Some(previous) = &context.inferred_return_type {
+                if *previous != Type::Void {
+                    return Err(FusionError::TypeMismatch {
+                        expected: previous.name(),
+                        found: "void return".to_string(),
+                        span: *span,
+                    });
+                }
+            } else {
+                context.inferred_return_type = Some(Type::Void);
+            }
+
             Ok(())
         }
 
         Some(value) => {
-            // IMPORTANT:
-            // infer_expression() borrows self, so do this BEFORE
-            // taking a mutable borrow of current_function.
             let actual_type = self.infer_expression(value)?;
 
             let context = self.current_function.as_mut().unwrap();
-
             context.has_return = true;
 
             if let Some(expected) = &context.declared_return_type {
-                if !Self::types_compatible(
-                    expected,
-                    &actual_type,
-                ) {
+                if !Self::types_compatible(expected, &actual_type) {
                     return Err(FusionError::TypeMismatch {
                         expected: expected.name(),
                         found: actual_type.name(),
@@ -1665,11 +1727,29 @@ impl TypeChecker {
                     });
                 }
             } else {
-                return Err(FusionError::TypeMismatch {
-                    expected: "void return".to_string(),
-                    found: actual_type.name(),
-                    span: *span,
-                });
+                match &context.inferred_return_type {
+                    None => {
+                        context.inferred_return_type = Some(actual_type);
+                    }
+
+                    Some(Type::Void) => {
+                        return Err(FusionError::TypeMismatch {
+                            expected: "void".to_string(),
+                            found: actual_type.name(),
+                            span: *span,
+                        });
+                    }
+
+                    Some(previous) => {
+                        if !Self::types_compatible(previous, &actual_type) {
+                            return Err(FusionError::TypeMismatch {
+                                expected: previous.name(),
+                                found: actual_type.name(),
+                                span: *span,
+                            });
+                        }
+                    }
+                }
             }
 
             Ok(())
@@ -2059,11 +2139,14 @@ impl TypeChecker {
 
                 Ok(declared.clone())
             } else {
-                Ok(context
-                    .inferred_return_type
-                    .clone()
-                    .unwrap_or(Type::Void))
-            }
+    let context = self.current_function.as_ref().unwrap();
+
+    match &context.inferred_return_type {
+        None => Ok(Type::Void),
+
+        Some(inferred) => Ok(inferred.clone()),
+    }
+}
         })();
 
         self.current_function = old_function;
@@ -2229,7 +2312,7 @@ impl TypeChecker {
                 self.environment.structs.insert(
                     name.clone(),
                     StructDefinition {
-                        fields: HashMap::new(),
+                        fields: Vec::new(),
                     },
                 );
             }
@@ -2286,33 +2369,34 @@ impl TypeChecker {
                 ..
             } = statement
             {
-                let mut field_map = HashMap::new();
+               let mut field_list = Vec::new();
+let mut field_names = HashSet::new();
 
-                for field in fields {
-                    if field_map.contains_key(&field.name) {
-                        return Err(self.unknown_variable(
-                            format!(
-                                "Duplicate field '{}' in struct '{}'",
-                                field.name, name
-                            ),
-                            field.name_span,
-                        ));
-                    }
+for field in fields {
+    if !field_names.insert(field.name.clone()) {
+        return Err(self.unknown_variable(
+            format!(
+                "Duplicate field '{}' in struct '{}'",
+                field.name, name
+            ),
+            field.name_span,
+        ));
+    }
 
-                    let field_type =
-                        self.convert_type(&field.type_name)?;
+    let field_type =
+        self.convert_type(&field.type_name)?;
 
-                    field_map.insert(
-                        field.name.clone(),
-                        field_type,
-                    );
-                }
+    field_list.push((
+        field.name.clone(),
+        field_type,
+    ));
+}
 
-                self.environment
-                    .structs
-                    .get_mut(name)
-                    .expect("struct was registered")
-                    .fields = field_map;
+self.environment
+    .structs
+    .get_mut(name)
+    .expect("struct was registered")
+    .fields = field_list;
             }
         }
 

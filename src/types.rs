@@ -17,7 +17,7 @@ pub enum Type {
 
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
-    pub fields: HashMap<String, Type>,
+    pub fields: Vec<(String, Type)>,
 }
 
 #[derive(Debug, Clone)]

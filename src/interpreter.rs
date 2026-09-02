@@ -399,6 +399,10 @@ impl Interpreter {
         // Pass 1: register structs
         // ---------------------------------------------------------------------
 
+                // ---------------------------------------------------------------------
+        // Pass 1: register structs
+        // ---------------------------------------------------------------------
+
         for statement in &program.statements {
             if let Statement::Struct {
                 name,
@@ -410,10 +414,13 @@ impl Interpreter {
                     panic!("Duplicate struct '{}'", name);
                 }
 
-                let mut field_map = HashMap::new();
+                let mut field_list = Vec::new();
 
                 for field in fields {
-                    if field_map.contains_key(&field.name) {
+                    if field_list
+                        .iter()
+                        .any(|(field_name, _)| field_name == &field.name)
+                    {
                         panic!(
                             "Duplicate field '{}' in struct '{}'",
                             field.name,
@@ -421,16 +428,16 @@ impl Interpreter {
                         );
                     }
 
-                    field_map.insert(
+                    field_list.push((
                         field.name.clone(),
                         self.type_from_name(&field.type_name),
-                    );
+                    ));
                 }
 
                 self.structs.insert(
                     name.clone(),
                     StructDefinition {
-                        fields: field_map,
+                        fields: field_list,
                     },
                 );
             }
@@ -1358,17 +1365,57 @@ impl Interpreter {
             // -----------------------------------------------------------------
 
             Expression::Call {
+    name,
+    arguments,
+    ..
+} => {
+    // Struct constructor.
+    if let Some(struct_definition) =
+        self.structs.get(name).cloned()
+    {
+        if arguments.len() != struct_definition.fields.len() {
+            panic!(
+                "Struct '{}' expects {} arguments, got {}",
                 name,
-                arguments,
-                generic_arguments,
-                ..
-            } => {
-                self.call_function(
+                struct_definition.fields.len(),
+                arguments.len()
+            );
+        }
+
+        let mut fields = HashMap::new();
+
+        for ((field_name, expected_type), argument) in
+            struct_definition.fields.iter().zip(arguments.iter())
+        {
+            let value = self.evaluate(argument);
+
+            if !self.value_matches_type_value(
+                &value,
+                expected_type,
+            ) {
+                panic!(
+                    "Invalid value for field '{}.{}': expected {:?}, got {:?}",
                     name,
-                    arguments,
-                    generic_arguments,
-                )
+                    field_name,
+                    expected_type,
+                    value
+                );
             }
+
+            fields.insert(
+                field_name.clone(),
+                value,
+            );
+        }
+
+        return Value::Struct {
+            name: name.clone(),
+            fields,
+        };
+    }
+
+    self.call_function(name, arguments, &[])
+}
 
             // -----------------------------------------------------------------
             // Struct constructor
@@ -1393,48 +1440,53 @@ impl Interpreter {
                 let mut result = HashMap::new();
 
                 for (field_name, expression) in fields {
-                    let expected_type =
-                        definition.fields.get(field_name);
+    let expected_type =
+        definition
+            .fields
+            .iter()
+            .find(|(name, _)| name == field_name)
+            .map(|(_, ty)| ty);
 
-                    let Some(expected_type) = expected_type else {
-                        panic!(
-                            "Unknown field '{}' on struct '{}'",
-                            field_name,
-                            name
-                        );
-                    };
+    let Some(expected_type) = expected_type else {
+        panic!(
+            "Unknown field '{}' on struct '{}'",
+            field_name,
+            name
+        );
+    };
 
-                    let value = self.evaluate(expression);
+    let value = self.evaluate(expression);
 
-                    if !self.value_matches_type_value(
-                        &value,
-                        expected_type,
-                    ) {
-                        panic!(
-                            "Invalid value for field '{}.{}': expected {:?}, got {:?}",
-                            name,
-                            field_name,
-                            expected_type,
-                            value
-                        );
-                    }
+    if !self.value_matches_type_value(
+        &value,
+        expected_type,
+    ) {
+        panic!(
+            "Invalid value for field '{}.{}': expected {:?}, got {:?}",
+            name,
+            field_name,
+            expected_type,
+            value
+        );
+    }
 
-                    result.insert(
-                        field_name.clone(),
-                        value,
-                    );
-                }
+    result.insert(
+        field_name.clone(),
+        value,
+    );
+}
 
                 // Require all declared fields.
-                for field_name in definition.fields.keys() {
-                    if !result.contains_key(field_name) {
-                        panic!(
-                            "Missing field '{}' in struct constructor '{}'",
-                            field_name,
-                            name
-                        );
-                    }
-                }
+                // Require all declared fields.
+for (field_name, _) in &definition.fields {
+    if !result.contains_key(field_name) {
+        panic!(
+            "Missing field '{}' in struct constructor '{}'",
+            field_name,
+            name
+        );
+    }
+}
 
                 Value::Struct {
                     name: name.clone(),

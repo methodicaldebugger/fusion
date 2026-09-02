@@ -38,6 +38,16 @@ impl Parser {
     // Token helpers
     // ------------------------------------------------------------
 
+    fn validate_block_style(&self, style: BlockStyle) {
+    if self.seen_main && self.block_style != style {
+        panic!(
+            "Block style mismatch: expected {:?}, found {:?}",
+            self.block_style,
+            style
+        );
+    }
+}
+
     fn current(&self) -> &Token {
         self.tokens
             .get(self.position)
@@ -112,54 +122,75 @@ impl Parser {
     // Block style
     // ------------------------------------------------------------
 
-    fn use_block_style(&mut self, style: BlockStyle) -> Result<(), ParseError> {
-        match self.block_style {
-            BlockStyle::Unknown => {
-                self.pending_block_styles.push(style);
-            }
-
-            existing if existing != style => {
-                return Err(ParseError::new(
-                    format!(
-                        "Block style mismatch: program uses {:?}, but this construct uses {:?}",
-                        existing, style
-                    ),
-                    self.current_span(),
-                ));
-            }
-
-            _ => {}
+    fn use_block_style(
+    &mut self,
+    style: BlockStyle,
+) -> Result<(), ParseError> {
+    match self.block_style {
+        BlockStyle::Unknown => {
+            self.pending_block_styles.push(style);
+            Ok(())
         }
 
-        Ok(())
+        existing if existing == style => Ok(()),
+
+        existing => Err(ParseError {
+            message: format!(
+                "Mixed block styles are not allowed: expected {:?}, found {:?}",
+                existing,
+                style
+            ),
+            span: self.current_span(),
+        }),
     }
+}
+
+    fn require_block_style(
+    &self,
+    style: BlockStyle,
+) -> Result<(), ParseError> {
+    if self.seen_main && self.block_style != style {
+        return Err(ParseError {
+            message: format!(
+                "Mixed block styles are not allowed: expected {:?}, found {:?}",
+                self.block_style,
+                style
+            ),
+            span: self.current_span(),
+        });
+    }
+
+    Ok(())
+}
 
     fn establish_main_style(
-        &mut self,
-        style: BlockStyle,
-    ) -> Result<(), ParseError> {
-        if self.seen_main {
-            return self.error("Multiple 'main' declarations are not allowed");
-        }
-
-        for previous in &self.pending_block_styles {
-            if *previous != style {
-                return Err(ParseError::new(
-                    format!(
-                        "Block style mismatch: main uses {:?}, but an earlier construct uses {:?}",
-                        style, previous
-                    ),
-                    self.current_span(),
-                ));
-            }
-        }
-
-        self.pending_block_styles.clear();
-        self.block_style = style;
-        self.seen_main = true;
-
-        Ok(())
+    &mut self,
+    style: BlockStyle,
+) -> Result<(), ParseError> {
+    if self.seen_main {
+        return Err(ParseError {
+            message: "Multiple main blocks are not allowed".into(),
+            span: self.current_span(),
+        });
     }
+
+    for pending in &self.pending_block_styles {
+        if *pending != style {
+            return Err(ParseError {
+                message:
+                    "All blocks in a Fusion file must use the same block style"
+                        .into(),
+                span: self.current_span(),
+            });
+        }
+    }
+
+    self.pending_block_styles.clear();
+    self.block_style = style;
+    self.seen_main = true;
+
+    Ok(())
+}
 
     fn parse_style_block(&mut self) -> Result<Vec<Statement>, ParseError> {
     let style = match self.current() {
@@ -676,11 +707,12 @@ impl Parser {
         Token::LeftBrace => BlockStyle::Braces,
 
         _ => {
-            return self.error("Expected ':' or '{' after struct name");
+            return self.error(
+                "Expected ':' or '{' after struct name",
+            );
         }
     };
 
-    // IMPORTANT: don't ignore this Result.
     self.use_block_style(style)?;
 
     let fields = match style {
@@ -763,73 +795,69 @@ impl Parser {
 }
 
     fn parse_brace_struct_fields(
-        &mut self,
-    ) -> Result<Vec<StructField>, ParseError> {
-        let open_span = self.current_span();
-
-        if !self.consume(&Token::LeftBrace) {
-            return self.error("Expected '{' after struct name");
-        }
-
-        let mut fields = Vec::new();
-
-        while self.current() != &Token::RightBrace
-            && self.current() != &Token::Eof
-        {
-            if self.current() == &Token::NewLine {
-                self.advance();
-                continue;
-            }
-
-            let start = self.current_span().start;
-            let name_span = self.current_span();
-
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-
-                _ => {
-                    return self.error("Expected field name in struct declaration");
-                }
-            };
-
-            if !self.consume(&Token::Colon) {
-                return self.error("Expected ':' after struct field name");
-            }
-
-            let type_name = self.parse_type()?;
-
-let span = Span::new(start, self.previous_span().end);
-
-fields.push(StructField {
-    name,
-    name_span,
-    type_name,
-    span,
-});
-
-self.skip_newlines();
-
-if !self.consume(&Token::Comma)
-    && self.current() != &Token::RightBrace
-{
-    return self.error("Expected ',' or '}' after struct field");
-}
-
-self.skip_newlines();
-        }
-
-        if !self.consume(&Token::RightBrace) {
-            return self.error("Expected '}' after struct fields");
-        }
-
-        let _ = open_span;
-
-        Ok(fields)
+    &mut self,
+) -> Result<Vec<StructField>, ParseError> {
+    if !self.consume(&Token::LeftBrace) {
+        return self.error("Expected '{' after struct name");
     }
+
+    let mut fields = Vec::new();
+
+    self.skip_newlines();
+
+    while self.current() != &Token::RightBrace
+        && self.current() != &Token::Eof
+    {
+        let start = self.current_span().start;
+        let name_span = self.current_span();
+
+        let name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+
+            _ => {
+                return self.error(
+                    "Expected field name in struct declaration",
+                );
+            }
+        };
+
+        if !self.consume(&Token::Colon) {
+            return self.error(
+                "Expected ':' after struct field name",
+            );
+        }
+
+        let type_name = self.parse_type()?;
+
+        let span = Span::new(start, self.previous_span().end);
+
+        fields.push(StructField {
+            name,
+            name_span,
+            type_name,
+            span,
+        });
+
+        // Newlines are valid separators in brace-style structs.
+        self.skip_newlines();
+
+        if self.consume(&Token::Comma) {
+            self.skip_newlines();
+        }
+    }
+
+    if !self.consume(&Token::RightBrace) {
+        return self.error(
+            "Expected '}' after struct declaration",
+        );
+    }
+
+    Ok(fields)
+}
 
     // ------------------------------------------------------------
     // enum
@@ -1143,40 +1171,46 @@ self.skip_newlines();
     }
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {
-        let start = self.current_span().start;
+    let start = self.current_span().start;
 
-        let pattern = self.parse_pattern()?;
+    let pattern = self.parse_pattern()?;
 
-        if !self.consume(&Token::FatArrow) {
-            return self.error("Expected '=>' after match pattern");
-        }
-
-        let body = if self.current() == &Token::NewLine {
-            self.advance();
-            self.skip_newlines();
-
-            self.parse_indentation_block()?
-        } else if self.current() == &Token::LeftBrace {
-            self.parse_brace_block()?
-        } else {
-            let statement = self
-                .parse_statement()?
-                .ok_or_else(|| {
-                    ParseError::new(
-                        "Expected statement after '=>'",
-                        self.current_span(),
-                    )
-                })?;
-
-            vec![statement]
-        };
-
-        Ok(MatchArm {
-            pattern,
-            body,
-            span: self.span_from(start),
-        })
+    if !self.consume(&Token::FatArrow) {
+        return self.error("Expected '=>' after match pattern");
     }
+
+    if self.current() == &Token::Colon {
+    return self.error(
+        "':' is not allowed after '=>'; use a block style directly",
+    );
+}
+
+    let body = if self.current() == &Token::NewLine {
+        self.advance();
+        self.skip_newlines();
+
+        self.parse_indentation_block()?
+    } else if self.current() == &Token::LeftBrace {
+        self.parse_brace_block()?
+    } else {
+        let statement = self
+            .parse_statement()?
+            .ok_or_else(|| {
+                ParseError::new(
+                    "Expected statement after '=>'",
+                    self.current_span(),
+                )
+            })?;
+
+        vec![statement]
+    };
+
+    Ok(MatchArm {
+        pattern,
+        body,
+        span: self.span_from(start),
+    })
+}
 
     fn parse_indentation_match_arms(
         &mut self,
@@ -1195,12 +1229,6 @@ self.skip_newlines();
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
-            }
-
-            if self.current() == &Token::Colon {
-                return self.error(
-                    "':' is not allowed after match pattern",
-                );
             }
 
             arms.push(self.parse_match_arm()?);
@@ -1422,10 +1450,6 @@ self.skip_newlines();
         self.use_block_style(style)?;
 
         let previous_return_type = self.current_function_return_type.clone();
-self.current_function_return_type = Some(return_type.clone());
-
-let previous_return_type = self.current_function_return_type.clone();
-
 self.current_function_return_type = Some(return_type.clone());
 
 let body_result = match style {
@@ -1774,63 +1798,54 @@ let body = body_result?;
     // ------------------------------------------------------------
 
     fn parse_struct_fields(
-        &mut self,
-    ) -> Result<Vec<(String, Expression)>, ParseError> {
-        if !self.consume(&Token::LeftBrace) {
-            return self.error("Expected '{' after struct name");
+    &mut self,
+) -> Result<Vec<(String, Expression)>, ParseError> {
+    let mut fields = Vec::new();
+
+    loop {
+        if self.current() == &Token::RightBrace {
+            break;
         }
 
-        let mut fields = Vec::new();
-
-        while self.current() != &Token::RightBrace
-            && self.current() != &Token::Eof
-        {
-            if self.current() == &Token::NewLine {
+        let name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
                 self.advance();
-                continue;
+                name
             }
 
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-
-                _ => {
-                    return self.error(
-                        "Expected field name in struct constructor",
-                    );
-                }
-            };
-
-            if !self.consume(&Token::Colon) {
+            _ => {
                 return self.error(
-                    "Expected ':' after struct constructor field name",
+                    "Expected field name in struct constructor",
                 );
             }
+        };
 
-            let value = self.parse_expression()?;
-
-            fields.push((name, value));
-
-            if self.consume(&Token::Comma) {
-                self.skip_newlines();
-            } else if self.current() != &Token::RightBrace {
-                return self.error(
-                    "Expected ',' or '}' after struct constructor field",
-                );
-            }
-        }
-
-        if !self.consume(&Token::RightBrace) {
+        if !self.consume(&Token::Colon) {
             return self.error(
-                "Expected '}' after struct constructor fields",
+                "Expected ':' after struct constructor field name",
             );
         }
 
-        Ok(fields)
+        let value = self.parse_expression()?;
+
+        fields.push((name, value));
+
+        if self.consume(&Token::Comma) {
+            continue;
+        }
+
+        break;
     }
+
+    if !self.consume(&Token::RightBrace) {
+        return self.error(
+            "Expected '}' after struct constructor fields",
+        );
+    }
+
+    Ok(fields)
+}
 
     // ------------------------------------------------------------
     // Expressions
@@ -2062,9 +2077,8 @@ let body = body_result?;
             generic_arguments: Vec::new(),
             span: Span::new(start, end),
         }
-
-} else {
-    Expression::Identifier {
+    } else {
+        Expression::Identifier {
             name,
             span: Span::new(start, self.previous_span().end),
         }

@@ -51,9 +51,28 @@ pub struct Lexer {
     block_mode: BlockMode,
     init_error: Option<LexError>,
     brace_depth: usize,
+    line_leading_keyword: Option<String>,
 }
 
 impl Lexer {
+
+    fn is_block_keyword(ident: &str) -> bool {
+    matches!(
+        ident,
+        "main"
+            | "fn"
+            | "struct"
+            | "enum"
+            | "trait"
+            | "impl"
+            | "match"
+            | "if"
+            | "else"
+            | "while"
+            | "for"
+    )
+}
+
     fn detect_block_mode(source: &str) -> Result<BlockMode, LexError> {
     for (line_no, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -104,7 +123,7 @@ impl Lexer {
         Self {
             input: source.chars().collect(), position: 0, line: 1, column: 1,
             line_start: true, indentation_stack: vec![0], pending_tokens: VecDeque::new(),
-            block_mode: mode, brace_depth: 0, init_error,
+            block_mode: mode, brace_depth: 0, init_error, line_leading_keyword: None,
         }
     }
 
@@ -288,7 +307,17 @@ impl Lexer {
             };
 
             match ch {
-                '\n' => { self.advance(); self.line_start = true; return Ok(Spanned::new(Token::NewLine, start, self.position)); }
+                '\n' => {
+    self.advance();
+    self.line_start = true;
+    self.line_leading_keyword = None;
+
+    return Ok(Spanned::new(
+        Token::NewLine,
+        start,
+        self.position,
+    ));
+}
                 '#' => { while let Some(c) = self.peek() { self.advance(); if c == '\n' { self.line_start = true; break; } } continue; }
                 '/' if self.peek_next() == Some('/') => {
                     self.advance(); self.advance();
@@ -310,7 +339,13 @@ impl Lexer {
                 }
 
 
-                '{' => {
+           '{' => {
+    if self.block_mode != BlockMode::Braces {
+        return self.error(
+            "Braces are not allowed in indentation mode; use ':' for blocks",
+        );
+    }
+
     self.advance();
     self.brace_depth += 1;
 
@@ -322,8 +357,14 @@ impl Lexer {
 }
 
 '}' => {
+    if self.block_mode != BlockMode::Braces {
+        return self.error(
+            "Braces are not allowed in indentation mode; use ':' for blocks",
+        );
+    }
+
     if self.brace_depth == 0 {
-        return self.error("unexpected `}`");
+        return self.error("Unexpected '}'");
     }
 
     self.advance();
@@ -342,7 +383,36 @@ impl Lexer {
                 '(' => { self.advance(); return Ok(Spanned::new(Token::LeftParen, start, self.position)); }
                 ')' => { self.advance(); return Ok(Spanned::new(Token::RightParen, start, self.position)); }
                 ',' => { self.advance(); return Ok(Spanned::new(Token::Comma, start, self.position)); }
-                ':' => { self.advance(); let token = if self.peek() == Some(':') { self.advance(); Token::DoubleColon } else { Token::Colon }; return Ok(Spanned::new(token, start, self.position)); }
+                ':' => {
+    if self.peek_next() == Some(':') {
+        self.advance();
+        self.advance();
+
+        return Ok(Spanned::new(
+            Token::DoubleColon,
+            start,
+            self.position,
+        ));
+    }
+
+    if self.block_mode == BlockMode::Braces {
+        if let Some(keyword) = &self.line_leading_keyword {
+            if Self::is_block_keyword(keyword) {
+                return self.error(
+                    "':' is not allowed for blocks in brace mode; use '{'",
+                );
+            }
+        }
+    }
+
+    self.advance();
+
+    return Ok(Spanned::new(
+        Token::Colon,
+        start,
+        self.position,
+    ));
+}
                 '.' => { self.advance(); let token = if self.peek() == Some('.') { self.advance(); Token::DotDot } else { Token::Dot }; return Ok(Spanned::new(token, start, self.position)); }
                 '+' => { self.advance(); return Ok(Spanned::new(Token::Plus, start, self.position)); }
                 '-' => { self.advance(); let token = if self.peek() == Some('>') { self.advance(); Token::Arrow } else { Token::Minus }; return Ok(Spanned::new(token, start, self.position)); }
@@ -356,9 +426,20 @@ impl Lexer {
                 '|' => { self.advance(); if self.peek() == Some('|') { self.advance(); return Ok(Spanned::new(Token::OrOr, start, self.position)); } return self.error("expected `||`"); }
                 c if c.is_ascii_digit() => return Ok(Spanned::new(self.read_number()?, start, self.position)),
                 c if c.is_alphabetic() || c == '_' => {
-                    let ident = self.read_identifier();
-                    return Ok(Spanned::new(Self::keyword(&ident), start, self.position));
-                }
+    let ident = self.read_identifier();
+
+    if self.line_leading_keyword.is_none()
+        && Self::is_block_keyword(&ident)
+    {
+        self.line_leading_keyword = Some(ident.clone());
+    }
+
+    return Ok(Spanned::new(
+        Self::keyword(&ident),
+        start,
+        self.position,
+    ));
+}
                 _ => return self.error(format!("unexpected character `{}`", ch)),
             }
         }
