@@ -38,16 +38,6 @@ impl Parser {
     // Token helpers
     // ------------------------------------------------------------
 
-    fn validate_block_style(&self, style: BlockStyle) {
-    if self.seen_main && self.block_style != style {
-        panic!(
-            "Block style mismatch: expected {:?}, found {:?}",
-            self.block_style,
-            style
-        );
-    }
-}
-
     fn current(&self) -> &Token {
         self.tokens
             .get(self.position)
@@ -684,6 +674,7 @@ impl Parser {
 
     fn parse_struct(&mut self) -> Result<Statement, ParseError> {
     let start = self.current_span().start;
+
     self.advance(); // consume 'struct'
 
     let name = match self.current() {
@@ -694,7 +685,7 @@ impl Parser {
         }
 
         _ => {
-            return self.error("Expected identifier after 'struct'");
+            return self.error("Expected struct name after 'struct'");
         }
     };
 
@@ -1180,10 +1171,10 @@ impl Parser {
     }
 
     if self.current() == &Token::Colon {
-    return self.error(
-        "':' is not allowed after '=>'; use a block style directly",
-    );
-}
+        return self.error(
+            "':' is not allowed after '=>'; use a block style directly",
+        );
+    }
 
     let body = if self.current() == &Token::NewLine {
         self.advance();

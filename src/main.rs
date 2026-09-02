@@ -17,21 +17,6 @@ use parser::*;
 use type_checker::TypeChecker;
 use interpreter::Interpreter;
 
-fn parse_should_fail(source: &str) {
-    let mut lexer = Lexer::new(source, BlockMode::Unknown);
-
-    let tokens = match lexer.tokenize() {
-        Ok(tokens) => tokens,
-        Err(_) => return,
-    };
-
-    let mut parser = Parser::new(tokens);
-
-    assert!(
-        parser.parse().is_err(),
-        "expected parser to reject invalid source"
-    );
-}
 
 fn source_from_args() -> Result<String, String> {
     let mut args = env::args().skip(1);
@@ -117,8 +102,8 @@ mod tests {
 
         let mut parser = Parser::new(tokens);
 
-        // Parser::parse() currently returns Program directly and uses
-        // panic-based error handling.
+        // Parser::parse() returns a Result so parser errors can be
+// asserted directly in tests.
         let program = parser
     .parse()
     .expect("test source should parse successfully");
@@ -142,25 +127,20 @@ mod tests {
     }
 
     fn parse_should_fail(source: &str) {
-        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
 
-        let tokens = match lexer.tokenize() {
-            Ok(tokens) => tokens,
-            Err(_) => return,
-        };
+    let tokens = match lexer.tokenize() {
+        Ok(tokens) => tokens,
+        Err(_) => return,
+    };
 
-        let result = std::panic::catch_unwind(
-            std::panic::AssertUnwindSafe(|| {
-                let mut parser = Parser::new(tokens);
-                parser.parse()
-            }),
-        );
+    let mut parser = Parser::new(tokens);
 
-        assert!(
-            result.is_err(),
-            "expected parser to reject invalid source"
-        );
-    }
+    assert!(
+        parser.parse().is_err(),
+        "expected parser to reject invalid source"
+    );
+}
 
     fn type_check_should_fail(source: &str) {
         let mut lexer = Lexer::new(source, BlockMode::Unknown);
