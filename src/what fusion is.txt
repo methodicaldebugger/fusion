@@ -541,10 +541,6 @@ fusion/
 
 
 Current status:
-Finish defer semantics
-Finish return/control-flow analysis
-Give every AST node a real span
-Replace parser panic-based errors with Result
 Make interpreter and type checker agree on every supported operation
 Build the conformance test suite
 Then begin bootstrapping the lexer

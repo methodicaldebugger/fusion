@@ -11,7 +11,6 @@ For example:
 Python → approachable syntax and indentation
 Rust → algebraic data types, pattern matching, iterators, diagnostics
 Dart → managed runtime and potential JIT/AOT architecture
-LLVM → compiler infrastructure
 SQL → the idea of a common abstraction over different implementations
 
 
@@ -20,7 +19,6 @@ main: #<-- this means indentation will be used like in python
 main{ //<-- this means brackets will be used like in C
 }
 A file should consistently use one style.
-The parser determines the chosen style at the beginning of the file and maintains that choice consistently.
 The goal is to minimize boilerplate while allowing developers to use a familiar structural style.
 
 
@@ -71,7 +69,6 @@ length: numbers.length
 Built-in methods: numbers.push(5), numbers.pop(), numbers.clear(), numbers.contains(42), numbers.sort(), numbers.reverse(), length: numbers.length
 Printing variables: print(x), print("Hello"), print("{name} is {age} years old.")
 debug(person) // debug always shows the full structural representation.
-Fusion is statically typed, it can automatically call the appropriate formatting code
 
 
 Fusion is like zig it lets you write conceptually: 
@@ -85,10 +82,6 @@ Fusion will have:
 GC → automatically manages memory
 defer → deterministically releases resources
 scopes → let programmers control when deferred cleanup happens
-
-That's much simpler than importing C++'s entire RAII/ownership system.
-When file leaves scope, its destructor runs. This makes resource management deterministic.
-Fusion takeaway: Even with GC, deterministic resource cleanup is extremely valuable for things like files, sockets, GPU resources, database connections, and foreign handles.
 
 
 Make Option and Result foundational:
@@ -120,23 +113,6 @@ The goal is to provide expressive collection processing while allowing the compi
 
 
 
-
-
-Memory management
-Fusion is planned to use automatic memory management.
-The initial direction is a garbage-collected runtime, rather than:
-manual memory management
-reference counting
-ownership
-borrow checking
-lifetime annotations
-
-This is an intentional design decision.
-Fusion is not trying to reproduce Rust's ownership model.
-However, this also means Fusion will not attempt to replace every use case for languages such as C++ or Rust.
-
-
-
 Fusion's goal is interoperability, not universal replacement.
 Functions
 Functions return values explicitly.
@@ -153,6 +129,8 @@ generics
 properties
 modules
 algebraic data types
+enums
+iterators
 
 Fusion intentionally does not plan to use traditional class inheritance.
 The goal is to favor composition and explicit relationships.
@@ -180,28 +158,7 @@ async and await.
 The exact concurrency and runtime model remains an area of design and experimentation.
 
 
-Compiler architecture
-The long-term compiler architecture is expected to resemble:
-Fusion source
-      │
-      ▼
-Fusion compiler
-      │
-      ▼
-Fusion IR
-      │
-      ▼
-LLVM
-      │
-      ▼
-Machine code
 
-LLVM provides mature compiler infrastructure for optimization and native code generation.
-Building an entirely independent optimizer and code generator would dramatically increase the scope of the project.
-Fusion can instead focus its engineering effort on:
-language semantics, type checking, intermediate representation
-interoperability, runtime design, developer tooling, ecosystem integration
-Interpreter-first, compiler-first architecture
 
 Fusion may initially use an interpreter because it provides a fast development cycle.
 

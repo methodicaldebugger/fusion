@@ -53,3 +53,5 @@ The programmer doesn't necessarily need to care what language implemented the co
 🔴 Some things Fusion probably shouldn't try to own
 There will always be software where Fusion's design makes it a poor choice.
 For example: Operating-system kernels, Firmware, GPU kernels, Extremely performance-sensitive engines.
+
+This is why fusion + C + C# could make absolutely anything. 
