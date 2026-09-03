@@ -1,6 +1,7 @@
 // contents of span.rs
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -18,11 +19,36 @@ impl Span {
         }
     }
 
+    pub fn len(self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+
+    pub fn contains(self, position: usize) -> bool {
+        self.start <= position && position < self.end
+    }
+
     pub fn merge(self, other: Span) -> Self {
-        Self {
-            start: self.start.min(other.start),
-            end: self.end.max(other.end),
-        }
+    let start = if self.start < other.start {
+        self.start
+    } else {
+        other.start
+    };
+
+    let end = if self.end > other.end {
+        self.end
+    } else {
+        other.end
+    };
+
+    Self { start, end }
+}
+
+    pub fn join(self, other: Span) -> Self {
+        self.merge(other)
     }
 }
 
@@ -37,6 +63,17 @@ impl<T> Spanned<T> {
         Self {
             node,
             span: Span::new(start, end),
+        }
+    }
+
+    pub fn from_span(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
+        Spanned {
+            node: f(self.node),
+            span: self.span,
         }
     }
 }

@@ -2,21 +2,37 @@ Python became successful partly because it made programming easier.
 Fusion's opportunity is to make ecosystem integration easier.
 
 
-
 A Fusion developer shouldn't necessarily ask: “Which language should I use?”
 They could ask: “Which implementation/ecosystem is best for this particular capability?”
+Fusion becomes the application-level language while other ecosystems become implementation-level resources/assets. Fusion itself must be a good language and Fusion's interoperability makes it useful. A beginner learns fusion, but masters gain capabilities originating from many ecosystems.
 
-
-Fusion becomes the application-level language while other ecosystems become implementation-level resources.
-Fusion itself must be a good language and Fusion's interoperability makes it useful.
-A beginner learns fusion masters gain capabilities originating from many ecosystems.
-Fusion could have another advantage over Python: Native application development.
-Fusion doesn't replace Python. It complements it.
 If Fusion succeeds, it might look like: “People stopped caring which language their dependency was written in.”
 Tutorials and knowledge in many/all programing languages will become useful to a fusion developer.                       
 
-To a developer, he chooses which plugins he will download(if any) and then writes the program in fusion(+ other languages with plugins). This means fusion can call many foreign libraries and embeed other languages via plugins. For example the C plugin will enable the developer to write half the program in fusion and the other half in fusion.
+To a developer, he chooses which plugins he will download(if any) and then writes the program in fusion(+ other languages with plugins). This means fusion can call many foreign libraries and embeed other languages via plugins. For example the C plugin will enable the developer to write and compile a C file and of course a SEPARATE fusion file.
 
+
+
+
+
+I'd avoid calling the executable component literally the "Fusion compiler" when it's compiling C/C#.
+
+A cleaner architecture might be: Fusion Toolchain
+
+Fusion Toolchain
+├── Fusion compiler
+├── C integration → C compiler
+├── C# integration → .NET compiler
+├── Rust integration → Rust compiler
+└── ...
+
+Then the user experience is unified even though the underlying language compilers remain specialized.
+
+That would let Fusion do something pretty unusual:
+You don't have to write Fusion to use Fusion.
+
+You could use Fusion as the build/run/debug environment for an existing C project, an existing C# project, or eventually a project containing many languages.
+You could have a .fusion file, use foreign source through fusion(main.c->fusion->C integration) or a mixed project with a .fusion and a .c file.
 
 
 
@@ -49,4 +65,4 @@ If a developer can encounter a useful piece of software and think:
 
 Then you've already achieved something extraordinarily powerful.
 
-fusion will become popular by maskarading as a programing language, in reality it is a (aplication) interoperability layer 
+fusion will become popular by maskarading as a programing language, in reality it is a (aplication) interoperability layer.

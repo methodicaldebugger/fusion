@@ -15,8 +15,7 @@ installed separately.
 Fusion's package/runtime manager could manage that environment.
 
 
-For a TypeScript library: the developer shouldn't necessarily have to install Node.js just to consume one package. 
-Fusion could package the required runtime and dependency graph.
+For a TypeScript library: the developer shouldn't necessarily have to install Node.js just to consume one package. Fusion could package the required runtime and dependency graph.
 
 
 
@@ -32,3 +31,118 @@ Fusion should hide these differences!
 The developer shouldn't have to think:
 “Oh no, this is a Python library, therefore I need a completely different API.”
 You can't make every arbitrary library magically interoperable so fusion needs adapters!
+
+
+When someone downloads Fusion, the will also get the Fusion toolchain such as a rust-style debugger + a rust style package manager.
+
+The package manager downloads plugins/adapters and ecosystem plugins.
+
+Plugins/adapters can improve developer experience like: cloud builds, JIT + AOT, UI framework(like flutter), actors system(elixir/elang), SQLite, REPL + Jupyter. The architecture must support this!
+
+Ecosystem plugins include: C interoperability, C++ interoperability, rust, nim, zig, java, dart, golang, C#, swift, dart and potentialy more.
+
+
+A cleaner architecture might be: Fusion Toolchain
+
+Fusion Toolchain
+├── Fusion compiler
+├── C integration → C compiler
+├── C# integration → .NET compiler
+├── Rust integration → Rust compiler
+└── ...
+
+Then the user experience is unified even though the underlying language compilers remain specialized.
+
+That would let Fusion do something pretty unusual:
+You don't have to write Fusion to use Fusion.
+
+You could use Fusion as the build/run/debug environment for an existing C project, an existing C# project, or eventually a project containing many languages.
+You could have a "program.fusion" file, use foreign source through fusion(main.c->fusion->C integration) or a mixed project with a "program_1.fusion"  and a "program2.c file".
+
+
+I want two separate concepts in the architecture:
+
+1. Foreign Language Toolchain
+
+Responsible for:
+
+detecting source files
+compiler
+linker
+compiler flags
+language versions
+dependencies
+build configuration
+debugging
+testing
+formatting
+language server
+
+For example:
+CPlugin
+CSharpPlugin
+GoPlugin
+SwiftPlugin
+JavaPlugin
+DartPlugin
+
+2. Interoperability Layer
+
+Responsible for:
+
+Native ABI
+Managed Runtime
+Embedded Runtime
+RPC
+WASM
+
+That gives you a much cleaner architecture:
+
+             FUSION TOOLCHAIN
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+   Language Toolchains   Interoperability
+          │                   │
+   ┌──────┼──────┐       ┌────┼────┐
+   │      │      │       │    │    │
+   C     C#     Go     ABI  .NET  RPC
+   │      │      │
+ compiler compiler compiler
+
+
+None of the five integration layers, by themselves, lets Fusion compile foreign source files.
+The foreign-language toolchain/plugin does that.
+
+The five layers determine how Fusion interoperates with the foreign code after/during the build.
+
+These are the folders that fusion will create/already has, for maintenance purposes.
+
+fusion/
+├── compiler/
+├── runtime/
+├── toolchain/
+├── interoperability/
+│   ├── native_abi/
+│   ├── managed_runtime/
+│   ├── embedded_runtime/
+│   ├── process_rpc/
+│   └── wasm/
+├── languages/
+│   ├── c/
+│   ├── cpp/
+│   ├── csharp/
+│   ├── go/
+│   ├── swift/
+│   ├── dart/
+│   └── java/
+├── platform/
+│   ├── jit/
+│   ├── aot/
+│   ├── repl/
+│   ├── jupyter/
+│   ├── sqlite/
+│   ├── actors/
+│   ├── ui/
+│   └── cloud/
+└── docs/

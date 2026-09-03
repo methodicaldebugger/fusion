@@ -2,6 +2,29 @@
 use crate::span::Span;
 
 #[derive(Debug, Clone)]
+pub struct ParseError {
+    pub message: String,
+    pub span: Span,
+}
+
+impl ParseError {
+    pub fn new(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span,
+        }
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {}", self.message, self.span.start)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+#[derive(Debug, Clone)]
 pub enum FusionError {
     Lexer {
         message: String,
@@ -47,9 +70,9 @@ impl std::fmt::Display for FusionError {
                 write!(f, "{}", message)
             }
 
-            FusionError::Syntax { message, .. } => {
-                write!(f, "{}", message)
-            }
+            FusionError::Syntax { message, span } => {
+    write!(f, "{} at {}", message, span.start)
+}
 
             FusionError::UnknownVariable { name, .. } => {
                 write!(f, "Unknown variable '{}'", name)
