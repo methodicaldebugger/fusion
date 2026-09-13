@@ -477,107 +477,172 @@ impl Parser {
     }
 
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
-        let start = self.current_span().start;
+    let start = self.current_span().start;
 
-        let declared_type = self.parse_type()?;
+    let declared_type = self.parse_type()?;
 
-        let mut names = Vec::new();
-        let mut name_spans = Vec::new();
+    let mut names = Vec::new();
+    let mut name_spans = Vec::new();
 
+    loop {
+        let name_span = self.current_span();
+
+        let name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+
+            _ => {
+                return self.error("Expected identifier in variable declaration");
+            }
+        };
+
+        names.push(name);
+        name_spans.push(name_span);
+
+        if !self.consume(&Token::Comma) {
+            break;
+        }
+
+        if !matches!(self.current(), Token::Identifier(_)) {
+            return self.error("Expected identifier after ','");
+        }
+    }
+
+    let mut values = Vec::new();
+
+    if self.consume(&Token::Equal) {
         loop {
-            let name_span = self.current_span();
-
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-
-                _ => {
-                    return self.error("Expected identifier in variable declaration");
-                }
-            };
-
-            names.push(name);
-            name_spans.push(name_span);
+            values.push(self.parse_expression()?);
 
             if !self.consume(&Token::Comma) {
                 break;
             }
-
-            if !matches!(self.current(), Token::Identifier(_)) {
-                return self.error("Expected identifier after ','");
-            }
         }
-
-        if !self.consume(&Token::Equal) {
-            return self.error("Expected '=' in variable declaration");
-        }
-
-        let mut values = Vec::new();
-
-        loop {
-            values.push(self.parse_expression()?);
-
-            if self.consume(&Token::Comma) {
-                continue;
-            }
-
-            break;
-        }
-
-        if names.len() != values.len() {
-            return self.error(format!(
-                "Number of variables ({}) does not match number of values ({})",
-                names.len(),
-                values.len()
-            ));
-        }
-
-        let end = self.previous_span().end;
-
-        let declarations = names
-            .into_iter()
-            .zip(name_spans)
-            .zip(values)
-            .map(|((name, name_span), value)| {
-                VariableDeclaration {
-                    name,
-                    name_span,
-                    declared_type: Some(declared_type.clone()),
-                    value,
-                    span: Span::new(start, end),
-                }
-            })
-            .collect();
-
-        Ok(Statement::VariableDeclarations {
-            declarations,
-            span: Span::new(start, end),
-        })
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
-        let start = self.current_span().start;
+    if values.len() > 1 {
+        return self.error(
+            "A typed declaration list may have at most one initializer",
+        );
+    }
 
-        let expression = self.parse_expression()?;
+    let name_count = names.len();
+    let initializer = values.into_iter().next();
 
-        if self.consume(&Token::Equal) {
-            let value = self.parse_expression()?;
+    let end = self.previous_span().end;
 
-            return Ok(Statement::Assignment {
-                target: expression,
+    let declarations = names
+        .into_iter()
+        .zip(name_spans)
+        .enumerate()
+        .map(|(index, (name, name_span))| {
+            let value = if index + 1 == name_count {
+                initializer.clone()
+            } else {
+                None
+            };
+
+            VariableDeclaration {
+                name,
+                name_span,
+                declared_type: Some(declared_type.clone()),
                 value,
+                span: Span::new(start, end),
+            }
+        })
+        .collect();
+
+    Ok(Statement::VariableDeclarations {
+        declarations,
+        span: Span::new(start, end),
+    })
+}
+
+    fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
+    let start = self.current_span().start;
+    let expression = self.parse_expression()?;
+
+    if self.consume(&Token::Equal) {
+        let value = self.parse_expression()?;
+
+        // `x = 10, y = 32` is shorthand for two
+        // inferred variable declarations.
+        if self.current() == &Token::Comma {
+            let mut declarations = Vec::new();
+
+            let first_name = match expression {
+                Expression::Identifier { name, span } => (name, span),
+                _ => {
+                    return Ok(Statement::Assignment {
+                        target: expression,
+                        value,
+                        span: self.span_from(start),
+                    });
+                }
+            };
+
+            declarations.push(VariableDeclaration {
+                name: first_name.0,
+                name_span: first_name.1,
+                declared_type: None,
+                value: Some(value),
+                span: self.span_from(start),
+            });
+
+            while self.consume(&Token::Comma) {
+                let name_span = self.current_span();
+
+                let name = match self.current() {
+                    Token::Identifier(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    }
+                    _ => {
+                        return self.error(
+                            "Expected identifier after ','",
+                        );
+                    }
+                };
+
+                if !self.consume(&Token::Equal) {
+                    return self.error(
+                        "Expected '=' in variable declaration",
+                    );
+                }
+
+                let value = self.parse_expression()?;
+
+                declarations.push(VariableDeclaration {
+                    name,
+                    name_span,
+                    declared_type: None,
+                    value: Some(value),
+                    span: self.span_from(start),
+                });
+            }
+
+            return Ok(Statement::VariableDeclarations {
+                declarations,
                 span: self.span_from(start),
             });
         }
 
-        Ok(Statement::Expression {
-            expression,
+        return Ok(Statement::Assignment {
+            target: expression,
+            value,
             span: self.span_from(start),
-        })
+        });
     }
+
+    Ok(Statement::Expression {
+        expression,
+        span: self.span_from(start),
+    })
+}
 
     // ------------------------------------------------------------
     // if
@@ -1363,6 +1428,33 @@ impl Parser {
             }
         };
 
+        let mut generic_parameters = Vec::new();
+
+if self.current() == &Token::Less {
+    self.advance();
+
+    while self.current() != &Token::Greater
+        && self.current() != &Token::Eof
+    {
+        match self.current() {
+            Token::Identifier(name) => {
+                generic_parameters.push(name.clone());
+                self.advance();
+            }
+
+            _ => return self.error("Expected generic parameter name"),
+        }
+
+        if self.current() == &Token::Comma {
+            self.advance();
+        }
+    }
+
+    if !self.consume(&Token::Greater) {
+    return self.error("Expected '>' after generic parameters");
+}
+}
+
         if !self.consume(&Token::LeftParen) {
             return self.error("Expected '(' after function name");
         }
@@ -1460,7 +1552,7 @@ let body = body_result?;
 
         Ok(Statement::Function {
             name,
-            generic_parameters: Vec::new(),
+            generic_parameters,
             parameters,
             return_type,
             body,
@@ -1744,6 +1836,30 @@ let body = body_result?;
     // ------------------------------------------------------------
     // Arguments
     // ------------------------------------------------------------
+
+    fn parse_generic_arguments(&mut self) -> Result<Vec<String>, ParseError> {
+    if !self.consume(&Token::Less) {
+        return self.error("Expected '<'");
+    }
+
+    let mut arguments = Vec::new();
+
+    loop {
+        arguments.push(self.parse_type()?);
+
+        if self.consume(&Token::Comma) {
+            continue;
+        }
+
+        break;
+    }
+
+    if !self.consume(&Token::Greater) {
+        return self.error("Expected '>' after generic arguments");
+    }
+
+    Ok(arguments)
+}
 
     fn parse_arguments(&mut self) -> Result<Vec<Expression>, ParseError> {
     if !self.consume(&Token::LeftParen) {
@@ -2029,19 +2145,16 @@ let body = body_result?;
     let name = name.clone();
     self.advance();
 
-    if self.consume(&Token::DoubleColon) {
+    if self.current() == &Token::DoubleColon {
+        self.advance();
+
         let variant = match self.current() {
             Token::Identifier(variant) => {
                 let variant = variant.clone();
                 self.advance();
                 variant
             }
-
-            _ => {
-                return self.error(
-                    "Expected enum variant after '::'",
-                );
-            }
+            _ => return self.error("Expected enum variant name"),
         };
 
         let arguments = if self.current() == &Token::LeftParen {
@@ -2050,28 +2163,34 @@ let body = body_result?;
             Vec::new()
         };
 
-        let end = self.previous_span().end;
-
         Expression::EnumConstructor {
             enum_name: name,
             variant,
             arguments,
-            span: Span::new(start, end),
-        }
-    } else if self.current() == &Token::LeftParen {
-        let arguments = self.parse_arguments()?;
-        let end = self.previous_span().end;
-
-        Expression::Call {
-            name,
-            arguments,
-            generic_arguments: Vec::new(),
-            span: Span::new(start, end),
+            span: self.span_from(start),
         }
     } else {
-        Expression::Identifier {
-            name,
-            span: Span::new(start, self.previous_span().end),
+        let generic_arguments = if self.current() == &Token::Less {
+            self.parse_generic_arguments()?
+        } else {
+            Vec::new()
+        };
+
+        if self.current() == &Token::LeftParen {
+            let arguments = self.parse_arguments()?;
+
+            Expression::Call {
+                name,
+                arguments,
+                generic_arguments,
+                span: self.span_from(start),
+            }
+        
+        } else {
+            Expression::Identifier {
+                name,
+                span: self.span_from(start),
+            }
         }
     }
 }

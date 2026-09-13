@@ -52,6 +52,7 @@ pub struct Lexer {
     init_error: Option<LexError>,
     brace_depth: usize,
     line_leading_keyword: Option<String>,
+    paren_depth: usize,
 }
 
 impl Lexer {
@@ -123,7 +124,7 @@ impl Lexer {
         Self {
             input: source.chars().collect(), position: 0, line: 1, column: 1,
             line_start: true, indentation_stack: vec![0], pending_tokens: VecDeque::new(),
-            block_mode: mode, brace_depth: 0, init_error, line_leading_keyword: None,
+            block_mode: mode, brace_depth: 0, paren_depth: 0, init_error, line_leading_keyword: None,
         }
     }
 
@@ -380,8 +381,30 @@ impl Lexer {
                 '"' => return Ok(Spanned::new(Token::String(self.read_string()?), start, self.position)),
                 '[' => { self.advance(); return Ok(Spanned::new(Token::LeftBracket, start, self.position)); }
                 ']' => { self.advance(); return Ok(Spanned::new(Token::RightBracket, start, self.position)); }
-                '(' => { self.advance(); return Ok(Spanned::new(Token::LeftParen, start, self.position)); }
-                ')' => { self.advance(); return Ok(Spanned::new(Token::RightParen, start, self.position)); }
+              '(' => {
+    self.advance();
+    self.paren_depth += 1;
+
+    return Ok(Spanned::new(
+        Token::LeftParen,
+        start,
+        self.position,
+    ));
+}
+                ')' => {
+    if self.paren_depth == 0 {
+        return self.error("Unexpected ')'");
+    }
+
+    self.advance();
+    self.paren_depth -= 1;
+
+    return Ok(Spanned::new(
+        Token::RightParen,
+        start,
+        self.position,
+    ));
+}
                 ',' => { self.advance(); return Ok(Spanned::new(Token::Comma, start, self.position)); }
                 ':' => {
     if self.peek_next() == Some(':') {
@@ -395,14 +418,23 @@ impl Lexer {
         ));
     }
 
-    if self.block_mode == BlockMode::Braces {
-        if let Some(keyword) = &self.line_leading_keyword {
-            if Self::is_block_keyword(keyword) {
-                return self.error(
-                    "':' is not allowed for blocks in brace mode; use '{'",
-                );
-            }
-        }
+    // In brace mode, a colon after a block declaration is invalid.
+    // For example:
+    //
+    //     struct Person:
+    //         name: string
+    //
+    // But colons used for type annotations remain valid:
+    //
+    //     fn identity<T>(value: T) -> T {
+    //
+    if self.block_mode == BlockMode::Braces
+    && self.paren_depth == 0
+    && self.line_leading_keyword.is_some()
+{
+        return self.error(
+            "Indentation-style blocks are not allowed in brace mode; use '{'",
+        );
     }
 
     self.advance();

@@ -28,6 +28,7 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub return_type: Option<String>,
     pub body: Vec<Statement>,
+    pub generic_parameters: Vec<String>,
 }
 
 impl Interpreter {
@@ -234,25 +235,45 @@ impl Interpreter {
     // =========================================================================
 
     fn check_parameter_type(
-        &self,
-        function_name: &str,
-        parameter: &Parameter,
-        value: &Value,
-    ) {
-        let Some(expected) = &parameter.type_name else {
-            return;
-        };
+    &self,
+    function_name: &str,
+    parameter: &Parameter,
+    value: &Value,
+    generic_parameters: &[String],
+) {
+    let Some(expected) = &parameter.type_name else {
+        return;
+    };
 
-        if !self.value_matches_type(value, expected) {
-            panic!(
-                "Function '{}' parameter '{}' expects {}, got {:?}",
-                function_name,
-                parameter.name,
-                expected,
-                value
-            );
-        }
+    // Generic types are compile-time only.
+    if generic_parameters.iter().any(|name| name == expected) {
+        return;
     }
+
+    let valid = match expected.as_str() {
+        "num" => matches!(value, Value::Number(_)),
+        "float" => matches!(value, Value::Float(_)),
+        "string" => matches!(value, Value::String(_)),
+        "bool" => matches!(value, Value::Boolean(_)),
+
+        struct_name => {
+            match value {
+                Value::Struct { name, .. } => name == struct_name,
+                _ => false,
+            }
+        }
+    };
+
+    if !valid {
+        panic!(
+            "Function '{}' parameter '{}' expects {}, got {:?}",
+            function_name,
+            parameter.name,
+            expected,
+            value
+        );
+    }
+}
 
     fn call_function(
         &mut self,
@@ -305,7 +326,7 @@ impl Interpreter {
         for (parameter, value) in
             function.parameters.iter().zip(values.iter())
         {
-            self.check_parameter_type(name, parameter, value);
+            self.check_parameter_type(name, parameter, value, &function.generic_parameters);
         }
 
         // A function gets its own loop context.
@@ -382,10 +403,11 @@ impl Interpreter {
         self.loop_depth = previous_loop_depth;
 
         self.check_return_type(
-            name,
-            &function.return_type,
-            &returned_value,
-        );
+    name,
+    &function.return_type,
+    &returned_value,
+    &function.generic_parameters,
+);
 
         returned_value
     }
@@ -502,6 +524,7 @@ impl Interpreter {
                 parameters,
                 return_type,
                 body,
+                generic_parameters,
                 ..
             } = statement
             {
@@ -515,6 +538,7 @@ impl Interpreter {
                         parameters: parameters.clone(),
                         return_type: return_type.clone(),
                         body: body.clone(),
+                        generic_parameters: generic_parameters.clone(),
                     },
                 );
             }
@@ -568,30 +592,32 @@ impl Interpreter {
             // -----------------------------------------------------------------
 
             Statement::VariableDeclarations {
-                declarations,
-                ..
-            } => {
-                for declaration in declarations {
-                    let value = self.evaluate(&declaration.value);
+    declarations,
+    ..
+} => {
+    for declaration in declarations {
+        if let Some(expression) = &declaration.value {
+            let value = self.evaluate(expression);
 
-                    self.check_value_type(
-                        &format!(
-                            "Variable '{}' type error",
-                            declaration.name
-                        ),
-                        declaration.declared_type.as_ref(),
-                        &value,
-                    );
+            self.check_value_type(
+                &format!(
+                    "Variable '{}' type error",
+                    declaration.name
+                ),
+                declaration.declared_type.as_ref(),
+                &value,
+            );
 
-                    self.environment.declare(
-                        declaration.name.clone(),
-                        value,
-                        true,
-                    );
-                }
+            self.environment.declare(
+                declaration.name.clone(),
+                value,
+                true,
+            );
+        }
+    }
 
-                Flow::Normal
-            }
+    Flow::Normal
+}
 
             // -----------------------------------------------------------------
             // Constant declaration
@@ -1017,6 +1043,7 @@ impl Interpreter {
                 parameters,
                 return_type,
                 body,
+                generic_parameters,
                 ..
             } => {
                 self.functions.insert(
@@ -1025,6 +1052,7 @@ impl Interpreter {
                         parameters: parameters.clone(),
                         return_type: return_type.clone(),
                         body: body.clone(),
+                        generic_parameters: generic_parameters.clone(),
                     },
                 );
 
@@ -1808,24 +1836,42 @@ for (field_name, _) in &definition.fields {
     // =========================================================================
 
     fn check_return_type(
-        &self,
-        function_name: &str,
-        expected: &Option<String>,
-        value: &Value,
-    ) {
-        let Some(expected) = expected else {
-            return;
-        };
+    &self,
+    function_name: &str,
+    return_type: &Option<String>,
+    value: &Value,
+    generic_parameters: &[String],
+) {
+    let Some(expected) = return_type else {
+        return;
+    };
 
-        if !self.value_matches_type(value, expected) {
-            panic!(
-                "Function '{}' return type error: expected {}, got {:?}",
-                function_name,
-                expected,
-                value
-            );
-        }
+    // Generic return types are compile-time information.
+    if generic_parameters.iter().any(|name| name == expected) {
+        return;
     }
+
+    let valid = match expected.as_str() {
+        "num" => matches!(value, Value::Number(_)),
+        "float" => matches!(value, Value::Float(_)),
+        "string" => matches!(value, Value::String(_)),
+        "bool" => matches!(value, Value::Boolean(_)),
+
+        struct_name => match value {
+            Value::Struct { name, .. } => name == struct_name,
+            _ => false,
+        },
+    };
+
+    if !valid {
+        panic!(
+            "Function '{}' return type error: expected {}, got {:?}",
+            function_name,
+            expected,
+            value
+        );
+    }
+}
 
     // =========================================================================
     // Binary operations

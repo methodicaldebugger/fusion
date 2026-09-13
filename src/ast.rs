@@ -21,7 +21,7 @@ pub struct VariableDeclaration {
     pub name: String,
     pub name_span: Span,
     pub declared_type: Option<String>,
-    pub value: Expression,
+    pub value: Option<Expression>,
     pub span: Span,
 }
 

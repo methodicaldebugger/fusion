@@ -294,6 +294,136 @@ fn indentation_match_executes_selected_arm_without_space_after_arrow() {
         );
     }
 
+        // =========================================================================
+    // generic Functions
+    // =========================================================================
+
+        #[test]
+    fn generic_function_indentation() {
+        assert_eq!(
+            run_program(
+                r#"
+fn identity<T>(value: T) -> T:
+    return value
+
+main:
+    num_value = identity<num>(42)
+    string_value = identity<string>("hello")
+
+    print(num_value)
+    print(string_value)
+"#
+            ),
+            vec!["42", "hello"]
+        );
+    }
+
+            #[test]
+    fn multiple_parameters_generic_function_indentation() {
+        assert_eq!(
+            run_program(
+                r#"
+fn first<A, B>(a: A, b: B) -> A:
+    return a
+
+main:
+    result = first<num, string>(42, "hello")
+    print(result)
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+                #[test]
+    fn generic_function_indentation_with_bool() {
+        assert_eq!(
+            run_program(
+                r#"
+fn identity<T>(value: T) -> T:
+    return value
+
+main:
+    result = identity<bool>(true)
+    print(result)
+"#
+            ),
+            vec!["true"]
+        );
+    }
+
+                    #[test]
+    fn generic_function_indentation_with_float() {
+        assert_eq!(
+            run_program(
+                r#"
+fn identity<T>(value: T) -> T:
+    return value
+
+main:
+    result = identity<float>(3.14)
+    print(result)
+"#
+            ),
+            vec!["3.14"]
+        );
+    }
+
+            #[test]
+    fn generic_function_braces() {
+        assert_eq!(
+            run_program(
+                r#"
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+main {
+    num_value = identity<num>(42)
+    string_value = identity<string>("hello")
+
+    print(num_value)
+    print(string_value)
+}
+"#
+            ),
+            vec!["42", "hello"]
+        );
+    }
+
+            #[test]
+    fn multiple_parameters_generic_function_braces() {
+        assert_eq!(
+            run_program(
+                r#"
+fn first<A, B>(a: A, b: B) -> A {
+    return a
+}
+
+main {
+    result = first<num, string>(42, "hello")
+    print(result)
+}
+"#
+            ),
+            vec!["42"]
+        );
+    }
+
+        #[test]
+    fn generic_function_type_mismatch_is_rejected() {
+        type_check_should_fail(
+            r#"
+fn identity<T>(value: T) -> T:
+    return value
+
+main:
+    result = identity<num>("hello")
+    print(result)
+"#,
+        );
+    }
+
     // =========================================================================
     // Functions
     // =========================================================================

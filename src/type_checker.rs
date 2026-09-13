@@ -40,6 +40,7 @@ pub struct VariableInfo {
 pub struct FunctionType {
     pub parameters: Vec<Type>,
     pub return_type: Type,
+    pub generic_parameters: Vec<String>,
 }
 
 pub struct TypeChecker {
@@ -62,6 +63,7 @@ impl TypeChecker {
             FunctionType {
                 parameters: vec![Type::Unknown],
                 return_type: Type::Void,
+                generic_parameters: Vec::new(),
             },
         );
 
@@ -76,6 +78,23 @@ impl TypeChecker {
             loop_depth: 0,
         }
     }
+
+    fn substitute_generic_type(
+    &self,
+    ty: &Type,
+    substitutions: &HashMap<String, Type>,
+) -> Type {
+    match ty {
+        Type::Generic(name) => {
+            substitutions
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| ty.clone())
+        }
+
+        _ => ty.clone(),
+    }
+}
 
     // =========================================================
     // Span helpers
@@ -278,6 +297,8 @@ impl TypeChecker {
                 Span::default(),
             )),
         }
+
+        
     }
 
     fn convert_type_with_generics(
@@ -923,108 +944,162 @@ impl TypeChecker {
             Expression::Call {
     name,
     arguments,
+    generic_arguments,
     ..
 } => {
-    // Struct constructor.
-    //
-    // Structs always use parentheses:
-    //
-    // Person("Alice", 30)
-    //
-    // Never:
-    //
-    // Person { name: "Alice", age: 30 }
+
+        // Struct constructor.
     if let Some(struct_definition) =
         self.environment.structs.get(name)
     {
-        let fields = &struct_definition.fields;
-
-        if arguments.len() != fields.len() {
+        if arguments.len() != struct_definition.fields.len() {
             return Err(FusionError::TypeMismatch {
                 expected: format!(
                     "{} arguments",
-                    fields.len()
+                    struct_definition.fields.len()
                 ),
                 found: format!(
                     "{} arguments",
                     arguments.len()
                 ),
-                span: Self::expression_span(expression)
+                span: Self::expression_span(expression),
             });
         }
 
-        for ((_, expected_type), argument) in
-            fields.iter().zip(arguments.iter())
-        {
-            let actual_type =
-                self.infer_expression(argument)?;
+        for (argument, (_, expected_type)) in arguments
+    .iter()
+    .zip(struct_definition.fields.iter())
+{
+    let actual_type = self.infer_expression(argument)?;
 
-            if !Self::types_compatible(expected_type, &actual_type) {
-                return Err(FusionError::TypeMismatch {
-                    expected: format!(
-                        "{:?}",
-                        expected_type
-                    ),
-                    found: format!(
-                        "{:?}",
-                        actual_type
-                    ),
-                    span: Self::expression_span(argument),
-                });
-            }
-        }
+    if !Self::types_compatible(
+        expected_type,
+        &actual_type,
+    ) {
+        return Err(FusionError::TypeMismatch {
+            expected: format!("{:?}", expected_type),
+            found: format!("{:?}", actual_type),
+            span: Self::expression_span(argument),
+        });
+    }
+}
 
         return Ok(Type::Struct(name.clone()));
     }
 
     // Normal function call.
-    let function =
-        self.environment.functions.get(name).ok_or_else(
-            || FusionError::UnknownVariable {
-                name: name.clone(),
-                span: Self::expression_span(expression),
-            },
-        )?;
+let function =
+    self.environment.functions.get(name).ok_or_else(
+        || FusionError::UnknownVariable {
+            name: name.clone(),
+            span: Self::expression_span(expression),
+        },
+    )?;
 
-    if arguments.len() != function.parameters.len() {
+if arguments.len() != function.parameters.len() {
+    return Err(FusionError::TypeMismatch {
+        expected: format!(
+            "{} arguments",
+            function.parameters.len()
+        ),
+        found: format!(
+            "{} arguments",
+            arguments.len()
+        ),
+        span: Self::expression_span(expression),
+    });
+}
+
+// Map generic parameters to the concrete types supplied at the call site.
+//
+// Example:
+//
+// fn identity<T>(value: T) -> T
+//
+// identity<num>(42)
+//
+// produces:
+//
+// T -> num
+let mut substitutions = HashMap::new();
+
+if !generic_arguments.is_empty() {
+    if generic_arguments.len() != function.generic_parameters.len() {
         return Err(FusionError::TypeMismatch {
             expected: format!(
-                "{} arguments",
-                function.parameters.len()
+                "{} generic arguments",
+                function.generic_parameters.len()
             ),
             found: format!(
-                "{} arguments",
-                arguments.len()
+                "{} generic arguments",
+                generic_arguments.len()
             ),
             span: Self::expression_span(expression),
         });
     }
 
-    for (argument, expected_type) in arguments
+    for (generic_parameter, generic_argument) in function
+        .generic_parameters
         .iter()
-        .zip(function.parameters.iter())
+        .zip(generic_arguments.iter())
     {
-        let actual_type =
-            self.infer_expression(argument)?;
+        let concrete_type =
+            self.convert_type(generic_argument)?;
 
-        if *expected_type != Type::Unknown
-            && actual_type != *expected_type
-        {
-            return Err(FusionError::TypeMismatch {
-                expected: format!(
-                    "{:?}",
-                    expected_type
-                ),
-                found: format!(
-                    "{:?}",
-                    actual_type
-                ),
-                span: Self::expression_span(argument),
-            });
-        }
+        substitutions.insert(
+            generic_parameter.clone(),
+            concrete_type,
+        );
     }
+}
 
-    Ok(function.return_type.clone())
+// A generic function must not be called without explicit generic
+// arguments until generic inference is implemented.
+if !function.generic_parameters.is_empty()
+    && generic_arguments.is_empty()
+{
+    return Err(FusionError::TypeMismatch {
+        expected: format!(
+            "{} generic arguments",
+            function.generic_parameters.len()
+        ),
+        found: "0 generic arguments".to_string(),
+        span: Self::expression_span(expression),
+    });
+}
+
+for (argument, expected_type) in arguments
+    .iter()
+    .zip(function.parameters.iter())
+{
+    let actual_type =
+        self.infer_expression(argument)?;
+
+    let expected_type =
+        self.substitute_generic_type(
+            expected_type,
+            &substitutions,
+        );
+
+    if !Self::types_compatible(
+        &expected_type,
+        &actual_type,
+    ) {
+        return Err(FusionError::TypeMismatch {
+            expected: format!("{:?}", expected_type),
+            found: format!("{:?}", actual_type),
+            span: Self::expression_span(argument),
+        });
+    }
+}
+
+let return_type =
+    self.substitute_generic_type(
+        &function.return_type,
+        &substitutions,
+    );
+
+Ok(return_type)
 }
 
             // -------------------------------------------------
@@ -1424,46 +1499,51 @@ impl TypeChecker {
             // -------------------------------------------------
 
             Statement::VariableDeclarations {
-                declarations,
-                ..
-            } => {
-                for declaration in declarations {
-                    let inferred =
-                        self.infer_expression(&declaration.value)?;
+    declarations,
+    ..
+} => {
+    for declaration in declarations {
+        let ty = match (&declaration.declared_type, &declaration.value) {
+            (Some(type_name), Some(value)) => {
+                let declared = self.convert_type(type_name)?;
+                let inferred = self.infer_expression(value)?;
 
-                    let ty = match &declaration.declared_type {
-                        Some(type_name) => {
-                            let declared =
-                                self.convert_type(type_name)?;
-
-                            if !Self::types_compatible(
-                                &declared,
-                                &inferred,
-                            ) {
-                                return Err(self.type_mismatch(
-                                    declared.name(),
-                                    inferred.name(),
-                                    declaration.span,
-                                ));
-                            }
-
-                            // Preserve an explicitly declared type.
-                            declared
-                        }
-
-                        None => inferred,
-                    };
-
-                    self.declare_variable(
-                        declaration.name.clone(),
-                        ty,
-                        true,
-                        declaration.name_span,
-                    )?;
+                if !Self::types_compatible(&declared, &inferred) {
+                    return Err(self.type_mismatch(
+                        declared.name(),
+                        inferred.name(),
+                        declaration.span,
+                    ));
                 }
 
-                Ok(())
+                declared
             }
+
+            (Some(type_name), None) => {
+                // Explicitly typed but uninitialized.
+                self.convert_type(type_name)?
+            }
+
+            (None, Some(value)) => {
+                // Type inferred from the initializer.
+                self.infer_expression(value)?
+            }
+
+            (None, None) => {
+    unreachable!("parser produced a variable declaration without a type or initializer")
+}
+        };
+
+        self.declare_variable(
+            declaration.name.clone(),
+            ty,
+            true,
+            declaration.name_span,
+        )?;
+    }
+
+    Ok(())
+}
 
             // -------------------------------------------------
             // Constants
@@ -2536,6 +2616,7 @@ self.environment
                     FunctionType {
                         parameters: parameter_types,
                         return_type: return_ty,
+                        generic_parameters: generic_parameters.clone(),
                     },
                 );
             }
