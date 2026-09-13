@@ -168,6 +168,36 @@ mod tests {
     // =========================================================================
 
 
+
+#[test]
+fn multiple_variables_indentation() {
+    assert_eq!(
+        run_program(
+            r#"main:
+    x = 10, y = 32
+    num z, h = 20
+    print(x + y)"#
+        ),
+        vec!["42"]
+    );
+}
+
+#[test]
+fn multiple_variables_braces() {
+    assert_eq!(
+        run_program(
+            r#"main{
+    x = 10, y = 32
+    num z, h = 20
+    print(x + y)
+    }"#
+        ),
+        vec!["42"]
+    );
+}
+
+
+
  #[test]
 fn indentation_match_rejects_colon_after_arm_arrow() {
     parse_should_fail(
