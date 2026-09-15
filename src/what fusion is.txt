@@ -373,7 +373,7 @@ Anyone who suffers from fragmentation: Companies that already use many languages
 
 When to switch to another languag within fusion?
 Only when you need capabilities that Fusion intentionally doesn't try to optimize for. These are almost always libraries, not entire applications.
-the programmer shouldn't think... "Should I use Rust?" They should think: "Should I optimize this?"
+If you can't build it in fusion, build it in another ecosystem.
 
 
 
@@ -496,8 +496,53 @@ and Library integration "Can my Fusion program call this existing library?" you 
 
 Fusion 2.0 can be used to make CLI applications, Backend services, Developer tools, Desktop applications(once UI framework exists), Data processing, Scientific computing, Games and graphics, Cloud applications, distributed systems.
 
-I would build a very small Fusion language that can call C libraries first, while deliberately designing the compiler so that self-hosting becomes easy later.
+I would build a very small Fusion language that can call C libraries first, while deliberately designing the compiler so that self-hosting becomes easy later. The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain." Fusion needs to access the ecosystems of other languages, to connect them, foreign languages and libraries are a valuable asset fusion cannot live without.
 
-The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain."
+So you need to prove that claim early. If Fusion 1.0 can make C libraries feel like ordinary Fusion libraries, I've demonstrated the central idea.
+Fusion should be able to integrate or embeed a foreign language NOT inside a .fusion file but in run/compile a separate file(like .c). Foreign languages are project-level dependencies, not syntax-level extensions. If that experience genuinely feels like “I installed Fusion, imported a C library, and never had to think about the C toolchain”, you've demonstrated the central idea behind Fusion.
 
-So you need to prove that claim early.
+BUILD INTERPRETER-FIRST INTERNALLY, BUT DESIGN COMPILER-FIRST ARCHITECTURALLY!
+Fusion needs to make implementing those integrations possible without redesigning the language, such as:
+JIT/AOT + REPL/Jupyter + actors system(elixir/erlang), 
+UI framework(like flutter), SQLite, cloud builds,
+5 layers of integration for every language out there, including those not yet created.
+
+
+Fusion will create/have folders as follows:
+
+fusion/
+├── compiler/
+├── runtime/
+├── toolchain/
+├── interoperability/
+│   ├── native_abi/
+│   ├── managed_runtime/
+│   ├── embedded_runtime/
+│   ├── process_rpc/
+│   └── wasm/
+├── languages/
+│   ├── c/
+│   ├── cpp/
+│   ├── csharp/
+│   ├── go/
+│   ├── swift/
+│   ├── dart/
+│   └── java/
+├── platform/
+│   ├── jit/
+│   ├── aot/
+│   ├── repl/
+│   ├── jupyter/
+│   ├── sqlite/
+│   ├── actors/
+│   ├── ui/
+│   └── cloud/
+└── docs/
+
+
+Current status:
+Make interpreter and type checker agree on every supported operation
+Build the conformance test suite
+Then begin bootstrapping the lexer
+
+At that point I'd consider Fusion bootstrap-ready.

@@ -1,7 +1,38 @@
+Send me files you have made by visiting the link: https://fusion.ifree.page
+
+The integration quality of foreign languages and foreign libraries may vary:
+
+Tier 1 — Native integration
+C, C++, Rust
+
+Tier 2 — Runtime integration
+Java, C#, Dart, Kotlin
+
+Tier 3 — ABI/binding integration
+Swift, Go, Zig
+
+Tier 4 — External bridge
+Python, Ruby, Julia, etc.
+
+Tier 5 — WebAssembly/RPC
+Almost anything capable of exposing a suitable interface
+
+
+
+Imagine Fusion eventually becomes good enough that you can say:
+
+You don't need to rewrite your 20-million-line Java/C++/C# codebase/files. Keep it. Write new software in Fusion and consume the existing systems.
+
+A tutorial written for Python, Rust, Java, C#, C++, or another ecosystem should become transferable knowledge.
+
+
+-----------------------------------------
+
+
 C should be Fusion's first serious interoperability target.
+Installing it should be incredibly easy, like it's a fusion dependency
 
 You'd need:
-
 ABI support
 
 Fusion needs to understand things such as:
@@ -25,6 +56,91 @@ A binding generator and Memory boundary
 
 
 -----------------------------------------
+
+
+C# is the second serious interoperability target.
+C# isn't primarily an ABI problem.
+
+It's a .NET runtime problem.
+
+You could have:
+Fusion -> .NET runtime -> C# assembly
+
+or generate C# wrappers:
+Fusion -> generated C# adapter -> .NET
+
+Fusion would need to understand things such as:
+assemblies
+NuGet packages
+CLR types
+delegates
+exceptions
+async Tasks
+generics
+GC interaction
+reflection
+marshalling
+
+Embedding or interoperating with the CLR is a major engineering project.
+But conceptually it's very achievable.
+
+
+
+
+
+
+
+
+-----------------------------
+
+
+
+
+At this point you have the tools needed to build most of the worlds software:
+
+Use Fusion for the majority of application-level logic:
+business logic
+application architecture
+networking
+web servers
+APIs
+CLI tools
+orchestration
+data processing
+UI logic
+application state
+concurrency
+database code
+etc.
+C
+
+
+Use C when you need:
+operating-system interfaces
+hardware access
+embedded systems
+drivers
+low-level systems programming
+extremely predictable low-level behavior
+native libraries
+platform APIs
+existing C ecosystem
+C#
+
+
+Use C# when the .NET ecosystem is the best tool:
+.NET libraries
+enterprise software
+Windows APIs/ecosystem
+existing C# libraries
+application frameworks
+tooling available through NuGet
+other .NET languages/components
+
+
+
+Now we continue with other languages.
+-----------------------------
 
 
 
@@ -231,47 +347,6 @@ So again, a generated boundary is likely preferable.
 
 ---------------------------------
 
-
-
-
-
-C# isn't primarily an ABI problem.
-
-It's a .NET runtime problem.
-
-You could have:
-
-Fusion -> .NET runtime -> C# assembly
-
-or generate C# wrappers:
-
-Fusion -> generated C# adapter -> .NET
-
-Fusion would need to understand things such as:
-
-assemblies
-NuGet packages
-CLR types
-delegates
-exceptions
-async Tasks
-generics
-GC interaction
-reflection
-marshalling
-
-Embedding or interoperating with the CLR is a major engineering project.
-
-But conceptually it's very achievable.
-
-
-
-
-
-
-
-
------------------------------
 
 
 
