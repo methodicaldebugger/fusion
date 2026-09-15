@@ -1,6 +1,5 @@
 // contents of span.rs
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub start: usize,
@@ -32,20 +31,20 @@ impl Span {
     }
 
     pub fn merge(self, other: Span) -> Self {
-    let start = if self.start < other.start {
-        self.start
-    } else {
-        other.start
-    };
+        let start = if self.start < other.start {
+            self.start
+        } else {
+            other.start
+        };
 
-    let end = if self.end > other.end {
-        self.end
-    } else {
-        other.end
-    };
+        let end = if self.end > other.end {
+            self.end
+        } else {
+            other.end
+        };
 
-    Self { start, end }
-}
+        Self { start, end }
+    }
 
     pub fn join(self, other: Span) -> Self {
         self.merge(other)

@@ -76,10 +76,7 @@ pub enum PatternKind {
 
     Boolean(bool),
 
-    Variant {
-        name: String,
-        bindings: Vec<String>,
-    },
+    Variant { name: String, bindings: Vec<String> },
 }
 
 #[derive(Debug, Clone)]

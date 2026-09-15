@@ -1,6 +1,5 @@
 //contents of parser.rs
 
-
 use crate::ast::*;
 use crate::errors::ParseError;
 use crate::lexer::Token;
@@ -24,15 +23,15 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<Spanned<Token>>) -> Self {
-    Self {
-        tokens,
-        position: 0,
-        block_style: BlockStyle::Unknown,
-        pending_block_styles: Vec::new(),
-        seen_main: false,
-        current_function_return_type: None,
+        Self {
+            tokens,
+            position: 0,
+            block_style: BlockStyle::Unknown,
+            pending_block_styles: Vec::new(),
+            seen_main: false,
+            current_function_return_type: None,
+        }
     }
-}
 
     // ------------------------------------------------------------
     // Token helpers
@@ -101,10 +100,7 @@ impl Parser {
     fn is_statement_boundary(&self) -> bool {
         matches!(
             self.current(),
-            Token::NewLine
-                | Token::Dedent
-                | Token::RightBrace
-                | Token::Eof
+            Token::NewLine | Token::Dedent | Token::RightBrace | Token::Eof
         )
     }
 
@@ -112,103 +108,90 @@ impl Parser {
     // Block style
     // ------------------------------------------------------------
 
-    fn use_block_style(
-    &mut self,
-    style: BlockStyle,
-) -> Result<(), ParseError> {
-    match self.block_style {
-        BlockStyle::Unknown => {
-            self.pending_block_styles.push(style);
-            Ok(())
+    fn use_block_style(&mut self, style: BlockStyle) -> Result<(), ParseError> {
+        match self.block_style {
+            BlockStyle::Unknown => {
+                self.pending_block_styles.push(style);
+                Ok(())
+            }
+
+            existing if existing == style => Ok(()),
+
+            existing => Err(ParseError {
+                message: format!(
+                    "Mixed block styles are not allowed: expected {:?}, found {:?}",
+                    existing, style
+                ),
+                span: self.current_span(),
+            }),
         }
-
-        existing if existing == style => Ok(()),
-
-        existing => Err(ParseError {
-            message: format!(
-                "Mixed block styles are not allowed: expected {:?}, found {:?}",
-                existing,
-                style
-            ),
-            span: self.current_span(),
-        }),
-    }
-}
-
-    fn require_block_style(
-    &self,
-    style: BlockStyle,
-) -> Result<(), ParseError> {
-    if self.seen_main && self.block_style != style {
-        return Err(ParseError {
-            message: format!(
-                "Mixed block styles are not allowed: expected {:?}, found {:?}",
-                self.block_style,
-                style
-            ),
-            span: self.current_span(),
-        });
     }
 
-    Ok(())
-}
-
-    fn establish_main_style(
-    &mut self,
-    style: BlockStyle,
-) -> Result<(), ParseError> {
-    if self.seen_main {
-        return Err(ParseError {
-            message: "Multiple main blocks are not allowed".into(),
-            span: self.current_span(),
-        });
-    }
-
-    for pending in &self.pending_block_styles {
-        if *pending != style {
+    fn require_block_style(&self, style: BlockStyle) -> Result<(), ParseError> {
+        if self.seen_main && self.block_style != style {
             return Err(ParseError {
-                message:
-                    "All blocks in a Fusion file must use the same block style"
-                        .into(),
+                message: format!(
+                    "Mixed block styles are not allowed: expected {:?}, found {:?}",
+                    self.block_style, style
+                ),
                 span: self.current_span(),
             });
         }
+
+        Ok(())
     }
 
-    self.pending_block_styles.clear();
-    self.block_style = style;
-    self.seen_main = true;
+    fn establish_main_style(&mut self, style: BlockStyle) -> Result<(), ParseError> {
+        if self.seen_main {
+            return Err(ParseError {
+                message: "Multiple main blocks are not allowed".into(),
+                span: self.current_span(),
+            });
+        }
 
-    Ok(())
-}
+        for pending in &self.pending_block_styles {
+            if *pending != style {
+                return Err(ParseError {
+                    message: "All blocks in a Fusion file must use the same block style".into(),
+                    span: self.current_span(),
+                });
+            }
+        }
+
+        self.pending_block_styles.clear();
+        self.block_style = style;
+        self.seen_main = true;
+
+        Ok(())
+    }
 
     fn parse_style_block(&mut self) -> Result<Vec<Statement>, ParseError> {
-    let style = match self.current() {
-        Token::Colon => {
-            self.advance();
-            BlockStyle::Indentation
+        let style = match self.current() {
+            Token::Colon => {
+                self.advance();
+                BlockStyle::Indentation
+            }
+
+            Token::LeftBrace => BlockStyle::Braces,
+
+            _ => {
+                return self.error("Expected ':' or '{' to begin block");
+            }
+        };
+
+        self.use_block_style(style)?;
+
+        match style {
+            BlockStyle::Indentation => {
+                self.skip_newlines();
+                self.parse_indentation_block()
+            }
+
+            BlockStyle::Braces => self.parse_brace_block(),
+
+            BlockStyle::Unknown => unreachable!(),
         }
-
-        Token::LeftBrace => BlockStyle::Braces,
-
-        _ => {
-            return self.error("Expected ':' or '{' to begin block");
-        }
-    };
-
-    self.use_block_style(style)?;
-
-    match style {
-        BlockStyle::Indentation => {
-            self.skip_newlines();
-            self.parse_indentation_block()
-        }
-
-        BlockStyle::Braces => self.parse_brace_block(),
-
-        BlockStyle::Unknown => unreachable!(),
     }
-}
 
     // ------------------------------------------------------------
     // Type helpers
@@ -217,10 +200,7 @@ impl Parser {
     fn current_is_type_keyword(&self) -> bool {
         matches!(
             self.current(),
-            Token::NumType
-                | Token::FloatType
-                | Token::BoolType
-                | Token::StringType
+            Token::NumType | Token::FloatType | Token::BoolType | Token::StringType
         )
     }
 
@@ -301,20 +281,20 @@ impl Parser {
             }
 
             Token::Return => {
-    let start = self.current_span().start;
-    self.advance();
+                let start = self.current_span().start;
+                self.advance();
 
-    let value = if self.is_statement_boundary() {
-        None
-    } else {
-        Some(self.parse_expression()?)
-    };
+                let value = if self.is_statement_boundary() {
+                    None
+                } else {
+                    Some(self.parse_expression()?)
+                };
 
-    Ok(Some(Statement::Return {
-        value,
-        span: self.span_from(start),
-    }))
-}
+                Ok(Some(Statement::Return {
+                    value,
+                    span: self.span_from(start),
+                }))
+            }
 
             Token::Break => {
                 let start = self.current_span().start;
@@ -340,17 +320,16 @@ impl Parser {
 
             Token::Impl => Ok(Some(self.parse_impl()?)),
 
-            Token::Import | Token::From | Token::Async | Token::Await => {
-                self.error(format!(
-                    "Token {:?} is recognized by the lexer but is not yet supported by the AST",
-                    self.current()
-                ))
-            }
+            Token::Import | Token::From | Token::Async | Token::Await => self.error(format!(
+                "Token {:?} is recognized by the lexer but is not yet supported by the AST",
+                self.current()
+            )),
 
-            Token::Identifier(_) | Token::NumType | Token::FloatType
-            | Token::BoolType | Token::StringType => {
-                Ok(Some(self.parse_identifier_or_declaration()?))
-            }
+            Token::Identifier(_)
+            | Token::NumType
+            | Token::FloatType
+            | Token::BoolType
+            | Token::StringType => Ok(Some(self.parse_identifier_or_declaration()?)),
 
             _ => Ok(None),
         }
@@ -445,30 +424,19 @@ impl Parser {
 
     fn looks_like_typed_declaration(&self) -> bool {
         match self.current() {
-            Token::NumType
-            | Token::FloatType
-            | Token::BoolType
-            | Token::StringType => {
-                matches!(
-                    self.peek_at(self.position + 1),
-                    Some(Token::Identifier(_))
-                )
+            Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
+                matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_)))
             }
 
             Token::Identifier(_) => {
-                matches!(
-                    self.peek_at(self.position + 1),
-                    Some(Token::Identifier(_))
-                )
+                matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_)))
             }
 
             _ => false,
         }
     }
 
-    fn parse_identifier_or_declaration(
-        &mut self,
-    ) -> Result<Statement, ParseError> {
+    fn parse_identifier_or_declaration(&mut self) -> Result<Statement, ParseError> {
         if self.looks_like_typed_declaration() {
             self.parse_variable_declaration()
         } else {
@@ -477,172 +445,166 @@ impl Parser {
     }
 
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
-    let start = self.current_span().start;
+        let start = self.current_span().start;
 
-    let declared_type = self.parse_type()?;
+        let declared_type = self.parse_type()?;
 
-    let mut names = Vec::new();
-    let mut name_spans = Vec::new();
+        let mut names = Vec::new();
+        let mut name_spans = Vec::new();
 
-    loop {
-        let name_span = self.current_span();
-
-        let name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-
-            _ => {
-                return self.error("Expected identifier in variable declaration");
-            }
-        };
-
-        names.push(name);
-        name_spans.push(name_span);
-
-        if !self.consume(&Token::Comma) {
-            break;
-        }
-
-        if !matches!(self.current(), Token::Identifier(_)) {
-            return self.error("Expected identifier after ','");
-        }
-    }
-
-    let mut values = Vec::new();
-
-    if self.consume(&Token::Equal) {
         loop {
-            values.push(self.parse_expression()?);
+            let name_span = self.current_span();
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+
+                _ => {
+                    return self.error("Expected identifier in variable declaration");
+                }
+            };
+
+            names.push(name);
+            name_spans.push(name_span);
 
             if !self.consume(&Token::Comma) {
                 break;
             }
-        }
-    }
 
-    if values.len() > 1 {
-        return self.error(
-            "A typed declaration list may have at most one initializer",
-        );
-    }
-
-    let name_count = names.len();
-    let initializer = values.into_iter().next();
-
-    let end = self.previous_span().end;
-
-    let declarations = names
-        .into_iter()
-        .zip(name_spans)
-        .enumerate()
-        .map(|(index, (name, name_span))| {
-            let value = if index + 1 == name_count {
-                initializer.clone()
-            } else {
-                None
-            };
-
-            VariableDeclaration {
-                name,
-                name_span,
-                declared_type: Some(declared_type.clone()),
-                value,
-                span: Span::new(start, end),
+            if !matches!(self.current(), Token::Identifier(_)) {
+                return self.error("Expected identifier after ','");
             }
-        })
-        .collect();
+        }
 
-    Ok(Statement::VariableDeclarations {
-        declarations,
-        span: Span::new(start, end),
-    })
-}
+        let mut values = Vec::new();
+
+        if self.consume(&Token::Equal) {
+            loop {
+                values.push(self.parse_expression()?);
+
+                if !self.consume(&Token::Comma) {
+                    break;
+                }
+            }
+        }
+
+        if values.len() > 1 {
+            return self.error("A typed declaration list may have at most one initializer");
+        }
+
+        let name_count = names.len();
+        let initializer = values.into_iter().next();
+
+        let end = self.previous_span().end;
+
+        let declarations = names
+            .into_iter()
+            .zip(name_spans)
+            .enumerate()
+            .map(|(index, (name, name_span))| {
+                let value = if index + 1 == name_count {
+                    initializer.clone()
+                } else {
+                    None
+                };
+
+                VariableDeclaration {
+                    name,
+                    name_span,
+                    declared_type: Some(declared_type.clone()),
+                    value,
+                    span: Span::new(start, end),
+                }
+            })
+            .collect();
+
+        Ok(Statement::VariableDeclarations {
+            declarations,
+            span: Span::new(start, end),
+        })
+    }
 
     fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
-    let start = self.current_span().start;
-    let expression = self.parse_expression()?;
+        let start = self.current_span().start;
+        let expression = self.parse_expression()?;
 
-    if self.consume(&Token::Equal) {
-        let value = self.parse_expression()?;
+        if self.consume(&Token::Equal) {
+            let value = self.parse_expression()?;
 
-        // `x = 10, y = 32` is shorthand for two
-        // inferred variable declarations.
-        if self.current() == &Token::Comma {
-            let mut declarations = Vec::new();
+            // `x = 10, y = 32` is shorthand for two
+            // inferred variable declarations.
+            if self.current() == &Token::Comma {
+                let mut declarations = Vec::new();
 
-            let first_name = match expression {
-                Expression::Identifier { name, span } => (name, span),
-                _ => {
-                    return Ok(Statement::Assignment {
-                        target: expression,
-                        value,
-                        span: self.span_from(start),
-                    });
-                }
-            };
-
-            declarations.push(VariableDeclaration {
-                name: first_name.0,
-                name_span: first_name.1,
-                declared_type: None,
-                value: Some(value),
-                span: self.span_from(start),
-            });
-
-            while self.consume(&Token::Comma) {
-                let name_span = self.current_span();
-
-                let name = match self.current() {
-                    Token::Identifier(name) => {
-                        let name = name.clone();
-                        self.advance();
-                        name
-                    }
+                let first_name = match expression {
+                    Expression::Identifier { name, span } => (name, span),
                     _ => {
-                        return self.error(
-                            "Expected identifier after ','",
-                        );
+                        return Ok(Statement::Assignment {
+                            target: expression,
+                            value,
+                            span: self.span_from(start),
+                        });
                     }
                 };
 
-                if !self.consume(&Token::Equal) {
-                    return self.error(
-                        "Expected '=' in variable declaration",
-                    );
-                }
-
-                let value = self.parse_expression()?;
-
                 declarations.push(VariableDeclaration {
-                    name,
-                    name_span,
+                    name: first_name.0,
+                    name_span: first_name.1,
                     declared_type: None,
                     value: Some(value),
                     span: self.span_from(start),
                 });
+
+                while self.consume(&Token::Comma) {
+                    let name_span = self.current_span();
+
+                    let name = match self.current() {
+                        Token::Identifier(name) => {
+                            let name = name.clone();
+                            self.advance();
+                            name
+                        }
+                        _ => {
+                            return self.error("Expected identifier after ','");
+                        }
+                    };
+
+                    if !self.consume(&Token::Equal) {
+                        return self.error("Expected '=' in variable declaration");
+                    }
+
+                    let value = self.parse_expression()?;
+
+                    declarations.push(VariableDeclaration {
+                        name,
+                        name_span,
+                        declared_type: None,
+                        value: Some(value),
+                        span: self.span_from(start),
+                    });
+                }
+
+                return Ok(Statement::VariableDeclarations {
+                    declarations,
+                    span: self.span_from(start),
+                });
             }
 
-            return Ok(Statement::VariableDeclarations {
-                declarations,
+            return Ok(Statement::Assignment {
+                target: expression,
+                value,
                 span: self.span_from(start),
             });
         }
 
-        return Ok(Statement::Assignment {
-            target: expression,
-            value,
+        Ok(Statement::Expression {
+            expression,
             span: self.span_from(start),
-        });
+        })
     }
-
-    Ok(Statement::Expression {
-        expression,
-        span: self.span_from(start),
-    })
-}
 
     // ------------------------------------------------------------
     // if
@@ -738,75 +700,9 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_struct(&mut self) -> Result<Statement, ParseError> {
-    let start = self.current_span().start;
-
-    self.advance(); // consume 'struct'
-
-    let name = match self.current() {
-        Token::Identifier(name) => {
-            let name = name.clone();
-            self.advance();
-            name
-        }
-
-        _ => {
-            return self.error("Expected struct name after 'struct'");
-        }
-    };
-
-    let style = match self.current() {
-        Token::Colon => {
-            self.advance();
-            BlockStyle::Indentation
-        }
-
-        Token::LeftBrace => BlockStyle::Braces,
-
-        _ => {
-            return self.error(
-                "Expected ':' or '{' after struct name",
-            );
-        }
-    };
-
-    self.use_block_style(style)?;
-
-    let fields = match style {
-        BlockStyle::Indentation => {
-            self.skip_newlines();
-            self.parse_indentation_struct_fields()?
-        }
-
-        BlockStyle::Braces => {
-            self.parse_brace_struct_fields()?
-        }
-
-        BlockStyle::Unknown => unreachable!(),
-    };
-
-    Ok(Statement::Struct {
-        name,
-        fields,
-        span: self.span_from(start),
-    })
-}
-
-    fn parse_indentation_struct_fields(
-    &mut self,
-) -> Result<Vec<StructField>, ParseError> {
-    if !self.consume(&Token::Indent) {
-        return self.error("Expected indentation after struct declaration");
-    }
-
-    let mut fields = Vec::new();
-
-    self.skip_newlines();
-
-    while self.current() != &Token::Dedent
-        && self.current() != &Token::Eof
-    {
         let start = self.current_span().start;
-        let name_span = self.current_span();
+
+        self.advance(); // consume 'struct'
 
         let name = match self.current() {
             Token::Identifier(name) => {
@@ -816,104 +712,148 @@ impl Parser {
             }
 
             _ => {
-                return self.error(
-                    "Expected field name in struct declaration",
-                );
+                return self.error("Expected struct name after 'struct'");
             }
         };
 
-        if !self.consume(&Token::Colon) {
-            return self.error(
-                "Expected ':' after struct field name",
-            );
-        }
-
-        let type_name = self.parse_type()?;
-
-        let span = Span::new(start, self.previous_span().end);
-
-        fields.push(StructField {
-            name,
-            name_span,
-            type_name,
-            span,
-        });
-
-        self.consume(&Token::Comma);
-        self.skip_newlines();
-    }
-
-    if self.current() == &Token::Dedent {
-        self.advance();
-    }
-
-    Ok(fields)
-}
-
-    fn parse_brace_struct_fields(
-    &mut self,
-) -> Result<Vec<StructField>, ParseError> {
-    if !self.consume(&Token::LeftBrace) {
-        return self.error("Expected '{' after struct name");
-    }
-
-    let mut fields = Vec::new();
-
-    self.skip_newlines();
-
-    while self.current() != &Token::RightBrace
-        && self.current() != &Token::Eof
-    {
-        let start = self.current_span().start;
-        let name_span = self.current_span();
-
-        let name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
+        let style = match self.current() {
+            Token::Colon => {
                 self.advance();
-                name
+                BlockStyle::Indentation
             }
+
+            Token::LeftBrace => BlockStyle::Braces,
 
             _ => {
-                return self.error(
-                    "Expected field name in struct declaration",
-                );
+                return self.error("Expected ':' or '{' after struct name");
             }
         };
 
-        if !self.consume(&Token::Colon) {
-            return self.error(
-                "Expected ':' after struct field name",
-            );
+        self.use_block_style(style)?;
+
+        let fields = match style {
+            BlockStyle::Indentation => {
+                self.skip_newlines();
+                self.parse_indentation_struct_fields()?
+            }
+
+            BlockStyle::Braces => self.parse_brace_struct_fields()?,
+
+            BlockStyle::Unknown => unreachable!(),
+        };
+
+        Ok(Statement::Struct {
+            name,
+            fields,
+            span: self.span_from(start),
+        })
+    }
+
+    fn parse_indentation_struct_fields(&mut self) -> Result<Vec<StructField>, ParseError> {
+        if !self.consume(&Token::Indent) {
+            return self.error("Expected indentation after struct declaration");
         }
 
-        let type_name = self.parse_type()?;
+        let mut fields = Vec::new();
 
-        let span = Span::new(start, self.previous_span().end);
-
-        fields.push(StructField {
-            name,
-            name_span,
-            type_name,
-            span,
-        });
-
-        // Newlines are valid separators in brace-style structs.
         self.skip_newlines();
 
-        if self.consume(&Token::Comma) {
+        while self.current() != &Token::Dedent && self.current() != &Token::Eof {
+            let start = self.current_span().start;
+            let name_span = self.current_span();
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+
+                _ => {
+                    return self.error("Expected field name in struct declaration");
+                }
+            };
+
+            if !self.consume(&Token::Colon) {
+                return self.error("Expected ':' after struct field name");
+            }
+
+            let type_name = self.parse_type()?;
+
+            let span = Span::new(start, self.previous_span().end);
+
+            fields.push(StructField {
+                name,
+                name_span,
+                type_name,
+                span,
+            });
+
+            self.consume(&Token::Comma);
             self.skip_newlines();
         }
+
+        if self.current() == &Token::Dedent {
+            self.advance();
+        }
+
+        Ok(fields)
     }
 
-    if !self.consume(&Token::RightBrace) {
-        return self.error(
-            "Expected '}' after struct declaration",
-        );
-    }
+    fn parse_brace_struct_fields(&mut self) -> Result<Vec<StructField>, ParseError> {
+        if !self.consume(&Token::LeftBrace) {
+            return self.error("Expected '{' after struct name");
+        }
 
-    Ok(fields)
-}
+        let mut fields = Vec::new();
+
+        self.skip_newlines();
+
+        while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
+            let start = self.current_span().start;
+            let name_span = self.current_span();
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+
+                _ => {
+                    return self.error("Expected field name in struct declaration");
+                }
+            };
+
+            if !self.consume(&Token::Colon) {
+                return self.error("Expected ':' after struct field name");
+            }
+
+            let type_name = self.parse_type()?;
+
+            let span = Span::new(start, self.previous_span().end);
+
+            fields.push(StructField {
+                name,
+                name_span,
+                type_name,
+                span,
+            });
+
+            // Newlines are valid separators in brace-style structs.
+            self.skip_newlines();
+
+            if self.consume(&Token::Comma) {
+                self.skip_newlines();
+            }
+        }
+
+        if !self.consume(&Token::RightBrace) {
+            return self.error("Expected '}' after struct declaration");
+        }
+
+        Ok(fields)
+    }
 
     // ------------------------------------------------------------
     // enum
@@ -1014,18 +954,14 @@ impl Parser {
         })
     }
 
-    fn parse_brace_enum_variants(
-        &mut self,
-    ) -> Result<Vec<EnumVariant>, ParseError> {
+    fn parse_brace_enum_variants(&mut self) -> Result<Vec<EnumVariant>, ParseError> {
         if !self.consume(&Token::LeftBrace) {
             return self.error("Expected '{' after enum name");
         }
 
         let mut variants = Vec::new();
 
-        while self.current() != &Token::RightBrace
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
@@ -1047,18 +983,14 @@ impl Parser {
         Ok(variants)
     }
 
-    fn parse_indentation_enum_variants(
-        &mut self,
-    ) -> Result<Vec<EnumVariant>, ParseError> {
+    fn parse_indentation_enum_variants(&mut self) -> Result<Vec<EnumVariant>, ParseError> {
         if !self.consume(&Token::Indent) {
             return self.error("Expected indentation after enum declaration");
         }
 
         let mut variants = Vec::new();
 
-        while self.current() != &Token::Dedent
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::Dedent && self.current() != &Token::Eof {
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
@@ -1103,9 +1035,7 @@ impl Parser {
                         }
 
                         _ => {
-                            return self.error(
-                                "Expected enum variant after '::'",
-                            );
+                            return self.error("Expected enum variant after '::'");
                         }
                     };
 
@@ -1121,9 +1051,8 @@ impl Parser {
                                     }
 
                                     _ => {
-                                        return self.error(
-                                            "Expected identifier in pattern binding",
-                                        );
+                                        return self
+                                            .error("Expected identifier in pattern binding");
                                     }
                                 }
 
@@ -1138,9 +1067,7 @@ impl Parser {
                         }
 
                         if !self.consume(&Token::RightParen) {
-                            return self.error(
-                                "Expected ')' after pattern bindings",
-                            );
+                            return self.error("Expected ')' after pattern bindings");
                         }
                     }
 
@@ -1203,9 +1130,7 @@ impl Parser {
             Token::LeftBrace => BlockStyle::Braces,
 
             _ => {
-                return self.error(
-                    "Expected ':' or '{' after match expression",
-                );
+                return self.error("Expected ':' or '{' after match expression");
             }
         };
 
@@ -1227,50 +1152,41 @@ impl Parser {
     }
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {
-    let start = self.current_span().start;
+        let start = self.current_span().start;
 
-    let pattern = self.parse_pattern()?;
+        let pattern = self.parse_pattern()?;
 
-    if !self.consume(&Token::FatArrow) {
-        return self.error("Expected '=>' after match pattern");
-    }
+        if !self.consume(&Token::FatArrow) {
+            return self.error("Expected '=>' after match pattern");
+        }
 
-    if self.current() == &Token::Colon {
-        return self.error(
-            "':' is not allowed after '=>'; use a block style directly",
-        );
-    }
+        if self.current() == &Token::Colon {
+            return self.error("':' is not allowed after '=>'; use a block style directly");
+        }
 
-    let body = if self.current() == &Token::NewLine {
-        self.advance();
-        self.skip_newlines();
+        let body = if self.current() == &Token::NewLine {
+            self.advance();
+            self.skip_newlines();
 
-        self.parse_indentation_block()?
-    } else if self.current() == &Token::LeftBrace {
-        self.parse_brace_block()?
-    } else {
-        let statement = self
-            .parse_statement()?
-            .ok_or_else(|| {
-                ParseError::new(
-                    "Expected statement after '=>'",
-                    self.current_span(),
-                )
+            self.parse_indentation_block()?
+        } else if self.current() == &Token::LeftBrace {
+            self.parse_brace_block()?
+        } else {
+            let statement = self.parse_statement()?.ok_or_else(|| {
+                ParseError::new("Expected statement after '=>'", self.current_span())
             })?;
 
-        vec![statement]
-    };
+            vec![statement]
+        };
 
-    Ok(MatchArm {
-        pattern,
-        body,
-        span: self.span_from(start),
-    })
-}
+        Ok(MatchArm {
+            pattern,
+            body,
+            span: self.span_from(start),
+        })
+    }
 
-    fn parse_indentation_match_arms(
-        &mut self,
-    ) -> Result<Vec<MatchArm>, ParseError> {
+    fn parse_indentation_match_arms(&mut self) -> Result<Vec<MatchArm>, ParseError> {
         self.skip_newlines();
 
         if !self.consume(&Token::Indent) {
@@ -1279,9 +1195,7 @@ impl Parser {
 
         let mut arms = Vec::new();
 
-        while self.current() != &Token::Dedent
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::Dedent && self.current() != &Token::Eof {
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
@@ -1299,18 +1213,14 @@ impl Parser {
         Ok(arms)
     }
 
-    fn parse_brace_match_arms(
-        &mut self,
-    ) -> Result<Vec<MatchArm>, ParseError> {
+    fn parse_brace_match_arms(&mut self) -> Result<Vec<MatchArm>, ParseError> {
         if !self.consume(&Token::LeftBrace) {
             return self.error("Expected '{' after match expression");
         }
 
         let mut arms = Vec::new();
 
-        while self.current() != &Token::RightBrace
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
@@ -1336,18 +1246,14 @@ impl Parser {
     // Blocks
     // ------------------------------------------------------------
 
-    fn parse_indentation_block(
-        &mut self,
-    ) -> Result<Vec<Statement>, ParseError> {
+    fn parse_indentation_block(&mut self) -> Result<Vec<Statement>, ParseError> {
         if !self.consume(&Token::Indent) {
             return self.error("Expected indentation block");
         }
 
         let mut statements = Vec::new();
 
-        while self.current() != &Token::Dedent
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::Dedent && self.current() != &Token::Eof {
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
@@ -1372,18 +1278,14 @@ impl Parser {
         Ok(statements)
     }
 
-    fn parse_brace_block(
-        &mut self,
-    ) -> Result<Vec<Statement>, ParseError> {
+    fn parse_brace_block(&mut self) -> Result<Vec<Statement>, ParseError> {
         if !self.consume(&Token::LeftBrace) {
             return self.error("Expected '{' at beginning of block");
         }
 
         let mut statements = Vec::new();
 
-        while self.current() != &Token::RightBrace
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
             if self.current() == &Token::NewLine {
                 self.advance();
                 continue;
@@ -1430,30 +1332,28 @@ impl Parser {
 
         let mut generic_parameters = Vec::new();
 
-if self.current() == &Token::Less {
-    self.advance();
+        if self.current() == &Token::Less {
+            self.advance();
 
-    while self.current() != &Token::Greater
-        && self.current() != &Token::Eof
-    {
-        match self.current() {
-            Token::Identifier(name) => {
-                generic_parameters.push(name.clone());
-                self.advance();
+            while self.current() != &Token::Greater && self.current() != &Token::Eof {
+                match self.current() {
+                    Token::Identifier(name) => {
+                        generic_parameters.push(name.clone());
+                        self.advance();
+                    }
+
+                    _ => return self.error("Expected generic parameter name"),
+                }
+
+                if self.current() == &Token::Comma {
+                    self.advance();
+                }
             }
 
-            _ => return self.error("Expected generic parameter name"),
+            if !self.consume(&Token::Greater) {
+                return self.error("Expected '>' after generic parameters");
+            }
         }
-
-        if self.current() == &Token::Comma {
-            self.advance();
-        }
-    }
-
-    if !self.consume(&Token::Greater) {
-    return self.error("Expected '>' after generic parameters");
-}
-}
 
         if !self.consume(&Token::LeftParen) {
             return self.error("Expected '(' after function name");
@@ -1461,9 +1361,7 @@ if self.current() == &Token::Less {
 
         let mut parameters = Vec::new();
 
-        while self.current() != &Token::RightParen
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::RightParen && self.current() != &Token::Eof {
             let parameter_start = self.current_span().start;
             let name_span = self.current_span();
 
@@ -1497,16 +1395,12 @@ if self.current() == &Token::Less {
                     break;
                 }
             } else if self.current() != &Token::RightParen {
-                return self.error(
-                    "Expected ',' or ')' after parameter",
-                );
+                return self.error("Expected ',' or ')' after parameter");
             }
         }
 
         if !self.consume(&Token::RightParen) {
-            return self.error(
-                "Expected ')' after function parameters",
-            );
+            return self.error("Expected ')' after function parameters");
         }
 
         let return_type = if self.consume(&Token::Arrow) {
@@ -1524,31 +1418,29 @@ if self.current() == &Token::Less {
             Token::LeftBrace => BlockStyle::Braces,
 
             _ => {
-                return self.error(
-                    "Expected ':' or '{' to begin function body",
-                );
+                return self.error("Expected ':' or '{' to begin function body");
             }
         };
 
         self.use_block_style(style)?;
 
         let previous_return_type = self.current_function_return_type.clone();
-self.current_function_return_type = Some(return_type.clone());
+        self.current_function_return_type = Some(return_type.clone());
 
-let body_result = match style {
-    BlockStyle::Indentation => {
-        self.skip_newlines();
-        self.parse_indentation_block()
-    }
+        let body_result = match style {
+            BlockStyle::Indentation => {
+                self.skip_newlines();
+                self.parse_indentation_block()
+            }
 
-    BlockStyle::Braces => self.parse_brace_block(),
+            BlockStyle::Braces => self.parse_brace_block(),
 
-    BlockStyle::Unknown => unreachable!(),
-};
+            BlockStyle::Unknown => unreachable!(),
+        };
 
-self.current_function_return_type = previous_return_type;
+        self.current_function_return_type = previous_return_type;
 
-let body = body_result?;
+        let body = body_result?;
 
         Ok(Statement::Function {
             name,
@@ -1589,9 +1481,7 @@ let body = body_result?;
             Token::LeftBrace => BlockStyle::Braces,
 
             _ => {
-                return self.error(
-                    "Expected ':' or '{' after trait name",
-                );
+                return self.error("Expected ':' or '{' after trait name");
             }
         };
 
@@ -1602,16 +1492,12 @@ let body = body_result?;
                 self.skip_newlines();
 
                 if !self.consume(&Token::Indent) {
-                    return self.error(
-                        "Expected indentation after trait declaration",
-                    );
+                    return self.error("Expected indentation after trait declaration");
                 }
 
                 let mut methods = Vec::new();
 
-                while self.current() != &Token::Dedent
-                    && self.current() != &Token::Eof
-                {
+                while self.current() != &Token::Dedent && self.current() != &Token::Eof {
                     if self.current() == &Token::NewLine {
                         self.advance();
                         continue;
@@ -1630,16 +1516,12 @@ let body = body_result?;
 
             BlockStyle::Braces => {
                 if !self.consume(&Token::LeftBrace) {
-                    return self.error(
-                        "Expected '{' after trait name",
-                    );
+                    return self.error("Expected '{' after trait name");
                 }
 
                 let mut methods = Vec::new();
 
-                while self.current() != &Token::RightBrace
-                    && self.current() != &Token::Eof
-                {
+                while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
                     if self.current() == &Token::NewLine {
                         self.advance();
                         continue;
@@ -1650,9 +1532,7 @@ let body = body_result?;
                 }
 
                 if !self.consume(&Token::RightBrace) {
-                    return self.error(
-                        "Expected '}' after trait declaration",
-                    );
+                    return self.error("Expected '}' after trait declaration");
                 }
 
                 methods
@@ -1672,9 +1552,7 @@ let body = body_result?;
         let start = self.current_span().start;
 
         if !self.consume(&Token::Fn) {
-            return self.error(
-                "Expected 'fn' in trait declaration",
-            );
+            return self.error("Expected 'fn' in trait declaration");
         }
 
         let name = match self.current() {
@@ -1690,16 +1568,12 @@ let body = body_result?;
         };
 
         if !self.consume(&Token::LeftParen) {
-            return self.error(
-                "Expected '(' after trait method name",
-            );
+            return self.error("Expected '(' after trait method name");
         }
 
         let mut parameters = Vec::new();
 
-        while self.current() != &Token::RightParen
-            && self.current() != &Token::Eof
-        {
+        while self.current() != &Token::RightParen && self.current() != &Token::Eof {
             let parameter_start = self.current_span().start;
             let name_span = self.current_span();
 
@@ -1733,16 +1607,12 @@ let body = body_result?;
                     break;
                 }
             } else if self.current() != &Token::RightParen {
-                return self.error(
-                    "Expected ',' or ')' after parameter",
-                );
+                return self.error("Expected ',' or ')' after parameter");
             }
         }
 
         if !self.consume(&Token::RightParen) {
-            return self.error(
-                "Expected ')' after trait method parameters",
-            );
+            return self.error("Expected ')' after trait method parameters");
         }
 
         let return_type = if self.consume(&Token::Arrow) {
@@ -1806,9 +1676,7 @@ let body = body_result?;
             Token::LeftBrace => BlockStyle::Braces,
 
             _ => {
-                return self.error(
-                    "Expected ':' or '{' after impl declaration",
-                );
+                return self.error("Expected ':' or '{' after impl declaration");
             }
         };
 
@@ -1837,122 +1705,161 @@ let body = body_result?;
     // Arguments
     // ------------------------------------------------------------
 
-    fn parse_generic_arguments(&mut self) -> Result<Vec<String>, ParseError> {
-    if !self.consume(&Token::Less) {
-        return self.error("Expected '<'");
+    fn looks_like_generic_call(&self) -> bool {
+    if self.current() != &Token::Less {
+        return false;
     }
 
-    let mut arguments = Vec::new();
+    let mut position = self.position + 1;
+
+    // There must be at least one generic type argument.
+    if position >= self.tokens.len() {
+        return false;
+    }
 
     loop {
-        arguments.push(self.parse_type()?);
+        let token = match self.peek_at(position) {
+            Some(token) => token,
+            None => return false,
+        };
 
-        if self.consume(&Token::Comma) {
-            continue;
+        match token {
+            Token::NumType
+            | Token::FloatType
+            | Token::BoolType
+            | Token::StringType
+            | Token::Identifier(_) => {
+                position += 1;
+            }
+
+            _ => return false,
         }
 
-        break;
-    }
+        match self.peek_at(position) {
+            Some(Token::Comma) => {
+                position += 1;
+            }
 
-    if !self.consume(&Token::Greater) {
-        return self.error("Expected '>' after generic arguments");
-    }
-
-    Ok(arguments)
-}
-
-    fn parse_arguments(&mut self) -> Result<Vec<Expression>, ParseError> {
-    if !self.consume(&Token::LeftParen) {
-        return self.error("Expected '('");
-    }
-
-    self.skip_newlines();
-
-    let mut arguments = Vec::new();
-
-    if self.current() == &Token::RightParen {
-        self.advance();
-        return Ok(arguments);
-    }
-
-    loop {
-        self.skip_newlines();
-
-        arguments.push(self.parse_expression()?);
-
-        self.skip_newlines();
-
-        if self.consume(&Token::Comma) {
-            self.skip_newlines();
-
-            if self.current() == &Token::RightParen {
+            Some(Token::Greater) => {
+                position += 1;
                 break;
             }
-        } else {
-            break;
+
+            _ => return false,
         }
     }
 
-    if !self.consume(&Token::RightParen) {
-        return self.error("Expected ')' after arguments");
+    matches!(self.peek_at(position), Some(Token::LeftParen))
+}
+
+    fn parse_generic_arguments(&mut self) -> Result<Vec<String>, ParseError> {
+        if !self.consume(&Token::Less) {
+            return self.error("Expected '<'");
+        }
+
+        let mut arguments = Vec::new();
+
+        loop {
+            arguments.push(self.parse_type()?);
+
+            if self.consume(&Token::Comma) {
+                continue;
+            }
+
+            break;
+        }
+
+        if !self.consume(&Token::Greater) {
+            return self.error("Expected '>' after generic arguments");
+        }
+
+        Ok(arguments)
     }
 
-    Ok(arguments)
-}
+    fn parse_arguments(&mut self) -> Result<Vec<Expression>, ParseError> {
+        if !self.consume(&Token::LeftParen) {
+            return self.error("Expected '('");
+        }
+
+        self.skip_newlines();
+
+        let mut arguments = Vec::new();
+
+        if self.current() == &Token::RightParen {
+            self.advance();
+            return Ok(arguments);
+        }
+
+        loop {
+            self.skip_newlines();
+
+            arguments.push(self.parse_expression()?);
+
+            self.skip_newlines();
+
+            if self.consume(&Token::Comma) {
+                self.skip_newlines();
+
+                if self.current() == &Token::RightParen {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if !self.consume(&Token::RightParen) {
+            return self.error("Expected ')' after arguments");
+        }
+
+        Ok(arguments)
+    }
 
     // ------------------------------------------------------------
     // Struct constructor
     // ------------------------------------------------------------
 
-    fn parse_struct_fields(
-    &mut self,
-) -> Result<Vec<(String, Expression)>, ParseError> {
-    let mut fields = Vec::new();
+    fn parse_struct_fields(&mut self) -> Result<Vec<(String, Expression)>, ParseError> {
+        let mut fields = Vec::new();
 
-    loop {
-        if self.current() == &Token::RightBrace {
+        loop {
+            if self.current() == &Token::RightBrace {
+                break;
+            }
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+
+                _ => {
+                    return self.error("Expected field name in struct constructor");
+                }
+            };
+
+            if !self.consume(&Token::Colon) {
+                return self.error("Expected ':' after struct constructor field name");
+            }
+
+            let value = self.parse_expression()?;
+
+            fields.push((name, value));
+
+            if self.consume(&Token::Comma) {
+                continue;
+            }
+
             break;
         }
 
-        let name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-
-            _ => {
-                return self.error(
-                    "Expected field name in struct constructor",
-                );
-            }
-        };
-
-        if !self.consume(&Token::Colon) {
-            return self.error(
-                "Expected ':' after struct constructor field name",
-            );
+        if !self.consume(&Token::RightBrace) {
+            return self.error("Expected '}' after struct constructor fields");
         }
 
-        let value = self.parse_expression()?;
-
-        fields.push((name, value));
-
-        if self.consume(&Token::Comma) {
-            continue;
-        }
-
-        break;
+        Ok(fields)
     }
-
-    if !self.consume(&Token::RightBrace) {
-        return self.error(
-            "Expected '}' after struct constructor fields",
-        );
-    }
-
-    Ok(fields)
-}
 
     // ------------------------------------------------------------
     // Expressions
@@ -2012,9 +1919,7 @@ let body = body_result?;
         Ok(left)
     }
 
-    fn parse_comparison(
-        &mut self,
-    ) -> Result<Expression, ParseError> {
+    fn parse_comparison(&mut self) -> Result<Expression, ParseError> {
         let mut left = self.parse_addition()?;
 
         loop {
@@ -2070,9 +1975,7 @@ let body = body_result?;
         Ok(left)
     }
 
-    fn parse_multiplication(
-        &mut self,
-    ) -> Result<Expression, ParseError> {
+    fn parse_multiplication(&mut self) -> Result<Expression, ParseError> {
         let mut left = self.parse_unary()?;
 
         loop {
@@ -2136,64 +2039,61 @@ let body = body_result?;
     // Primary expressions
     // ------------------------------------------------------------
 
-    fn parse_primary(
-        &mut self,
-    ) -> Result<Expression, ParseError> {
+    fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         let mut expression = match self.current() {
             Token::Identifier(name) => {
-    let start = self.current_span().start;
-    let name = name.clone();
-    self.advance();
-
-    if self.current() == &Token::DoubleColon {
-        self.advance();
-
-        let variant = match self.current() {
-            Token::Identifier(variant) => {
-                let variant = variant.clone();
+                let start = self.current_span().start;
+                let name = name.clone();
                 self.advance();
-                variant
+
+                if self.current() == &Token::DoubleColon {
+                    self.advance();
+
+                    let variant = match self.current() {
+                        Token::Identifier(variant) => {
+                            let variant = variant.clone();
+                            self.advance();
+                            variant
+                        }
+                        _ => return self.error("Expected enum variant name"),
+                    };
+
+                    let arguments = if self.current() == &Token::LeftParen {
+                        self.parse_arguments()?
+                    } else {
+                        Vec::new()
+                    };
+
+                    Expression::EnumConstructor {
+                        enum_name: name,
+                        variant,
+                        arguments,
+                        span: self.span_from(start),
+                    }
+                } else {
+                    let generic_arguments = if self.looks_like_generic_call() {
+                    self.parse_generic_arguments()?
+                    } else {
+                        Vec::new()
+                    };
+
+                    if self.current() == &Token::LeftParen {
+                        let arguments = self.parse_arguments()?;
+
+                        Expression::Call {
+                            name,
+                            arguments,
+                            generic_arguments,
+                            span: self.span_from(start),
+                        }
+                    } else {
+                        Expression::Identifier {
+                            name,
+                            span: self.span_from(start),
+                        }
+                    }
+                }
             }
-            _ => return self.error("Expected enum variant name"),
-        };
-
-        let arguments = if self.current() == &Token::LeftParen {
-            self.parse_arguments()?
-        } else {
-            Vec::new()
-        };
-
-        Expression::EnumConstructor {
-            enum_name: name,
-            variant,
-            arguments,
-            span: self.span_from(start),
-        }
-    } else {
-        let generic_arguments = if self.current() == &Token::Less {
-            self.parse_generic_arguments()?
-        } else {
-            Vec::new()
-        };
-
-        if self.current() == &Token::LeftParen {
-            let arguments = self.parse_arguments()?;
-
-            Expression::Call {
-                name,
-                arguments,
-                generic_arguments,
-                span: self.span_from(start),
-            }
-        
-        } else {
-            Expression::Identifier {
-                name,
-                span: self.span_from(start),
-            }
-        }
-    }
-}
 
             Token::Num(value) => {
                 let span = self.current_span();
@@ -2233,9 +2133,7 @@ let body = body_result?;
                 let expression = self.parse_expression()?;
 
                 if !self.consume(&Token::RightParen) {
-                    return self.error(
-                        "Expected ')' after expression",
-                    );
+                    return self.error("Expected ')' after expression");
                 }
 
                 expression
@@ -2247,9 +2145,7 @@ let body = body_result?;
 
                 let mut elements = Vec::new();
 
-                while self.current() != &Token::RightBracket
-                    && self.current() != &Token::Eof
-                {
+                while self.current() != &Token::RightBracket && self.current() != &Token::Eof {
                     elements.push(self.parse_expression()?);
 
                     if self.consume(&Token::Comma) {
@@ -2257,32 +2153,22 @@ let body = body_result?;
                             break;
                         }
                     } else if self.current() != &Token::RightBracket {
-                        return self.error(
-                            "Expected ',' or ']' in array",
-                        );
+                        return self.error("Expected ',' or ']' in array");
                     }
                 }
 
                 if !self.consume(&Token::RightBracket) {
-                    return self.error(
-                        "Expected ']' after array",
-                    );
+                    return self.error("Expected ']' after array");
                 }
 
                 Expression::Array {
                     elements,
-                    span: Span::new(
-                        start,
-                        self.previous_span().end,
-                    ),
+                    span: Span::new(start, self.previous_span().end),
                 }
             }
 
             _ => {
-                return self.error(format!(
-                    "Expected expression, found {:?}",
-                    self.current()
-                ));
+                return self.error(format!("Expected expression, found {:?}", self.current()));
             }
         };
 
@@ -2303,9 +2189,7 @@ let body = body_result?;
                         }
 
                         _ => {
-                            return self.error(
-                                "Expected identifier after '.'",
-                            );
+                            return self.error("Expected identifier after '.'");
                         }
                     };
 
@@ -2339,9 +2223,7 @@ let body = body_result?;
                     let index = self.parse_expression()?;
 
                     if !self.consume(&Token::RightBracket) {
-                        return self.error(
-                            "Expected ']' after index",
-                        );
+                        return self.error("Expected ']' after index");
                     }
 
                     let end = self.previous_span().end;
@@ -2393,9 +2275,7 @@ let body = body_result?;
         }
 
         if !self.seen_main {
-            return self.error(
-                "Program must contain a 'main' declaration",
-            );
+            return self.error("Program must contain a 'main' declaration");
         }
 
         let program_end = self

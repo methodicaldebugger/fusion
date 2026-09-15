@@ -61,42 +61,28 @@ pub enum FusionError {
 }
 
 impl std::fmt::Display for FusionError {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             FusionError::Lexer { message, .. } => {
                 write!(f, "{}", message)
             }
 
             FusionError::Syntax { message, span } => {
-    write!(f, "{} at {}", message, span.start)
-}
+                write!(f, "{} at {}", message, span.start)
+            }
 
             FusionError::UnknownVariable { name, .. } => {
                 write!(f, "Unknown variable '{}'", name)
             }
 
             FusionError::TypeMismatch {
-                expected,
-                found,
-                ..
+                expected, found, ..
             } => {
-                write!(
-                    f,
-                    "Type mismatch: expected {}, found {}",
-                    expected,
-                    found
-                )
+                write!(f, "Type mismatch: expected {}, found {}", expected, found)
             }
 
             FusionError::CannotAssignToConst { name, .. } => {
-                write!(
-                    f,
-                    "Cannot assign to constant '{}'",
-                    name
-                )
+                write!(f, "Cannot assign to constant '{}'", name)
             }
 
             FusionError::InvalidOperation {
@@ -105,13 +91,7 @@ impl std::fmt::Display for FusionError {
                 right,
                 ..
             } => {
-                write!(
-                    f,
-                    "Invalid operation: {} {} {}",
-                    left,
-                    operator,
-                    right
-                )
+                write!(f, "Invalid operation: {} {} {}", left, operator, right)
             }
         }
     }
