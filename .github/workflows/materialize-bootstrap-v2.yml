@@ -1,4 +1,4 @@
-name: Materialize bootstrap-ready-v2
+name: Repair bootstrap implementation
 
 on:
   push:
@@ -8,38 +8,77 @@ permissions:
   contents: write
 
 jobs:
-  materialize:
+  repair:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Inspect staged patch bytes
+      - name: Repair semantic implementation
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           python3 - <<'PY'
-          import base64, pathlib
-          s=pathlib.Path('bootstrap.patch.gz.b64').read_bytes()
-          compact=b''.join(s.split())
-          bad=[]
-          alphabet=b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
-          for i,b in enumerate(compact):
-              if b not in alphabet:
-                  bad.append((i,b,compact[max(0,i-30):i+30]))
-                  if len(bad)>=20: break
-          out=[f'raw={len(s)} compact={len(compact)}', f'bad_count_sample={len(bad)}']
-          out += [f'bad={i} byte={b} context={ctx!r}' for i,b,ctx in bad]
-          try:
-              raw=base64.b64decode(compact, validate=False)
-              out.append(f'non-strict decoded={len(raw)} first16={raw[:16]!r}')
-          except Exception as e: out.append('non-strict error='+repr(e))
-          pathlib.Path('patch-diagnostic.txt').write_text('\n'.join(out), encoding='utf-8')
+          from pathlib import Path
+          import re
+
+          p=Path('src/parser.rs'); s=p.read_text()
+          s=s.replace('Token::Fn => Ok(Some(self.parse_function()?)),', 'Token::Fn => Ok(Some(self.parse_function(false)?)),\n\n            Token::Async => {\n                self.advance();\n                if self.current() != &Token::Fn {\n                    return self.error("Expected 'fn' after 'async'");\n                }\n                Ok(Some(self.parse_function(true)?))\n            }')
+          s=s.replace('fn parse_function(&mut self) -> Result<Statement, ParseError> {', 'fn parse_function(&mut self, is_async: bool) -> Result<Statement, ParseError> {')
+          old='''            return_type,\n            body,\n            span: self.span_from(start),\n        })'''
+          new='''            return_type,\n            body,\n            is_async,\n            span: self.span_from(start),\n        })'''
+          s=s.replace(old,new,1)
+          old='''                    if self.current() == &Token::LeftParen {\n                        let arguments = self.parse_arguments()?;\n                        let end = self.previous_span().end;\n\n                        expression = Expression::MethodCall {\n                            object: Box::new(expression),\n                            method: name,\n                            arguments,\n                            span: Span::new(start, end),\n                        };'''
+          new='''                    let generic_arguments = if self.looks_like_generic_call() {\n                        self.parse_generic_arguments()?\n                    } else {\n                        Vec::new()\n                    };\n\n                    if self.current() == &Token::LeftParen {\n                        let arguments = self.parse_arguments()?;\n                        let end = self.previous_span().end;\n\n                        expression = Expression::MethodCall {\n                            object: Box::new(expression),\n                            method: name,\n                            arguments,\n                            generic_arguments,\n                            span: Span::new(start, end),\n                        };'''
+          if old not in s: raise SystemExit('parser method block not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          p=Path('src/type_checker.rs'); s=p.read_text()
+          s=s.replace('''            Expression::MethodCall {\n                object,\n                method,\n                arguments,\n                span,\n            } => {''','''            Expression::MethodCall {\n                object,\n                method,\n                arguments,\n                generic_arguments: _,\n                span,\n            } => {''',1)
+          marker='''            // -------------------------------------------------\n            // Statement checking\n            // -------------------------------------------------\n\n            pub fn check_statement'''
+          # insert cases immediately before wildcard arm in statement checker
+          needle='''            Statement::For {\n                variable,\n                start,\n                end,\n                body,\n                ..\n            } => {'''
+          idx=s.find(needle)
+          if idx<0: raise SystemExit('typechecker for case not found')
+          # locate end of this For arm by next known Match arm comment
+          end=s.find('''            // -------------------------------------------------\n            // Match''',idx)
+          if end<0: raise SystemExit('typechecker match marker not found')
+          insert='''            Statement::ForEach { variable, iterable, body, span } => {\n                let iterable_type = self.infer_expression(iterable)?;\n                let element_type = match iterable_type {\n                    Type::Array(element) | Type::Iterator(element) => *element,\n                    other => return Err(self.type_mismatch("array or iterator", other.name(), iterable.span())),\n                };\n                self.push_scope();\n                self.declare_variable(variable.clone(), element_type, true, *span)?;\n                self.loop_depth += 1;\n                for statement in body { self.check_statement(statement)?; }\n                self.loop_depth -= 1;\n                self.pop_scope();\n                Ok(())\n            }\n\n            Statement::For {\n                variable,\n                start,\n                end,\n                body,\n                ..\n            } => {'''
+          s=s[:idx]+insert+s[idx+len(needle):]
+          # Await expression case before Call expression
+          call_marker='''            Expression::Call {\n                name, arguments, generic_arguments, span,\n            } => {'''
+          ai=s.find(call_marker)
+          if ai<0: raise SystemExit('typechecker call marker not found')
+          await_case='''            Expression::Await { expression, span } => {\n                match self.infer_expression(expression)? {\n                    Type::Task(inner) => Ok(*inner),\n                    other => Err(self.type_mismatch("Task<T>", other.name(), *span)),\n                }\n            }\n\n'''
+          s=s[:ai]+await_case+s[ai:]
+          p.write_text(s)
+
+          p=Path('src/interpreter.rs'); s=p.read_text()
+          # ForEach before Match execution arm
+          idx=s.find('''            // -----------------------------------------------------------------\n            // Match\n            // -----------------------------------------------------------------''')
+          if idx<0: raise SystemExit('interpreter match marker not found')
+          foreach='''            // -----------------------------------------------------------------\n            // ForEach\n            // -----------------------------------------------------------------\n            Statement::ForEach { variable, iterable, body, .. } => {\n                let value = self.evaluate(iterable);\n                let values = match value {\n                    Value::Array(values) => values,\n                    _ => panic!("ForEach iterable must be an array"),\n                };\n                self.environment.push_scope();\n                self.loop_depth += 1;\n                for item in values {\n                    self.environment.push_scope();\n                    self.environment.set(variable.clone(), item);\n                    let flow = self.execute_statement_list(body);\n                    self.exit_scope();\n                    match flow {\n                        Flow::Normal | Flow::Continue => {}\n                        Flow::Break => break,\n                        Flow::Return(value) => {\n                            self.loop_depth -= 1;\n                            self.exit_scope();\n                            return Flow::Return(value);\n                        }\n                    }\n                }\n                self.loop_depth -= 1;\n                self.exit_scope();\n                Flow::Normal\n            }\n\n'''
+          s=s[:idx]+foreach+s[idx:]
+          # Await before Call evaluation
+          idx=s.find('''            // -----------------------------------------------------------------\n            // Function calls\n            // -----------------------------------------------------------------''')
+          if idx<0: raise SystemExit('interpreter call marker not found')
+          await_eval='''            // -----------------------------------------------------------------\n            // Await\n            // -----------------------------------------------------------------\n            Expression::Await { expression, .. } => self.evaluate(expression),\n\n'''
+          s=s[:idx]+await_eval+s[idx:]
+          # MethodCall generic field ignored by runtime.
+          p.write_text(s)
+
+          # remove generated diagnostics now that the patch format is known broken
+          for name in ['patch-head.txt','patch-diagnostic.txt']:
+              q=Path(name)
+              if q.exists(): q.unlink()
           PY
-          cat patch-diagnostic.txt
+          cargo fmt --all
+          cargo check --all-targets
+          cargo test --all-targets
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add patch-diagnostic.txt
-          git commit -m "Inspect invalid bootstrap patch bytes"
+          git add -A
+          git commit -m "Repair parser checker and interpreter semantics"
           git push origin HEAD:fusion-bootstrap-ready-v2
