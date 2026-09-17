@@ -15,43 +15,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply staged implementation patch from its matching base
+      - name: Decode staged patch
         shell: bash
         run: |
           set -euo pipefail
-          test -f bootstrap.patch.gz.b64
-          base64 -d bootstrap.patch.gz.b64 | gzip -d > /tmp/bootstrap.patch
-
-          found=""
-          while read -r candidate; do
-            worktree="$(mktemp -d)"
-            git worktree add --detach "$worktree" "$candidate" >/dev/null 2>&1 || { rm -rf "$worktree"; continue; }
-            if git -C "$worktree" apply --check /tmp/bootstrap.patch >/dev/null 2>&1; then
-              git -C "$worktree" apply /tmp/bootstrap.patch
-              git -C "$worktree" diff --binary > /tmp/bootstrap-materialized.diff
-              found="$candidate"
-              git worktree remove --force "$worktree" >/dev/null 2>&1 || true
-              break
-            fi
-            git worktree remove --force "$worktree" >/dev/null 2>&1 || true
-          done < <(git rev-list --all --max-count=50)
-
-          if [ -z "$found" ]; then
-            echo "No repository revision accepts the staged bootstrap patch."
-            exit 1
-          fi
-
-          echo "Patch baseline: $found"
-          git apply --check /tmp/bootstrap-materialized.diff
-          git apply /tmp/bootstrap-materialized.diff
-          rm -f /tmp/bootstrap.patch /tmp/bootstrap-materialized.diff bootstrap.patch.gz.b64
-
-          cargo fmt --all
-          cargo check --all-targets
-          cargo test --all-targets
-
+          base64 -d bootstrap.patch.gz.b64 | gzip -d > bootstrap.patch
+          sed -n '1,120p' bootstrap.patch > patch-head.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Materialize bootstrap language implementation"
+          git add patch-head.txt
+          git commit -m "Inspect staged bootstrap patch"
           git push origin HEAD:fusion-bootstrap-ready-v2
