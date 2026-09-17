@@ -1,5 +1,4 @@
 //contents of type_checker.rs
-
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
@@ -7,10 +6,20 @@ use crate::errors::FusionError;
 use crate::span::Span;
 use crate::types::{EnumDefinition, EnumVariantDefinition, StructDefinition, Type};
 
-/// The type environment contains all declarations visible to the checker.
-///
-/// Types and functions are registered before executable code is checked so
-/// that forward references and recursive functions are possible.
+#[derive(Debug, Clone)]
+pub struct VariableInfo {
+    pub ty: Type,
+    pub mutable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionType {
+    pub parameters: Vec<Type>,
+    pub return_type: Type,
+    pub generic_parameters: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct TypeEnvironment {
     pub scopes: Vec<HashMap<String, VariableInfo>>,
     pub functions: HashMap<String, FunctionType>,
@@ -18,41 +27,23 @@ pub struct TypeEnvironment {
     pub enums: HashMap<String, EnumDefinition>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct FunctionContext {
     declared_return_type: Option<Type>,
     inferred_return_type: Option<Type>,
     has_return: bool,
 }
 
-#[derive(Clone)]
-pub struct VariableInfo {
-    pub ty: Type,
-    pub mutable: bool,
-}
-
-#[derive(Clone)]
-pub struct FunctionType {
-    pub parameters: Vec<Type>,
-    pub return_type: Type,
-    pub generic_parameters: Vec<String>,
-}
-
 pub struct TypeChecker {
-    environment: TypeEnvironment,
+    pub environment: TypeEnvironment,
     current_function: Option<FunctionContext>,
     loop_depth: usize,
 }
 
 impl TypeChecker {
-    // =========================================================
-    // Construction
-    // =========================================================
-
     pub fn new() -> Self {
         let mut functions = HashMap::new();
 
-        // print(...) accepts any value and returns void.
         functions.insert(
             "print".to_string(),
             FunctionType {
@@ -74,39 +65,15 @@ impl TypeChecker {
         }
     }
 
-    fn substitute_generic_type(&self, ty: &Type, substitutions: &HashMap<String, Type>) -> Type {
-        match ty {
-            Type::Generic(name) => substitutions
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| ty.clone()),
-
-            _ => ty.clone(),
-        }
-    }
-
-    // =========================================================
-    // Span helpers
-    // =========================================================
-
-    fn expression_span(expression: &Expression) -> Span {
-        expression.span()
-    }
-
-    fn statement_span(statement: &Statement) -> Span {
-        statement.span()
-    }
-
-    // =========================================================
-    // Scopes
-    // =========================================================
+    // ---------------------------------------------------------------------
+    // Scope management
+    // ---------------------------------------------------------------------
 
     fn push_scope(&mut self) {
         self.environment.scopes.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
-        // Keep the global scope alive.
         if self.environment.scopes.len() > 1 {
             self.environment.scopes.pop();
         }
@@ -123,11 +90,11 @@ impl TypeChecker {
             .environment
             .scopes
             .last_mut()
-            .expect("type checker always has a global scope");
+            .expect("type checker always has a root scope");
 
         if scope.contains_key(&name) {
-            return Err(FusionError::UnknownVariable {
-                name: format!("Variable '{}' is already declared", name),
+            return Err(FusionError::Syntax {
+                message: format!("Variable '{}' is already declared in this scope", name),
                 span,
             });
         }
@@ -137,27 +104,23 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn lookup_variable(&self, name: &str) -> Option<Type> {
-        self.lookup_variable_info(name).map(|info| info.ty)
-    }
-
-    fn lookup_variable_info(&self, name: &str) -> Option<VariableInfo> {
+    fn lookup_variable(&self, name: &str) -> Option<&VariableInfo> {
         for scope in self.environment.scopes.iter().rev() {
             if let Some(info) = scope.get(name) {
-                return Some(info.clone());
+                return Some(info);
             }
         }
 
         None
     }
 
-    // =========================================================
+    // ---------------------------------------------------------------------
     // Error helpers
-    // =========================================================
+    // ---------------------------------------------------------------------
 
-    fn unknown_variable(&self, name: impl Into<String>, span: Span) -> FusionError {
+    fn unknown_variable(&self, name: &str, span: Span) -> FusionError {
         FusionError::UnknownVariable {
-            name: name.into(),
+            name: name.to_string(),
             span,
         }
     }
@@ -177,106 +140,204 @@ impl TypeChecker {
 
     fn invalid_operation(
         &self,
-        left: &Type,
-        operator: &str,
-        right: &Type,
+        left: impl Into<String>,
+        operator: impl Into<String>,
+        right: impl Into<String>,
         span: Span,
     ) -> FusionError {
         FusionError::InvalidOperation {
-            left: left.name(),
-            operator: operator.to_string(),
-            right: right.name(),
+            left: left.into(),
+            operator: operator.into(),
+            right: right.into(),
             span,
         }
     }
 
-    // =========================================================
-    // Type helpers
-    // =========================================================
+    // ---------------------------------------------------------------------
+    // Type utilities
+    // ---------------------------------------------------------------------
 
-    fn type_is_unknown(ty: &Type) -> bool {
-        match ty {
-            Type::Unknown => true,
-
-            Type::Array(inner) => Self::type_is_unknown(inner),
-
-            _ => false,
-        }
-    }
-
-    fn types_compatible(expected: &Type, actual: &Type) -> bool {
-        if expected == actual {
+    fn types_compatible(&self, expected: &Type, found: &Type) -> bool {
+        if expected == found {
             return true;
         }
 
-        // Unknown is deliberately permissive. It is used for values whose
-        // type cannot yet be determined, such as an empty array or an
-        // untyped function parameter.
-        if *expected == Type::Unknown || *actual == Type::Unknown {
-            return true;
-        }
-
-        match (expected, actual) {
-            (Type::Array(a), Type::Array(b)) => Self::types_compatible(a, b),
-
-            _ => false,
-        }
+        matches!(expected, Type::Unknown)
+            || matches!(found, Type::Unknown)
+            || matches!((expected, found), (Type::Generic(_), _))
+            || matches!((expected, found), (_, Type::Generic(_)))
     }
 
-    fn require_bool(&self, found: Type, span: Span) -> Result<(), FusionError> {
-        if found == Type::Bool || found == Type::Unknown {
-            Ok(())
-        } else {
-            Err(self.type_mismatch("bool", found.name(), span))
-        }
+    fn numeric_type(&self, ty: &Type) -> bool {
+        matches!(ty, Type::Num | Type::Float | Type::Unknown)
     }
 
-    fn require_num(&self, found: Type, span: Span) -> Result<(), FusionError> {
-        if found == Type::Num || found == Type::Unknown {
-            Ok(())
-        } else {
-            Err(self.type_mismatch("num", found.name(), span))
-        }
-    }
-
-    // =========================================================
-    // Type conversion
-    // =========================================================
-
-    fn convert_type(&self, name: &str) -> Result<Type, FusionError> {
+    fn convert_type(&self, name: &str, span: Span) -> Result<Type, FusionError> {
         match name {
             "num" => Ok(Type::Num),
             "float" => Ok(Type::Float),
             "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
             "void" => Ok(Type::Void),
+            "File" => Ok(Type::File),
+
             "unknown" => Ok(Type::Unknown),
 
-            _ if self.environment.structs.contains_key(name) => Ok(Type::Struct(name.to_string())),
+            _ if self.environment.structs.contains_key(name) => {
+                Ok(Type::Struct(name.to_string()))
+            }
 
-            _ if self.environment.enums.contains_key(name) => Ok(Type::Enum(name.to_string())),
+            _ if self.environment.enums.contains_key(name) => {
+                Ok(Type::Enum(name.to_string()))
+            }
 
-            _ => Err(self.type_mismatch("known type", name, Span::default())),
+            _ => Err(FusionError::Syntax {
+                message: format!("Unknown type '{}'", name),
+                span,
+            }),
         }
     }
 
     fn convert_type_with_generics(
         &self,
         name: &str,
-        generics: &HashSet<String>,
+        generic_parameters: &[String],
+        span: Span,
     ) -> Result<Type, FusionError> {
-        if generics.contains(name) {
+        if generic_parameters.iter().any(|parameter| parameter == name) {
             return Ok(Type::Generic(name.to_string()));
         }
 
-        self.convert_type(name)
+        if let Some(inner) = name.strip_suffix("[]") {
+            return Ok(Type::Array(Box::new(
+                self.convert_type_with_generics(inner, generic_parameters, span)?,
+            )));
+        }
+
+        if name.starts_with("Option<") && name.ends_with('>') {
+            let inner = &name[7..name.len() - 1];
+
+            return Ok(Type::Option(Box::new(
+                self.convert_type_with_generics(inner, generic_parameters, span)?,
+            )));
+        }
+
+        if name.starts_with("Result<") && name.ends_with('>') {
+            let inner = &name[7..name.len() - 1];
+            let parts = Self::split_generic_arguments(inner);
+
+            if parts.len() != 2 {
+                return Err(FusionError::Syntax {
+                    message: "Result requires two type arguments".to_string(),
+                    span,
+                });
+            }
+
+            return Ok(Type::Result(
+                Box::new(self.convert_type_with_generics(
+                    parts[0],
+                    generic_parameters,
+                    span,
+                )?),
+                Box::new(self.convert_type_with_generics(
+                    parts[1],
+                    generic_parameters,
+                    span,
+                )?),
+            ));
+        }
+
+        if name.starts_with("Iterator<") && name.ends_with('>') {
+            let inner = &name[9..name.len() - 1];
+
+            return Ok(Type::Iterator(Box::new(
+                self.convert_type_with_generics(inner, generic_parameters, span)?,
+            )));
+        }
+
+        if name.starts_with("Task<") && name.ends_with('>') {
+            let inner = &name[5..name.len() - 1];
+
+            return Ok(Type::Task(Box::new(
+                self.convert_type_with_generics(inner, generic_parameters, span)?,
+            )));
+        }
+
+        self.convert_type(name, span)
     }
 
-    // =========================================================
-    // Operators
-    // =========================================================
+    fn split_generic_arguments(value: &str) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut start = 0;
+        let mut depth = 0;
 
-    fn operator_name(operator: &Operator) -> &'static str {
+        for (index, character) in value.char_indices() {
+            match character {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                ',' if depth == 0 => {
+                    result.push(value[start..index].trim());
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+
+        let last = value[start..].trim();
+
+        if !last.is_empty() {
+            result.push(last);
+        }
+
+        result
+    }
+
+    fn substitute_generic_type(
+        &self,
+        ty: &Type,
+        substitutions: &HashMap<String, Type>,
+    ) -> Type {
+        match ty {
+            Type::Generic(name) => substitutions
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| ty.clone()),
+
+            Type::Array(inner) => Type::Array(Box::new(
+                self.substitute_generic_type(inner, substitutions),
+            )),
+
+            Type::Iterator(inner) => Type::Iterator(Box::new(
+                self.substitute_generic_type(inner, substitutions),
+            )),
+
+            Type::HashMap(key, value) => Type::HashMap(
+                Box::new(self.substitute_generic_type(key, substitutions)),
+                Box::new(self.substitute_generic_type(value, substitutions)),
+            ),
+
+            Type::Option(inner) => Type::Option(Box::new(
+                self.substitute_generic_type(inner, substitutions),
+            )),
+
+            Type::Result(ok, error) => Type::Result(
+                Box::new(self.substitute_generic_type(ok, substitutions)),
+                Box::new(self.substitute_generic_type(error, substitutions)),
+            ),
+
+            Type::Task(inner) => Type::Task(Box::new(
+                self.substitute_generic_type(inner, substitutions),
+            )),
+
+            _ => ty.clone(),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Operator checking
+    // ---------------------------------------------------------------------
+
+    fn operator_name(operator: Operator) -> &'static str {
         match operator {
             Operator::Plus => "+",
             Operator::Minus => "-",
@@ -288,200 +349,1818 @@ impl TypeChecker {
             Operator::LessEqual => "<=",
             Operator::Greater => ">",
             Operator::GreaterEqual => ">=",
-            Operator::And => "and",
-            Operator::Or => "or",
+            Operator::And => "<and>",
+            Operator::Or => "<or>",
         }
     }
 
-    // =========================================================
-    // Property helpers
-    // =========================================================
-
-    fn property_root_name(expression: &Expression) -> Option<String> {
-        match expression {
-            Expression::Identifier { name, .. } => Some(name.clone()),
-
-            Expression::Property { object, .. } => Self::property_root_name(object),
-
-            _ => None,
+    fn unary_operator_name(operator: UnaryOperator) -> &'static str {
+        match operator {
+            UnaryOperator::Negate => "-",
+            UnaryOperator::Not => "<not>",
         }
     }
 
-    fn property_target_is_mutable(&self, expression: &Expression) -> Result<bool, FusionError> {
-        let root_name = Self::property_root_name(expression).ok_or_else(|| {
-            self.unknown_variable(
-                "Invalid property assignment target",
-                Self::expression_span(expression),
-            )
-        })?;
+    fn check_binary_operator(
+        &self,
+        left: Type,
+        operator: Operator,
+        right: Type,
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        use Operator::*;
 
-        let info = self.lookup_variable_info(&root_name).ok_or_else(|| {
-            self.unknown_variable(root_name.clone(), Self::expression_span(expression))
-        })?;
+        match operator {
+            Plus => {
+                if left == Type::String && right == Type::String {
+                    return Ok(Type::String);
+                }
 
-        Ok(info.mutable)
+                if self.numeric_type(&left) && self.numeric_type(&right) {
+                    if left == Type::Float || right == Type::Float {
+                        return Ok(Type::Float);
+                    }
+
+                    return Ok(Type::Num);
+                }
+
+                Err(self.invalid_operation(
+                    left.name(),
+                    Self::operator_name(operator),
+                    right.name(),
+                    span,
+                ))
+            }
+
+            Minus | Multiply | Divide => {
+                if !self.numeric_type(&left) || !self.numeric_type(&right) {
+                    return Err(self.invalid_operation(
+                        left.name(),
+                        Self::operator_name(operator),
+                        right.name(),
+                        span,
+                    ));
+                }
+
+                if left == Type::Float || right == Type::Float {
+                    Ok(Type::Float)
+                } else {
+                    Ok(Type::Num)
+                }
+            }
+
+            Equal | NotEqual => {
+                if self.types_compatible(&left, &right) {
+                    Ok(Type::Bool)
+                } else {
+                    Err(self.invalid_operation(
+                        left.name(),
+                        Self::operator_name(operator),
+                        right.name(),
+                        span,
+                    ))
+                }
+            }
+
+            Less | LessEqual | Greater | GreaterEqual => {
+                if self.numeric_type(&left) && self.numeric_type(&right) {
+                    Ok(Type::Bool)
+                } else {
+                    Err(self.invalid_operation(
+                        left.name(),
+                        Self::operator_name(operator),
+                        right.name(),
+                        span,
+                    ))
+                }
+            }
+
+            And | Or => {
+                if matches!(left, Type::Bool | Type::Unknown)
+                    && matches!(right, Type::Bool | Type::Unknown)
+                {
+                    Ok(Type::Bool)
+                } else {
+                    Err(self.invalid_operation(
+                        left.name(),
+                        Self::operator_name(operator),
+                        right.name(),
+                        span,
+                    ))
+                }
+            }
+        }
     }
 
-    fn lookup_property_type(&self, object: &Expression, name: &str) -> Result<Type, FusionError> {
+    // ---------------------------------------------------------------------
+    // Property checking
+    // ---------------------------------------------------------------------
+
+    fn property_type(
+          &mut self,
+        object: &Expression,
+        property: &str,
+        span: Span,
+    ) -> Result<Type, FusionError> {
         let object_type = self.infer_expression(object)?;
 
         match object_type {
-            Type::Struct(struct_name) => {
-                let definition = self.environment.structs.get(&struct_name).ok_or_else(|| {
-                    self.unknown_variable(struct_name.clone(), Self::expression_span(object))
+            Type::Struct(name) => {
+                let definition = self.environment.structs.get(&name).ok_or_else(|| {
+                    FusionError::Syntax {
+                        message: format!("Unknown struct '{}'", name),
+                        span,
+                    }
                 })?;
 
                 definition
                     .fields
                     .iter()
-                    .find(|(field_name, _)| field_name == name)
+                    .find(|(field_name, _)| field_name == property)
                     .map(|(_, field_type)| field_type.clone())
-                    .ok_or_else(|| {
-                        self.unknown_variable(
-                            format!("Unknown field '{}' on struct '{}'", name, struct_name),
-                            Self::expression_span(object),
-                        )
+                    .ok_or_else(|| FusionError::Syntax {
+                        message: format!(
+                            "Struct '{}' has no property '{}'",
+                            name, property
+                        ),
+                        span,
                     })
             }
 
             Type::Unknown => Ok(Type::Unknown),
 
-            other => Err(self.type_mismatch("struct", other.name(), Self::expression_span(object))),
+            other => Err(FusionError::Syntax {
+                message: format!(
+                    "Type '{}' has no properties",
+                    other.name()
+                ),
+                span,
+            }),
         }
     }
 
-    // =========================================================
-    // Pattern checking
-    // =========================================================
+    fn property_mutable(
+        &self,
+        object: &Expression,
+        property: &str,
+        span: Span,
+    ) -> Result<bool, FusionError> {
+        match object {
+            Expression::Identifier { name, .. } => {
+                let variable = self
+                    .lookup_variable(name)
+                    .ok_or_else(|| self.unknown_variable(name, span))?;
 
-    fn check_pattern(
-        &mut self,
-        pattern: &Pattern,
-        expected_type: &Type,
-    ) -> Result<(), FusionError> {
-        match &pattern.kind {
-            PatternKind::Wildcard => Ok(()),
-
-            PatternKind::Identifier(name) => {
-                if name == "_" {
-                    return Ok(());
+                if !variable.mutable {
+                    return Ok(false);
                 }
 
-                self.declare_variable(name.clone(), expected_type.clone(), true, pattern.span)
+                let object_type = &variable.ty;
+
+                match object_type {
+                    Type::Struct(struct_name) => {
+                        let definition =
+                            self.environment.structs.get(struct_name).ok_or_else(|| {
+                                FusionError::Syntax {
+                                    message: format!(
+                                        "Unknown struct '{}'",
+                                        struct_name
+                                    ),
+                                    span,
+                                }
+                            })?;
+
+                        if definition
+                            .fields
+                            .iter()
+                            .any(|(name, _)| name == property)
+                        {
+                            Ok(true)
+                        } else {
+                            Err(FusionError::Syntax {
+                                message: format!(
+                                    "Struct '{}' has no property '{}'",
+                                    struct_name, property
+                                ),
+                                span,
+                            })
+                        }
+                    }
+
+                    Type::Unknown => Ok(true),
+
+                    _ => Err(FusionError::Syntax {
+                        message: format!(
+                            "Type '{}' has no mutable properties",
+                            object_type.name()
+                        ),
+                        span,
+                    }),
+                }
+            }
+
+            _ => Ok(false),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Pattern checking
+    // ---------------------------------------------------------------------
+
+    fn check_pattern(
+        &self,
+        pattern: &Pattern,
+        expected: &Type,
+    ) -> Result<Vec<(String, Type)>, FusionError> {
+        let mut bindings = Vec::new();
+
+        match &pattern.kind {
+            PatternKind::Wildcard => {}
+
+            PatternKind::Identifier(name) => {
+                bindings.push((name.clone(), expected.clone()));
             }
 
             PatternKind::Number(_) => {
-                if !Self::types_compatible(&Type::Num, expected_type) {
-                    return Err(self.type_mismatch("num", expected_type.name(), pattern.span));
-                }
-
-                Ok(())
-            }
-
-            PatternKind::Float(_) => {
-                if !Self::types_compatible(&Type::Float, expected_type) {
-                    return Err(self.type_mismatch("float", expected_type.name(), pattern.span));
-                }
-
-                Ok(())
-            }
-
-            PatternKind::String(_) => {
-                if !Self::types_compatible(&Type::String, expected_type) {
-                    return Err(self.type_mismatch("string", expected_type.name(), pattern.span));
-                }
-
-                Ok(())
-            }
-
-            PatternKind::Boolean(_) => {
-                if !Self::types_compatible(&Type::Bool, expected_type) {
-                    return Err(self.type_mismatch("bool", expected_type.name(), pattern.span));
-                }
-
-                Ok(())
-            }
-
-            PatternKind::Variant { name, bindings } => {
-                let enum_name = match expected_type {
-                    Type::Enum(name) => name,
-
-                    Type::Unknown => {
-                        return Ok(());
-                    }
-
-                    other => {
-                        return Err(self.type_mismatch("enum", other.name(), pattern.span));
-                    }
-                };
-
-                let parts: Vec<&str> = name.split("::").collect();
-
-                if parts.len() != 2 {
-                    return Err(self.unknown_variable(
-                        format!("Invalid enum pattern '{}'", name),
+                if !matches!(expected, Type::Num | Type::Unknown) {
+                    return Err(self.type_mismatch(
+                        "num",
+                        expected.name(),
                         pattern.span,
                     ));
                 }
+            }
 
-                let pattern_enum = parts[0];
-                let variant_name = parts[1];
-
-                if pattern_enum != enum_name {
-                    return Err(self.type_mismatch(enum_name, pattern_enum, pattern.span));
+            PatternKind::Float(_) => {
+                if !matches!(expected, Type::Float | Type::Unknown) {
+                    return Err(self.type_mismatch(
+                        "float",
+                        expected.name(),
+                        pattern.span,
+                    ));
                 }
+            }
 
-                let field_types = {
-                    let definition =
-                        self.environment.enums.get(enum_name).ok_or_else(|| {
-                            self.unknown_variable(enum_name.clone(), pattern.span)
-                        })?;
+            PatternKind::String(_) => {
+                if !matches!(expected, Type::String | Type::Unknown) {
+                    return Err(self.type_mismatch(
+                        "string",
+                        expected.name(),
+                        pattern.span,
+                    ));
+                }
+            }
 
-                    let variant = definition.variants.get(variant_name).ok_or_else(|| {
-                        self.unknown_variable(
-                            format!("Unknown variant '{}::{}'", enum_name, variant_name),
-                            pattern.span,
-                        )
-                    })?;
+            PatternKind::Boolean(_) => {
+                if !matches!(expected, Type::Bool | Type::Unknown) {
+                    return Err(self.type_mismatch(
+                        "bool",
+                        expected.name(),
+                        pattern.span,
+                    ));
+                }
+            }
 
-                    if bindings.len() != variant.fields.len() {
-                        return Err(self.type_mismatch(
-                            format!("{} bindings", variant.fields.len()),
-                            format!("{} bindings", bindings.len()),
-                            pattern.span,
-                        ));
+            PatternKind::Variant { name, bindings: names } => {
+                let enum_name = match expected {
+                    Type::Enum(name) => name,
+                    Type::Unknown => {
+                        return Ok(bindings);
                     }
-
-                    variant.fields.clone()
+                    other => {
+                        return Err(FusionError::TypeMismatch {
+                            expected: "enum".to_string(),
+                            found: other.name(),
+                            span: pattern.span,
+                        });
+                    }
                 };
 
-                let mut binding_names = HashSet::new();
+                let definition =
+                    self.environment.enums.get(enum_name).ok_or_else(|| {
+                        FusionError::Syntax {
+                            message: format!(
+                                "Unknown enum '{}'",
+                                enum_name
+                            ),
+                            span: pattern.span,
+                        }
+                    })?;
 
-                for (binding, field_type) in bindings.iter().zip(field_types.iter()) {
-                    if binding == "_" {
-                        continue;
+                let variant =
+                    definition.variants.get(name).ok_or_else(|| {
+                        FusionError::Syntax {
+                            message: format!(
+                                "Enum '{}' has no variant '{}'",
+                                enum_name, name
+                            ),
+                            span: pattern.span,
+                        }
+                    })?;
+
+                if variant.fields.len() != names.len() {
+                    return Err(FusionError::Syntax {
+                        message: format!(
+                            "Variant '{}' expects {} bindings, found {}",
+                            name,
+                            variant.fields.len(),
+                            names.len()
+                        ),
+                        span: pattern.span,
+                    });
+                }
+
+                for (binding, field_type) in names.iter().zip(&variant.fields) {
+                    bindings.push((binding.clone(), field_type.clone()));
+                }
+            }
+        }
+
+        let mut seen = HashSet::new();
+
+        for (name, _) in &bindings {
+            if !seen.insert(name.clone()) {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Duplicate pattern binding '{}'",
+                        name
+                    ),
+                    span: pattern.span,
+                });
+            }
+        }
+
+        Ok(bindings)
+    }
+
+    // ---------------------------------------------------------------------
+    // Expression inference
+    // ---------------------------------------------------------------------
+
+    pub fn infer_expression(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<Type, FusionError> {
+        match expression {
+            Expression::Number { .. } => Ok(Type::Num),
+
+            Expression::Float { .. } => Ok(Type::Float),
+
+            Expression::Boolean { .. } => Ok(Type::Bool),
+
+            Expression::String { .. } => Ok(Type::String),
+
+            Expression::Identifier { name, span } => self
+                .lookup_variable(name)
+                .map(|info| info.ty.clone())
+                .ok_or_else(|| self.unknown_variable(name, *span)),
+
+            Expression::Array { elements, span } => {
+                if elements.is_empty() {
+                    return Ok(Type::Array(Box::new(Type::Unknown)));
+                }
+
+                let first_type = self.infer_expression(&elements[0])?;
+
+                for element in &elements[1..] {
+                    let element_type = self.infer_expression(element)?;
+
+                    if !self.types_compatible(&first_type, &element_type) {
+                        return Err(self.type_mismatch(
+                            first_type.name(),
+                            element_type.name(),
+                            element.span(),
+                        ));
+                    }
+                }
+
+                let _ = span;
+
+                Ok(Type::Array(Box::new(first_type)))
+            }
+
+            Expression::Index {
+                array,
+                index,
+                span,
+            } => {
+                let array_type = self.infer_expression(array)?;
+                let index_type = self.infer_expression(index)?;
+
+                if !matches!(index_type, Type::Num | Type::Unknown) {
+                    return Err(self.type_mismatch(
+                        "num",
+                        index_type.name(),
+                        index.span(),
+                    ));
+                }
+
+                match array_type {
+                    Type::Array(inner) => Ok(*inner),
+
+                    Type::Iterator(inner) => Ok(*inner),
+
+                    Type::Unknown => Ok(Type::Unknown),
+
+                    other => Err(FusionError::Syntax {
+                        message: format!(
+                            "Cannot index value of type '{}'",
+                            other.name()
+                        ),
+                        span: *span,
+                    }),
+                }
+            }
+
+            Expression::Property {
+                object,
+                name,
+                span,
+            } => self.property_type(object, name, *span),
+
+            Expression::Await { expression, span } => {
+                let awaited = self.infer_expression(expression)?;
+
+                match awaited {
+                    Type::Task(inner) => Ok(*inner),
+                    Type::Unknown => Ok(Type::Unknown),
+
+                    other => Err(FusionError::TypeMismatch {
+                        expected: "Task<T>".to_string(),
+                        found: other.name(),
+                        span: *span,
+                    }),
+                }
+            }
+
+            Expression::Unary {
+                operator,
+                expression,
+                span,
+            } => {
+                let operand = self.infer_expression(expression)?;
+
+                match operator {
+                    UnaryOperator::Negate => {
+                        if self.numeric_type(&operand) {
+                            Ok(operand)
+                        } else {
+                            Err(self.invalid_operation(
+                                Self::unary_operator_name(*operator),
+                                "",
+                                operand.name(),
+                                *span,
+                            ))
+                        }
                     }
 
-                    if !binding_names.insert(binding.clone()) {
-                        return Err(self.unknown_variable(
-                            format!("Pattern binding '{}' is declared more than once", binding),
-                            pattern.span,
+                    UnaryOperator::Not => {
+                        if matches!(operand, Type::Bool | Type::Unknown) {
+                            Ok(Type::Bool)
+                        } else {
+                            Err(self.invalid_operation(
+                                Self::unary_operator_name(*operator),
+                                "",
+                                operand.name(),
+                                *span,
+                            ))
+                        }
+                    }
+                }
+            }
+
+            Expression::Binary {
+                left,
+                operator,
+                right,
+                span,
+            } => {
+                let left_type = self.infer_expression(left)?;
+                let right_type = self.infer_expression(right)?;
+
+                self.check_binary_operator(
+                    left_type,
+                    *operator,
+                    right_type,
+                    *span,
+                )
+            }
+
+            Expression::Call {
+                name,
+                arguments,
+                generic_arguments,
+                span,
+            } => self.infer_call(
+                name,
+                arguments,
+                generic_arguments,
+                *span,
+            ),
+
+            Expression::MethodCall {
+                object,
+                method,
+                arguments,
+                generic_arguments,
+                span,
+            } => self.infer_method_call(
+                object,
+                method,
+                arguments,
+                generic_arguments,
+                *span,
+            ),
+
+            Expression::StructConstructor {
+                name,
+                fields,
+                span,
+            } => self.infer_struct_constructor(name, fields, *span),
+
+            Expression::EnumConstructor {
+                enum_name,
+                variant,
+                arguments,
+                span,
+            } => self.infer_enum_constructor(
+                enum_name,
+                variant,
+                arguments,
+                *span,
+            ),
+        }
+    }
+
+    fn infer_call(
+        &mut self,
+        name: &str,
+        arguments: &[Expression],
+        generic_arguments: &[String],
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        if let Some(struct_definition) = self.environment.structs.get(name).cloned() {
+            if !generic_arguments.is_empty() {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Struct '{}' does not accept generic arguments",
+                        name
+                    ),
+                    span,
+                });
+            }
+
+            if arguments.len() != struct_definition.fields.len() {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Struct '{}' expects {} arguments, found {}",
+                        name,
+                        struct_definition.fields.len(),
+                        arguments.len()
+                    ),
+                    span,
+                });
+            }
+
+            for ((field_name, field_type), argument) in
+                struct_definition.fields.iter().zip(arguments)
+            {
+                let argument_type = self.infer_expression(argument)?;
+
+                if !self.types_compatible(field_type, &argument_type) {
+                    return Err(self.type_mismatch(
+                        field_type.name(),
+                        argument_type.name(),
+                        argument.span(),
+                    ));
+                }
+
+                let _ = field_name;
+            }
+
+            return Ok(Type::Struct(name.to_string()));
+        }
+
+        let function = self
+            .environment
+            .functions
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FusionError::Syntax {
+                message: format!("Unknown function '{}'", name),
+                span,
+            })?;
+
+        if arguments.len() != function.parameters.len() {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Function '{}' expects {} arguments, found {}",
+                    name,
+                    function.parameters.len(),
+                    arguments.len()
+                ),
+                span,
+            });
+        }
+
+        if generic_arguments.len() != function.generic_parameters.len() {
+            if !function.generic_parameters.is_empty() {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Function '{}' requires {} generic arguments, found {}",
+                        name,
+                        function.generic_parameters.len(),
+                        generic_arguments.len()
+                    ),
+                    span,
+                });
+            }
+
+            if !generic_arguments.is_empty() {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Function '{}' does not accept generic arguments",
+                        name
+                    ),
+                    span,
+                });
+            }
+        }
+
+        let mut substitutions = HashMap::new();
+
+        for (generic_name, generic_argument) in function
+            .generic_parameters
+            .iter()
+            .zip(generic_arguments)
+        {
+            let generic_type = self.convert_type(
+                generic_argument,
+                span,
+            )?;
+
+            substitutions.insert(
+                generic_name.clone(),
+                generic_type,
+            );
+        }
+
+        for (parameter_type, argument) in
+            function.parameters.iter().zip(arguments)
+        {
+            let expected =
+                self.substitute_generic_type(parameter_type, &substitutions);
+
+            let found = self.infer_expression(argument)?;
+
+            if !self.types_compatible(&expected, &found) {
+                return Err(self.type_mismatch(
+                    expected.name(),
+                    found.name(),
+                    argument.span(),
+                ));
+            }
+        }
+
+        Ok(self.substitute_generic_type(
+            &function.return_type,
+            &substitutions,
+        ))
+    }
+
+    fn infer_method_call(
+        &mut self,
+        object: &Expression,
+        method: &str,
+        arguments: &[Expression],
+        generic_arguments: &[String],
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        let object_type = self.infer_expression(object)?;
+
+        if !generic_arguments.is_empty() {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Method '{}' does not currently support explicit generic arguments",
+                    method
+                ),
+                span,
+            });
+        }
+
+        match object_type {
+            Type::Array(inner) => {
+                match method {
+                    "push" => {
+                        if arguments.len() != 1 {
+                            return Err(FusionError::Syntax {
+                                message: "push expects one argument".to_string(),
+                                span,
+                            });
+                        }
+
+                        let argument_type =
+                            self.infer_expression(&arguments[0])?;
+
+                        if !self.types_compatible(
+                            &inner,
+                            &argument_type,
+                        ) {
+                            return Err(self.type_mismatch(
+                                inner.name(),
+                                argument_type.name(),
+                                arguments[0].span(),
+                            ));
+                        }
+
+                        Ok(Type::Void)
+                    }
+
+                    "pop" => {
+                        if !arguments.is_empty() {
+                            return Err(FusionError::Syntax {
+                                message: "pop expects no arguments".to_string(),
+                                span,
+                            });
+                        }
+
+                        Ok(Type::Option(inner))
+                    }
+
+                    "clear" => {
+                        if !arguments.is_empty() {
+                            return Err(FusionError::Syntax {
+                                message: "clear expects no arguments".to_string(),
+                                span,
+                            });
+                        }
+
+                        Ok(Type::Void)
+                    }
+
+                    "length" => {
+                        if !arguments.is_empty() {
+                            return Err(FusionError::Syntax {
+                                message: "length expects no arguments".to_string(),
+                                span,
+                            });
+                        }
+
+                        Ok(Type::Num)
+                    }
+
+                    "contains" => {
+                        if arguments.len() != 1 {
+                            return Err(FusionError::Syntax {
+                                message: "contains expects one argument".to_string(),
+                                span,
+                            });
+                        }
+
+                        let argument_type =
+                            self.infer_expression(&arguments[0])?;
+
+                        if !self.types_compatible(
+                            &inner,
+                            &argument_type,
+                        ) {
+                            return Err(self.type_mismatch(
+                                inner.name(),
+                                argument_type.name(),
+                                arguments[0].span(),
+                            ));
+                        }
+
+                        Ok(Type::Bool)
+                    }
+
+                    "sort" | "reverse" => {
+                        if !arguments.is_empty() {
+                            return Err(FusionError::Syntax {
+                                message: format!(
+                                    "{} expects no arguments",
+                                    method
+                                ),
+                                span,
+                            });
+                        }
+
+                        Ok(Type::Void)
+                    }
+
+                    "find" => Ok(Type::Option(inner)),
+
+                    "any" | "all" => Ok(Type::Bool),
+
+                    "count" => Ok(Type::Num),
+
+                    "take" | "skip" => {
+                        if arguments.len() != 1 {
+                            return Err(FusionError::Syntax {
+                                message: format!(
+                                    "{} expects one argument",
+                                    method
+                                ),
+                                span,
+                            });
+                        }
+
+                        let amount_type =
+                            self.infer_expression(&arguments[0])?;
+
+                        if !matches!(
+                            amount_type,
+                            Type::Num | Type::Unknown
+                        ) {
+                            return Err(self.type_mismatch(
+                                "num",
+                                amount_type.name(),
+                                arguments[0].span(),
+                            ));
+                        }
+
+                        Ok(Type::Array(inner))
+                    }
+
+                    "map" | "filter" | "reduce" | "fold" | "collect"
+                    | "zip" | "flatten" => {
+                        // The AST currently has no lambda/closure expression,
+                        // so these operations cannot be fully type-checked yet.
+                        //
+                        // Keep them represented in the type system without
+                        // pretending we know the callback's type.
+                        for argument in arguments {
+                            let _ = self.infer_expression(argument)?;
+                        }
+
+                        Ok(Type::Unknown)
+                    }
+
+                    _ => Err(FusionError::Syntax {
+                        message: format!(
+                            "Unknown array method '{}'",
+                            method
+                        ),
+                        span,
+                    }),
+                }
+            }
+
+            Type::Iterator(inner) => match method {
+                "take" | "skip" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "{} expects one argument",
+                                method
+                            ),
+                            span,
+                        });
+                    }
+
+                    let amount_type =
+                        self.infer_expression(&arguments[0])?;
+
+                    if !matches!(
+                        amount_type,
+                        Type::Num | Type::Unknown
+                    ) {
+                        return Err(self.type_mismatch(
+                            "num",
+                            amount_type.name(),
+                            arguments[0].span(),
                         ));
                     }
 
-                    self.declare_variable(binding.clone(), field_type.clone(), true, pattern.span)?;
+                    Ok(Type::Iterator(inner))
                 }
 
+                "count" => Ok(Type::Num),
+
+                "find" => Ok(Type::Option(inner)),
+
+                "any" | "all" => Ok(Type::Bool),
+
+                "collect" => Ok(Type::Array(inner)),
+
+                _ => Err(FusionError::Syntax {
+                    message: format!(
+                        "Unknown iterator method '{}'",
+                        method
+                    ),
+                    span,
+                }),
+            },
+
+            Type::Unknown => Ok(Type::Unknown),
+
+            other => Err(FusionError::Syntax {
+                message: format!(
+                    "Type '{}' has no method '{}'",
+                    other.name(),
+                    method
+                ),
+                span,
+            }),
+        }
+    }
+
+    fn infer_struct_constructor(
+        &mut self,
+        name: &str,
+        fields: &[(String, Expression)],
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        let definition = self
+            .environment
+            .structs
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FusionError::Syntax {
+                message: format!("Unknown struct '{}'", name),
+                span,
+            })?;
+
+        if fields.len() != definition.fields.len() {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Struct '{}' expects {} fields, found {}",
+                    name,
+                    definition.fields.len(),
+                    fields.len()
+                ),
+                span,
+            });
+        }
+
+        let mut supplied = HashSet::new();
+
+        for (field_name, expression) in fields {
+            if !supplied.insert(field_name.clone()) {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Duplicate field '{}'",
+                        field_name
+                    ),
+                    span,
+                });
+            }
+
+            let expected = definition
+                .fields
+                .iter()
+                .find(|(name, _)| name == field_name)
+                .map(|(_, ty)| ty.clone())
+                .ok_or_else(|| FusionError::Syntax {
+                    message: format!(
+                        "Struct '{}' has no field '{}'",
+                        name, field_name
+                    ),
+                    span,
+                })?;
+
+            let found = self.infer_expression(expression)?;
+
+            if !self.types_compatible(&expected, &found) {
+                return Err(self.type_mismatch(
+                    expected.name(),
+                    found.name(),
+                    expression.span(),
+                ));
+            }
+        }
+
+        for (field_name, _) in &definition.fields {
+            if !supplied.contains(field_name) {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Missing field '{}' in struct '{}'",
+                        field_name, name
+                    ),
+                    span,
+                });
+            }
+        }
+
+        Ok(Type::Struct(name.to_string()))
+    }
+
+    fn infer_enum_constructor(
+        &mut self,
+        enum_name: &str,
+        variant: &str,
+        arguments: &[Expression],
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        let definition = self
+            .environment
+            .enums
+            .get(enum_name)
+            .cloned()
+            .ok_or_else(|| FusionError::Syntax {
+                message: format!("Unknown enum '{}'", enum_name),
+                span,
+            })?;
+
+        let variant_definition =
+            definition
+                .variants
+                .get(variant)
+                .cloned()
+                .ok_or_else(|| FusionError::Syntax {
+                    message: format!(
+                        "Enum '{}' has no variant '{}'",
+                        enum_name, variant
+                    ),
+                    span,
+                })?;
+
+        if arguments.len() != variant_definition.fields.len() {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Variant '{}' expects {} arguments, found {}",
+                    variant,
+                    variant_definition.fields.len(),
+                    arguments.len()
+                ),
+                span,
+            });
+        }
+
+        for (expected, argument) in
+            variant_definition.fields.iter().zip(arguments)
+        {
+            let found = self.infer_expression(argument)?;
+
+            if !self.types_compatible(expected, &found) {
+                return Err(self.type_mismatch(
+                    expected.name(),
+                    found.name(),
+                    argument.span(),
+                ));
+            }
+        }
+
+        Ok(Type::Enum(enum_name.to_string()))
+    }
+
+    // ---------------------------------------------------------------------
+    // Assignment checking
+    // ---------------------------------------------------------------------
+
+    fn check_assignment(
+        &mut self,
+        target: &Expression,
+        value: &Expression,
+        span: Span,
+    ) -> Result<(), FusionError> {
+        let value_type = self.infer_expression(value)?;
+
+        match target {
+            Expression::Identifier { name, span: target_span } => {
+                let variable = self
+                    .lookup_variable(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.unknown_variable(name, *target_span)
+                    })?;
+
+                if !variable.mutable {
+                    return Err(FusionError::CannotAssignToConst {
+                        name: name.clone(),
+                        span: *target_span,
+                    });
+                }
+
+                if !self.types_compatible(
+                    &variable.ty,
+                    &value_type,
+                ) {
+                    return Err(self.type_mismatch(
+                        variable.ty.name(),
+                        value_type.name(),
+                        value.span(),
+                    ));
+                }
+
+                Ok(())
+            }
+
+            Expression::Property {
+                object,
+                name,
+                span: property_span,
+            } => {
+                if !self.property_mutable(
+                    object,
+                    name,
+                    *property_span,
+                )? {
+                    return Err(FusionError::CannotAssignToConst {
+                        name: name.clone(),
+                        span: *property_span,
+                    });
+                }
+
+                let property_type =
+                    self.property_type(object, name, *property_span)?;
+
+                if !self.types_compatible(
+                    &property_type,
+                    &value_type,
+                ) {
+                    return Err(self.type_mismatch(
+                        property_type.name(),
+                        value_type.name(),
+                        value.span(),
+                    ));
+                }
+
+                Ok(())
+            }
+
+            Expression::Index {
+                array,
+                index,
+                span: index_span,
+            } => {
+                let array_type = self.infer_expression(array)?;
+                let index_type = self.infer_expression(index)?;
+
+                if !matches!(
+                    index_type,
+                    Type::Num | Type::Unknown
+                ) {
+                    return Err(self.type_mismatch(
+                        "num",
+                        index_type.name(),
+                        index.span(),
+                    ));
+                }
+
+                let element_type = match array_type {
+                    Type::Array(inner) => *inner,
+                    Type::Unknown => Type::Unknown,
+
+                    other => {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Cannot assign through value of type '{}'",
+                                other.name()
+                            ),
+                            span: *index_span,
+                        });
+                    }
+                };
+
+                if !self.types_compatible(
+                    &element_type,
+                    &value_type,
+                ) {
+                    return Err(self.type_mismatch(
+                        element_type.name(),
+                        value_type.name(),
+                        value.span(),
+                    ));
+                }
+
+                Ok(())
+            }
+
+            _ => Err(FusionError::Syntax {
+                message: "Invalid assignment target".to_string(),
+                span,
+            }),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Statement checking
+    // ---------------------------------------------------------------------
+
+    fn check_statement(
+        &mut self,
+        statement: &Statement,
+    ) -> Result<(), FusionError> {
+        match statement {
+            Statement::VariableDeclarations {
+                declarations,
+                ..
+            } => {
+                for declaration in declarations {
+                    let declared_type = match &declaration.declared_type {
+                        Some(type_name) => Some(
+                            self.convert_type(
+                                type_name,
+                                declaration.span,
+                            )?,
+                        ),
+                        None => None,
+                    };
+
+                    let value_type = match &declaration.value {
+                        Some(value) => {
+                            Some(self.infer_expression(value)?)
+                        }
+                        None => None,
+                    };
+
+                    let final_type = match (declared_type, value_type) {
+                        (Some(declared), Some(found)) => {
+                            if !self.types_compatible(
+                                &declared,
+                                &found,
+                            ) {
+                                return Err(self.type_mismatch(
+                                    declared.name(),
+                                    found.name(),
+                                    declaration.span,
+                                ));
+                            }
+
+                            declared
+                        }
+
+                        (Some(declared), None) => declared,
+
+                        (None, Some(found)) => found,
+
+                        (None, None) => {
+                            return Err(FusionError::Syntax {
+                                message: format!(
+                                    "Variable '{}' requires a type or initializer",
+                                    declaration.name
+                                ),
+                                span: declaration.span,
+                            });
+                        }
+                    };
+
+                    self.declare_variable(
+                        declaration.name.clone(),
+                        final_type,
+                        true,
+                        declaration.span,
+                    )?;
+                }
+
+                Ok(())
+            }
+
+            Statement::ConstDeclaration {
+                name,
+                declared_type,
+                value,
+                span,
+                ..
+            } => {
+                let value_type = self.infer_expression(value)?;
+
+                let final_type = match declared_type {
+                    Some(type_name) => {
+                        let declared =
+                            self.convert_type(type_name, *span)?;
+
+                        if !self.types_compatible(
+                            &declared,
+                            &value_type,
+                        ) {
+                            return Err(self.type_mismatch(
+                                declared.name(),
+                                value_type.name(),
+                                value.span(),
+                            ));
+                        }
+
+                        declared
+                    }
+
+                    None => value_type,
+                };
+
+                self.declare_variable(
+                    name.clone(),
+                    final_type,
+                    false,
+                    *span,
+                )
+            }
+
+            Statement::Assignment {
+                target,
+                value,
+                span,
+            } => self.check_assignment(
+                target,
+                value,
+                *span,
+            ),
+
+            Statement::Function { .. } => Ok(()),
+
+            Statement::Struct { .. } => Ok(()),
+
+            Statement::Enum { .. } => Ok(()),
+
+            Statement::Main { body, .. } => {
+                self.push_scope();
+
+                let result = self.check_block(body);
+
+                self.pop_scope();
+
+                result
+            }
+
+            Statement::Trait { .. } => Ok(()),
+
+            Statement::Impl { .. } => Ok(()),
+
+            Statement::Match {
+                expression,
+                arms,
+                span,
+            } => self.check_match(
+                expression,
+                arms,
+                *span,
+            ),
+
+            Statement::Defer {
+                expression,
+                ..
+            } => {
+                self.infer_expression(expression)?;
+                Ok(())
+            }
+
+            Statement::If {
+                condition,
+                body,
+                else_body,
+                ..
+            } => {
+                let condition_type =
+                    self.infer_expression(condition)?;
+
+                if !matches!(
+                    condition_type,
+                    Type::Bool | Type::Unknown
+                ) {
+                    return Err(self.type_mismatch(
+                        "bool",
+                        condition_type.name(),
+                        condition.span(),
+                    ));
+                }
+
+                self.push_scope();
+                let body_result = self.check_block(body);
+                self.pop_scope();
+                body_result?;
+
+                if let Some(else_body) = else_body {
+                    self.push_scope();
+                    let result = self.check_block(else_body);
+                    self.pop_scope();
+                    result?;
+                }
+
+                Ok(())
+            }
+
+            Statement::While {
+                condition,
+                body,
+                ..
+            } => {
+                let condition_type =
+                    self.infer_expression(condition)?;
+
+                if !matches!(
+                    condition_type,
+                    Type::Bool | Type::Unknown
+                ) {
+                    return Err(self.type_mismatch(
+                        "bool",
+                        condition_type.name(),
+                        condition.span(),
+                    ));
+                }
+
+                self.push_scope();
+                self.loop_depth += 1;
+
+                let result = self.check_block(body);
+
+                self.loop_depth -= 1;
+                self.pop_scope();
+
+                result
+            }
+
+            Statement::For {
+                variable,
+                start,
+                end,
+                body,
+                span,
+            } => {
+                let start_type = self.infer_expression(start)?;
+                let end_type = self.infer_expression(end)?;
+
+                if !matches!(
+                    start_type,
+                    Type::Num | Type::Unknown
+                ) {
+                    return Err(self.type_mismatch(
+                        "num",
+                        start_type.name(),
+                        start.span(),
+                    ));
+                }
+
+                if !matches!(
+                    end_type,
+                    Type::Num | Type::Unknown
+                ) {
+                    return Err(self.type_mismatch(
+                        "num",
+                        end_type.name(),
+                        end.span(),
+                    ));
+                }
+
+                self.push_scope();
+
+                let result = (|| {
+                    self.declare_variable(
+                        variable.clone(),
+                        Type::Num,
+                        true,
+                        *span,
+                    )?;
+
+                    self.loop_depth += 1;
+
+                    let result = self.check_block(body);
+
+                    self.loop_depth -= 1;
+
+                    result
+                })();
+
+                self.pop_scope();
+
+                result
+            }
+
+            Statement::ForEach {
+                variable,
+                iterable,
+                body,
+                span,
+            } => {
+                let iterable_type =
+                    self.infer_expression(iterable)?;
+
+                let element_type = match iterable_type {
+                    Type::Array(inner) => *inner,
+
+                    Type::Iterator(inner) => *inner,
+
+                    Type::Unknown => Type::Unknown,
+
+                    other => {
+                        return Err(self.type_mismatch(
+                            "array or iterator",
+                            other.name(),
+                            iterable.span(),
+                        ));
+                    }
+                };
+
+                self.push_scope();
+
+                let result = (|| {
+                    self.declare_variable(
+                        variable.clone(),
+                        element_type,
+                        true,
+                        *span,
+                    )?;
+
+                    self.loop_depth += 1;
+
+                    let result = self.check_block(body);
+
+                    self.loop_depth -= 1;
+
+                    result
+                })();
+
+                self.pop_scope();
+
+                result
+            }
+
+            Statement::Return {
+                value,
+                span,
+            } => self.check_return(value.as_ref(), *span),
+
+            Statement::Break { span } => {
+                if self.loop_depth == 0 {
+                    return Err(FusionError::Syntax {
+                        message: "'break' is only valid inside a loop"
+                            .to_string(),
+                        span: *span,
+                    });
+                }
+
+                Ok(())
+            }
+
+            Statement::Continue { span } => {
+                if self.loop_depth == 0 {
+                    return Err(FusionError::Syntax {
+                        message:
+                            "'continue' is only valid inside a loop"
+                                .to_string(),
+                        span: *span,
+                    });
+                }
+
+                Ok(())
+            }
+
+            Statement::Expression { expression, .. } => {
+                self.infer_expression(expression)?;
+                Ok(())
+            }
+
+            Statement::Call { expression, .. } => {
+                self.infer_expression(expression)?;
                 Ok(())
             }
         }
     }
 
-    // =========================================================
-    // Return analysis
-    // =========================================================
+    fn check_return(
+        &mut self,
+        value: Option<&Expression>,
+        span: Span,
+    ) -> Result<(), FusionError> {
+        let context = self
+            .current_function
+            .as_ref()
+            .ok_or_else(|| FusionError::Syntax {
+                message: "'return' is only valid inside a function"
+                    .to_string(),
+                span,
+            })?
+            .clone();
 
-    fn block_returns(statements: &[Statement]) -> bool {
+        let value_type = match value {
+            Some(expression) => {
+                self.infer_expression(expression)?
+            }
+
+            None => Type::Void,
+        };
+
+        if let Some(expected) = context.declared_return_type {
+            if !self.types_compatible(
+                &expected,
+                &value_type,
+            ) {
+                return Err(self.type_mismatch(
+                    expected.name(),
+                    value_type.name(),
+                    span,
+                ));
+            }
+        } else if let Some(existing) =
+            self.current_function
+                .as_ref()
+                .and_then(|function| {
+                    function.inferred_return_type.clone()
+                })
+        {
+            if !self.types_compatible(
+                &existing,
+                &value_type,
+            ) {
+                return Err(self.type_mismatch(
+                    existing.name(),
+                    value_type.name(),
+                    span,
+                ));
+            }
+        } else if let Some(function) =
+            self.current_function.as_mut()
+        {
+            function.inferred_return_type =
+                Some(value_type);
+        }
+
+        if let Some(function) = self.current_function.as_mut() {
+            function.has_return = true;
+        }
+
+        Ok(())
+    }
+
+    fn check_block(
+        &mut self,
+        statements: &[Statement],
+    ) -> Result<(), FusionError> {
+        for statement in statements {
+            self.check_statement(statement)?;
+        }
+
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------------
+    // Match checking
+    // ---------------------------------------------------------------------
+
+    fn check_match(
+        &mut self,
+        expression: &Expression,
+        arms: &[MatchArm],
+        span: Span,
+    ) -> Result<(), FusionError> {
+        let expression_type =
+            self.infer_expression(expression)?;
+
+        let mut has_wildcard = false;
+        let mut covered_variants = HashSet::new();
+        let mut seen_patterns = HashSet::new();
+
+        for arm in arms {
+            match &arm.pattern.kind {
+                PatternKind::Wildcard => {
+                    has_wildcard = true;
+                }
+
+                PatternKind::Variant { name, .. } => {
+                    if !seen_patterns.insert(name.clone()) {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Duplicate match pattern '{}'",
+                                name
+                            ),
+                            span: arm.pattern.span,
+                        });
+                    }
+
+                    covered_variants.insert(name.clone());
+                }
+
+                PatternKind::Boolean(value) => {
+                    let key = value.to_string();
+
+                    if !seen_patterns.insert(key) {
+                        return Err(FusionError::Syntax {
+                            message:
+                                "Duplicate boolean match pattern"
+                                    .to_string(),
+                            span: arm.pattern.span,
+                        });
+                    }
+                }
+
+                PatternKind::Number(value) => {
+                    let key = format!("num:{}", value);
+
+                    if !seen_patterns.insert(key) {
+                        return Err(FusionError::Syntax {
+                            message:
+                                "Duplicate numeric match pattern"
+                                    .to_string(),
+                            span: arm.pattern.span,
+                        });
+                    }
+                }
+
+                PatternKind::Float(value) => {
+                    let key = format!("float:{:?}", value);
+
+                    if !seen_patterns.insert(key) {
+                        return Err(FusionError::Syntax {
+                            message:
+                                "Duplicate float match pattern"
+                                    .to_string(),
+                            span: arm.pattern.span,
+                        });
+                    }
+                }
+
+                PatternKind::String(value) => {
+                    let key = format!("string:{}", value);
+
+                    if !seen_patterns.insert(key) {
+                        return Err(FusionError::Syntax {
+                            message:
+                                "Duplicate string match pattern"
+                                    .to_string(),
+                            span: arm.pattern.span,
+                        });
+                    }
+                }
+
+                PatternKind::Identifier(_) => {}
+            }
+
+            let bindings =
+                self.check_pattern(&arm.pattern, &expression_type)?;
+
+            self.push_scope();
+
+            let result = (|| {
+                for (name, binding_type) in bindings {
+                    self.declare_variable(
+                        name,
+                        binding_type,
+                        true,
+                        arm.pattern.span,
+                    )?;
+                }
+
+                self.check_block(&arm.body)
+            })();
+
+            self.pop_scope();
+
+            result?;
+        }
+
+        if has_wildcard {
+            return Ok(());
+        }
+
+        match expression_type {
+            Type::Enum(enum_name) => {
+                let definition =
+                    self.environment.enums.get(&enum_name).ok_or_else(
+                        || FusionError::Syntax {
+                            message: format!(
+                                "Unknown enum '{}'",
+                                enum_name
+                            ),
+                            span,
+                        },
+                    )?;
+
+                for variant_name in definition.variants.keys() {
+                    if !covered_variants.contains(variant_name) {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Non-exhaustive match: missing variant '{}'",
+                                variant_name
+                            ),
+                            span,
+                        });
+                    }
+                }
+            }
+
+            Type::Bool => {
+                let has_true = seen_patterns.contains("true");
+                let has_false = seen_patterns.contains("false");
+
+                if !has_true || !has_false {
+                    return Err(FusionError::Syntax {
+                        message:
+                            "Non-exhaustive boolean match"
+                                .to_string(),
+                        span,
+                    });
+                }
+            }
+
+            Type::Unknown => {}
+
+            _ => {
+                return Err(FusionError::Syntax {
+                    message:
+                        "Match over this type requires a wildcard arm"
+                            .to_string(),
+                    span,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------------
+    // Return analysis
+    // ---------------------------------------------------------------------
+
+    fn block_returns(&self, statements: &[Statement]) -> bool {
         for statement in statements {
             match statement {
                 Statement::Return { .. } => return true,
@@ -491,13 +2170,19 @@ impl TypeChecker {
                     else_body: Some(else_body),
                     ..
                 } => {
-                    if Self::block_returns(body) && Self::block_returns(else_body) {
+                    if self.block_returns(body)
+                        && self.block_returns(else_body)
+                    {
                         return true;
                     }
                 }
 
                 Statement::Match { arms, .. } => {
-                    if !arms.is_empty() && arms.iter().all(|arm| Self::block_returns(&arm.body)) {
+                    if !arms.is_empty()
+                        && arms
+                            .iter()
+                            .all(|arm| self.block_returns(&arm.body))
+                    {
                         return true;
                     }
                 }
@@ -509,1333 +2194,195 @@ impl TypeChecker {
         false
     }
 
-    // =========================================================
-    // Expression inference
-    // =========================================================
-    
-
-    fn infer_expression(&self, expression: &Expression) -> Result<Type, FusionError> {
-        match expression {
-            // -------------------------------------------------
-            // Literals
-            // -------------------------------------------------
-            Expression::Number { .. } => Ok(Type::Num),
-
-            Expression::Float { .. } => Ok(Type::Float),
-
-            Expression::Boolean { .. } => Ok(Type::Bool),
-
-            Expression::String { .. } => Ok(Type::String),
-
-            // -------------------------------------------------
-            // Identifier
-            // -------------------------------------------------
-            Expression::Identifier { name, span } => self
-                .lookup_variable(name)
-                .ok_or_else(|| self.unknown_variable(name.clone(), *span)),
-
-            // -------------------------------------------------
-            // Array
-            // -------------------------------------------------
-            Expression::Array { elements, span } => {
-                if elements.is_empty() {
-                    return Ok(Type::Array(Box::new(Type::Unknown)));
-                }
-
-                let first_type = self.infer_expression(&elements[0])?;
-
-                for element in elements.iter().skip(1) {
-                    let element_type = self.infer_expression(element)?;
-
-                    if !Self::types_compatible(&first_type, &element_type) {
-                        return Err(self.type_mismatch(
-                            first_type.name(),
-                            element_type.name(),
-                            element.span(),
-                        ));
-                    }
-                }
-
-                // If the first element is Unknown but another element has
-                // a concrete type, prefer the concrete type.
-                let element_type = if first_type == Type::Unknown {
-                    elements
-                        .iter()
-                        .skip(1)
-                        .map(|element| self.infer_expression(element))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .find(|ty| *ty != Type::Unknown)
-                        .unwrap_or(Type::Unknown)
-                } else {
-                    first_type
-                };
-
-                let _ = span;
-
-                Ok(Type::Array(Box::new(element_type)))
-            }
-
-            // -------------------------------------------------
-            // Index
-            // -------------------------------------------------
-            Expression::Index { array, index, span } => {
-                let array_type = self.infer_expression(array)?;
-
-                let index_type = self.infer_expression(index)?;
-
-                if index_type != Type::Num && index_type != Type::Unknown {
-                    return Err(self.type_mismatch("num index", index_type.name(), index.span()));
-                }
-
-                match array_type {
-                    Type::Array(inner) => Ok(*inner),
-
-                    Type::Unknown => Ok(Type::Unknown),
-
-                    other => Err(self.type_mismatch("array", other.name(), *span)),
-                }
-            }
-
-            // -------------------------------------------------
-            // Property
-            // -------------------------------------------------
-            Expression::Property { object, name, .. } => self.lookup_property_type(object, name),
-
-            // -------------------------------------------------
-            // Unary
-            // -------------------------------------------------
-            Expression::Unary {
-                operator,
-                expression: inner,
-                span,
-            } => {
-                let inner_type = self.infer_expression(inner)?;
-
-                match operator {
-                    UnaryOperator::Negate => {
-                        if inner_type == Type::Unknown {
-                            Ok(Type::Unknown)
-                        } else if inner_type == Type::Num || inner_type == Type::Float {
-                            Ok(inner_type)
-                        } else {
-                            Err(FusionError::InvalidOperation {
-                                left: inner_type.name(),
-                                operator: "-".to_string(),
-                                right: String::new(),
-                                span: *span,
-                            })
-                        }
-                    }
-
-                    UnaryOperator::Not => {
-                        if inner_type == Type::Unknown {
-                            Ok(Type::Bool)
-                        } else if inner_type == Type::Bool {
-                            Ok(Type::Bool)
-                        } else {
-                            Err(FusionError::InvalidOperation {
-                                left: inner_type.name(),
-                                operator: "!".to_string(),
-                                right: String::new(),
-                                span: *span,
-                            })
-                        }
-                    }
-                }
-            }
-
-            // -------------------------------------------------
-            // Binary
-            // -------------------------------------------------
-            Expression::Binary {
-                left,
-                operator,
-                right,
-                span,
-            } => {
-                let left_type = self.infer_expression(left)?;
-
-                let right_type = self.infer_expression(right)?;
-
-                match operator {
-                    Operator::Plus | Operator::Minus | Operator::Multiply | Operator::Divide => {
-                        if left_type == Type::Unknown || right_type == Type::Unknown {
-                            return Ok(
-                                if *operator == Operator::Plus
-                                    && (left_type == Type::String || right_type == Type::String)
-                                {
-                                    Type::String
-                                } else {
-                                    Type::Unknown
-                                },
-                            );
-                        }
-
-                        if left_type == Type::Num && right_type == Type::Num {
-                            return Ok(Type::Num);
-                        }
-
-                        if left_type == Type::Float && right_type == Type::Float {
-                            return Ok(Type::Float);
-                        }
-
-                        if *operator == Operator::Plus
-                            && left_type == Type::String
-                            && right_type == Type::String
-                        {
-                            return Ok(Type::String);
-                        }
-
-                        Err(self.invalid_operation(
-                            &left_type,
-                            Self::operator_name(operator),
-                            &right_type,
-                            *span,
-                        ))
-                    }
-
-                    Operator::Equal | Operator::NotEqual => {
-                        if Self::types_compatible(&left_type, &right_type) {
-                            Ok(Type::Bool)
-                        } else {
-                            Err(self.invalid_operation(
-                                &left_type,
-                                Self::operator_name(operator),
-                                &right_type,
-                                *span,
-                            ))
-                        }
-                    }
-
-                    Operator::Less
-                    | Operator::LessEqual
-                    | Operator::Greater
-                    | Operator::GreaterEqual => {
-                        if left_type == Type::Unknown || right_type == Type::Unknown {
-                            return Ok(Type::Bool);
-                        }
-
-                        let numeric_match = (left_type == Type::Num && right_type == Type::Num)
-                            || (left_type == Type::Float && right_type == Type::Float);
-
-                        if numeric_match {
-                            Ok(Type::Bool)
-                        } else {
-                            Err(self.invalid_operation(
-                                &left_type,
-                                Self::operator_name(operator),
-                                &right_type,
-                                *span,
-                            ))
-                        }
-                    }
-
-                    Operator::And | Operator::Or => {
-                        if left_type == Type::Unknown || right_type == Type::Unknown {
-                            return Ok(Type::Bool);
-                        }
-
-                        if left_type == Type::Bool && right_type == Type::Bool {
-                            Ok(Type::Bool)
-                        } else {
-                            Err(self.invalid_operation(
-                                &left_type,
-                                Self::operator_name(operator),
-                                &right_type,
-                                *span,
-                            ))
-                        }
-                    }
-                }
-            }
-
-            // -------------------------------------------------
-            // Function call
-            // -------------------------------------------------
-            Expression::Call {
-                name,
-                arguments,
-                generic_arguments,
-                ..
-            } => {
-                // Struct constructor.
-                if let Some(struct_definition) = self.environment.structs.get(name) {
-                    if arguments.len() != struct_definition.fields.len() {
-                        return Err(FusionError::TypeMismatch {
-                            expected: format!("{} arguments", struct_definition.fields.len()),
-                            found: format!("{} arguments", arguments.len()),
-                            span: Self::expression_span(expression),
-                        });
-                    }
-
-                    for (argument, (_, expected_type)) in
-                        arguments.iter().zip(struct_definition.fields.iter())
-                    {
-                        let actual_type = self.infer_expression(argument)?;
-
-                        if !Self::types_compatible(expected_type, &actual_type) {
-                            return Err(FusionError::TypeMismatch {
-                                expected: format!("{:?}", expected_type),
-                                found: format!("{:?}", actual_type),
-                                span: Self::expression_span(argument),
-                            });
-                        }
-                    }
-
-                    return Ok(Type::Struct(name.clone()));
-                }
-
-                // Normal function call.
-                let function = self.environment.functions.get(name).ok_or_else(|| {
-                    FusionError::UnknownVariable {
-                        name: name.clone(),
-                        span: Self::expression_span(expression),
-                    }
-                })?;
-
-                if arguments.len() != function.parameters.len() {
-                    return Err(FusionError::TypeMismatch {
-                        expected: format!("{} arguments", function.parameters.len()),
-                        found: format!("{} arguments", arguments.len()),
-                        span: Self::expression_span(expression),
-                    });
-                }
-
-                // Map generic parameters to the concrete types supplied at the call site.
-                //
-                // Example:
-                //
-                // fn identity<T>(value: T) -> T
-                //
-                // identity<num>(42)
-                //
-                // produces:
-                //
-                // T -> num
-                let mut substitutions = HashMap::new();
-
-                if !generic_arguments.is_empty() {
-                    if generic_arguments.len() != function.generic_parameters.len() {
-                        return Err(FusionError::TypeMismatch {
-                            expected: format!(
-                                "{} generic arguments",
-                                function.generic_parameters.len()
-                            ),
-                            found: format!("{} generic arguments", generic_arguments.len()),
-                            span: Self::expression_span(expression),
-                        });
-                    }
-
-                    for (generic_parameter, generic_argument) in function
-                        .generic_parameters
-                        .iter()
-                        .zip(generic_arguments.iter())
-                    {
-                        let concrete_type = self.convert_type(generic_argument)?;
-
-                        substitutions.insert(generic_parameter.clone(), concrete_type);
-                    }
-                }
-
-                // A generic function must not be called without explicit generic
-                // arguments until generic inference is implemented.
-                if !function.generic_parameters.is_empty() && generic_arguments.is_empty() {
-                    return Err(FusionError::TypeMismatch {
-                        expected: format!(
-                            "{} generic arguments",
-                            function.generic_parameters.len()
-                        ),
-                        found: "0 generic arguments".to_string(),
-                        span: Self::expression_span(expression),
-                    });
-                }
-
-                for (argument, expected_type) in arguments.iter().zip(function.parameters.iter()) {
-                    let actual_type = self.infer_expression(argument)?;
-
-                    let expected_type = self.substitute_generic_type(expected_type, &substitutions);
-
-                    if !Self::types_compatible(&expected_type, &actual_type) {
-                        return Err(FusionError::TypeMismatch {
-                            expected: format!("{:?}", expected_type),
-                            found: format!("{:?}", actual_type),
-                            span: Self::expression_span(argument),
-                        });
-                    }
-                }
-
-                let return_type =
-                    self.substitute_generic_type(&function.return_type, &substitutions);
-
-                Ok(return_type)
-            }
-
-            // -------------------------------------------------
-            // Method call
-            // -------------------------------------------------
-            Expression::MethodCall {
-                object,
-                method,
-                arguments,
-                span,
-            } => {
-                let object_type = self.infer_expression(object)?;
-
-                match object_type {
-                    Type::Array(element_type) => match method.as_str() {
-                        "push" => {
-                            if arguments.len() != 1 {
-                                return Err(self.type_mismatch(
-                                    "1 argument",
-                                    format!("{} arguments", arguments.len()),
-                                    *span,
-                                ));
-                            }
-
-                            let argument_type = self.infer_expression(&arguments[0])?;
-
-                            if !Self::types_compatible(&element_type, &argument_type) {
-                                return Err(self.type_mismatch(
-                                    element_type.name(),
-                                    argument_type.name(),
-                                    arguments[0].span(),
-                                ));
-                            }
-
-                            Ok(Type::Void)
-                        }
-
-                        "pop" => {
-                            if !arguments.is_empty() {
-                                return Err(self.type_mismatch(
-                                    "0 arguments",
-                                    format!("{} arguments", arguments.len()),
-                                    *span,
-                                ));
-                            }
-
-                            Ok(*element_type)
-                        }
-
-                        "length" => {
-                            if !arguments.is_empty() {
-                                return Err(self.type_mismatch(
-                                    "0 arguments",
-                                    format!("{} arguments", arguments.len()),
-                                    *span,
-                                ));
-                            }
-
-                            Ok(Type::Num)
-                        }
-
-                        _ => Err(self
-                            .unknown_variable(format!("Unknown array method '{}'", method), *span)),
-                    },
-
-                    Type::Unknown => Ok(Type::Unknown),
-
-                    other => Err(self.type_mismatch("array", other.name(), object.span())),
-                }
-            }
-
-            // -------------------------------------------------
-            // Struct constructor
-            // -------------------------------------------------
-            Expression::StructConstructor { name, fields, span } => {
-                let definition = self
-                    .environment
-                    .structs
-                    .get(name)
-                    .ok_or_else(|| self.unknown_variable(name.clone(), *span))?;
-
-                let mut supplied_fields = HashSet::new();
-
-                for (field_name, field_expression) in fields {
-                    if !supplied_fields.insert(field_name.clone()) {
-                        return Err(self.unknown_variable(
-                            format!("Field '{}' is specified more than once", field_name),
-                            field_expression.span(),
-                        ));
-                    }
-
-                    let expected_type = definition
-                        .fields
-                        .iter()
-                        .find(|(name, _)| name == field_name)
-                        .map(|(_, ty)| ty)
-                        .ok_or_else(|| {
-                            self.unknown_variable(
-                                format!("Unknown field '{}' on struct '{}'", field_name, name),
-                                field_expression.span(),
-                            )
-                        })?;
-
-                    let actual_type = self.infer_expression(field_expression)?;
-
-                    if !Self::types_compatible(expected_type, &actual_type) {
-                        return Err(self.type_mismatch(
-                            expected_type.name(),
-                            actual_type.name(),
-                            field_expression.span(),
-                        ));
-                    }
-                }
-
-                for (field_name, _) in &definition.fields {
-                    if !supplied_fields.contains(field_name) {
-                        return Err(self.unknown_variable(
-                            format!("Missing field '{}' in struct '{}'", field_name, name),
-                            *span,
-                        ));
-                    }
-                }
-
-                Ok(Type::Struct(name.clone()))
-            }
-
-            // -------------------------------------------------
-            // Enum constructor
-            // -------------------------------------------------
-            Expression::EnumConstructor {
-                enum_name,
-                variant,
-                arguments,
-                span,
-            } => {
-                let definition = self
-                    .environment
-                    .enums
-                    .get(enum_name)
-                    .ok_or_else(|| self.unknown_variable(enum_name.clone(), *span))?;
-
-                let variant_definition = definition.variants.get(variant).ok_or_else(|| {
-                    self.unknown_variable(
-                        format!("Unknown variant '{}::{}'", enum_name, variant),
-                        *span,
-                    )
-                })?;
-
-                if arguments.len() != variant_definition.fields.len() {
-                    return Err(self.type_mismatch(
-                        format!("{} arguments", variant_definition.fields.len()),
-                        format!("{} arguments", arguments.len()),
-                        *span,
-                    ));
-                }
-
-                for (argument, expected_type) in
-                    arguments.iter().zip(variant_definition.fields.iter())
-                {
-                    let actual_type = self.infer_expression(argument)?;
-
-                    if !Self::types_compatible(expected_type, &actual_type) {
-                        return Err(self.type_mismatch(
-                            expected_type.name(),
-                            actual_type.name(),
-                            argument.span(),
-                        ));
-                    }
-                }
-
-                Ok(Type::Enum(enum_name.clone()))
-            }
-        }
-    }
-
-    // =========================================================
-    // Assignment checking
-    // =========================================================
-
-    fn check_assignment(
-        &mut self,
-        target: &Expression,
-        value: &Expression,
-        span: Span,
-    ) -> Result<(), FusionError> {
-        let value_type = self.infer_expression(value)?;
-
-        match target {
-            Expression::Identifier {
-                name,
-                span: target_span,
-            } => {
-                if let Some(info) = self.lookup_variable_info(name) {
-                    if !Self::types_compatible(&info.ty, &value_type) {
-                        return Err(FusionError::TypeMismatch {
-                            expected: info.ty.name(),
-                            found: value_type.name(),
-                            span,
-                        });
-                    }
-
-                    if !info.mutable {
-                        return Err(FusionError::CannotAssignToConst {
-                            name: name.clone(),
-                            span: *target_span,
-                        });
-                    }
-
-                    Ok(())
-                } else {
-                    // First assignment introduces an inferred mutable variable.
-                    self.declare_variable(name.clone(), value_type, true, *target_span)?;
-
-                    Ok(())
-                }
-            }
-
-            Expression::Property { object, name, .. } => {
-                if !self.property_target_is_mutable(object)? {
-                    let variable_name =
-                        Self::property_root_name(object).unwrap_or_else(|| "<unknown>".to_string());
-
-                    return Err(FusionError::CannotAssignToConst {
-                        name: variable_name,
-                        span: object.span(),
-                    });
-                }
-
-                let field_type = self.lookup_property_type(object, name)?;
-
-                if !Self::types_compatible(&field_type, &value_type) {
-                    return Err(self.type_mismatch(
-                        field_type.name(),
-                        value_type.name(),
-                        target.span(),
-                    ));
-                }
-
-                Ok(())
-            }
-
-            Expression::Index { array, index, .. } => {
-                let array_type = self.infer_expression(array)?;
-
-                let index_type = self.infer_expression(index)?;
-
-                if index_type != Type::Num && index_type != Type::Unknown {
-                    return Err(self.type_mismatch("num index", index_type.name(), index.span()));
-                }
-
-                if let Some(root_name) = Self::property_root_name(array) {
-                    if let Some(info) = self.lookup_variable_info(&root_name) {
-                        if !info.mutable {
-                            return Err(FusionError::CannotAssignToConst {
-                                name: root_name,
-                                span: array.span(),
-                            });
-                        }
-                    }
-                }
-
-                match array_type {
-                    Type::Array(element_type) => {
-                        if !Self::types_compatible(&element_type, &value_type) {
-                            return Err(self.type_mismatch(
-                                element_type.name(),
-                                value_type.name(),
-                                span,
-                            ));
-                        }
-
-                        Ok(())
-                    }
-
-                    Type::Unknown => Ok(()),
-
-                    other => Err(self.type_mismatch("array", other.name(), array.span())),
-                }
-            }
-
-            _ => Err(self.unknown_variable("Invalid assignment target", target.span())),
-        }
-    }
-
-    // =========================================================
-    // Statement checking
-    // =========================================================
-
-    pub fn check_statement(&mut self, statement: &Statement) -> Result<(), FusionError> {
-        match statement {
-            // -------------------------------------------------
-            // Variables
-            // -------------------------------------------------
-            Statement::VariableDeclarations { declarations, .. } => {
-                for declaration in declarations {
-                    let ty = match (&declaration.declared_type, &declaration.value) {
-                        (Some(type_name), Some(value)) => {
-                            let declared = self.convert_type(type_name)?;
-                            let inferred = self.infer_expression(value)?;
-
-                            if !Self::types_compatible(&declared, &inferred) {
-                                return Err(self.type_mismatch(
-                                    declared.name(),
-                                    inferred.name(),
-                                    declaration.span,
-                                ));
-                            }
-
-                            declared
-                        }
-
-                        (Some(type_name), None) => {
-                            // Explicitly typed but uninitialized.
-                            self.convert_type(type_name)?
-                        }
-
-                        (None, Some(value)) => {
-                            // Type inferred from the initializer.
-                            self.infer_expression(value)?
-                        }
-
-                        (None, None) => {
-                            unreachable!(
-                                "parser produced a variable declaration without a type or initializer"
-                            )
-                        }
-                    };
-
-                    self.declare_variable(
-                        declaration.name.clone(),
-                        ty,
-                        true,
-                        declaration.name_span,
-                    )?;
-                }
-
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Constants
-            // -------------------------------------------------
-            Statement::ConstDeclaration {
-                name,
-                name_span,
-                declared_type,
-                value,
-                ..
-            } => {
-                let inferred = self.infer_expression(value)?;
-
-                let ty = match declared_type {
-                    Some(type_name) => {
-                        let declared = self.convert_type(type_name)?;
-
-                        if !Self::types_compatible(&declared, &inferred) {
-                            return Err(self.type_mismatch(
-                                declared.name(),
-                                inferred.name(),
-                                *name_span,
-                            ));
-                        }
-
-                        declared
-                    }
-
-                    None => inferred,
-                };
-
-                self.declare_variable(name.clone(), ty, false, *name_span)
-            }
-
-            // -------------------------------------------------
-            // Assignment
-            // -------------------------------------------------
-            Statement::Assignment {
-                target,
-                value,
-                span,
-            } => {
-                self.check_assignment(target, value, *span)
-            }
-
-            // -------------------------------------------------
-            // Function call
-            // -------------------------------------------------
-            Statement::Call { expression, .. } => {
-                let ty = self.infer_expression(expression)?;
-
-                // A call statement may discard any return value.
-                let _ = ty;
-
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Expression statement
-            // -------------------------------------------------
-            Statement::Expression { expression, .. } => {
-                self.infer_expression(expression)?;
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // If
-            // -------------------------------------------------
-            Statement::If {
-                condition,
-                body,
-                else_body,
-                ..
-            } => {
-                let condition_type = self.infer_expression(condition)?;
-
-                self.require_bool(condition_type, condition.span())?;
-
-                self.push_scope();
-
-                let body_result = self.check_block(body);
-
-                self.pop_scope();
-
-                body_result?;
-
-                if let Some(else_body) = else_body {
-                    self.push_scope();
-
-                    let else_result = self.check_block(else_body);
-
-                    self.pop_scope();
-
-                    else_result?;
-                }
-
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // While
-            // -------------------------------------------------
-            Statement::While {
-                condition, body, ..
-            } => {
-                let condition_type = self.infer_expression(condition)?;
-
-                self.require_bool(condition_type, condition.span())?;
-
-                self.push_scope();
-
-                self.loop_depth += 1;
-                let result = self.check_block(body);
-                self.loop_depth -= 1;
-
-                self.pop_scope();
-
-                result
-            }
-
-            // -------------------------------------------------
-            // For
-            // -------------------------------------------------
-            Statement::For {
-                variable,
-                start,
-                end,
-                body,
-                span,
-            } => {
-                let start_type = self.infer_expression(start)?;
-
-                let end_type = self.infer_expression(end)?;
-
-                self.require_num(start_type.clone(), start.span())?;
-
-                self.require_num(end_type.clone(), end.span())?;
-
-                self.push_scope();
-
-                let result = (|| {
-                    self.declare_variable(variable.clone(), Type::Num, true, *span)?;
-
-                    self.loop_depth += 1;
-                    let body_result = self.check_block(body);
-                    self.loop_depth -= 1;
-
-                    body_result
-                })();
-
-                self.pop_scope();
-
-                result
-            }
-
-            // -------------------------------------------------
-            // Match
-            // -------------------------------------------------
-            Statement::Match {
-                expression,
-                arms,
-                span,
-            } => self.check_match(expression, arms, *span),
-
-            // -------------------------------------------------
-            // Return
-            // -------------------------------------------------
-            Statement::Return { value, span } => {
-                if self.current_function.is_none() {
-                    return Err(FusionError::TypeMismatch {
-                        expected: "inside function".to_string(),
-                        found: "return".to_string(),
-                        span: *span,
-                    });
-                }
-
-                match value {
-                    None => {
-                        let context = self.current_function.as_mut().unwrap();
-                        context.has_return = true;
-
-                        if let Some(expected) = &context.declared_return_type {
-                            return Err(FusionError::TypeMismatch {
-                                expected: expected.name(),
-                                found: "void return".to_string(),
-                                span: *span,
-                            });
-                        }
-
-                        if let Some(previous) = &context.inferred_return_type {
-                            if *previous != Type::Void {
-                                return Err(FusionError::TypeMismatch {
-                                    expected: previous.name(),
-                                    found: "void return".to_string(),
-                                    span: *span,
-                                });
-                            }
-                        } else {
-                            context.inferred_return_type = Some(Type::Void);
-                        }
-
-                        Ok(())
-                    }
-
-                    Some(value) => {
-                        let actual_type = self.infer_expression(value)?;
-
-                        let context = self.current_function.as_mut().unwrap();
-                        context.has_return = true;
-
-                        if let Some(expected) = &context.declared_return_type {
-                            if !Self::types_compatible(expected, &actual_type) {
-                                return Err(FusionError::TypeMismatch {
-                                    expected: expected.name(),
-                                    found: actual_type.name(),
-                                    span: *span,
-                                });
-                            }
-                        } else {
-                            match &context.inferred_return_type {
-                                None => {
-                                    context.inferred_return_type = Some(actual_type);
-                                }
-
-                                Some(Type::Void) => {
-                                    return Err(FusionError::TypeMismatch {
-                                        expected: "void".to_string(),
-                                        found: actual_type.name(),
-                                        span: *span,
-                                    });
-                                }
-
-                                Some(previous) => {
-                                    if !Self::types_compatible(previous, &actual_type) {
-                                        return Err(FusionError::TypeMismatch {
-                                            expected: previous.name(),
-                                            found: actual_type.name(),
-                                            span: *span,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-
-                        Ok(())
-                    }
-                }
-            }
-
-            // -------------------------------------------------
-            // Defer
-            // -------------------------------------------------
-            Statement::Defer { expression, .. } => {
-                self.infer_expression(expression)?;
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Break
-            // -------------------------------------------------
-            Statement::Break { span } => {
-                if self.loop_depth == 0 {
-                    return Err(FusionError::Syntax {
-                        message: "'break' is only valid inside a loop".to_string(),
-                        span: *span,
-                    });
-                }
-
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Continue
-            // -------------------------------------------------
-            Statement::Continue { span } => {
-                if self.loop_depth == 0 {
-                    return Err(FusionError::Syntax {
-                        message: "'continue' is only valid inside a loop".to_string(),
-                        span: *span,
-                    });
-                }
-
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Function
-            // -------------------------------------------------
-            Statement::Function { .. } => {
-                // Function declarations are registered and checked by
-                // check(). Nested functions are not currently supported
-                // by the type environment.
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Struct / Enum
-            // -------------------------------------------------
-            Statement::Struct { .. } | Statement::Enum { .. } => Ok(()),
-
-            // -------------------------------------------------
-            // Main
-            // -------------------------------------------------
-            Statement::Main { body, .. } => {
-                self.push_scope();
-
-                let result = self.check_block(body);
-
-                self.pop_scope();
-
-                result
-            }
-
-            // -------------------------------------------------
-            // Trait
-            // -------------------------------------------------
-            Statement::Trait { methods, .. } => {
-                for method in methods {
-                    self.validate_trait_method(method)?;
-                }
-
-                Ok(())
-            }
-
-            // -------------------------------------------------
-            // Impl
-            // -------------------------------------------------
-            Statement::Impl {
-                trait_name,
-                type_name,
-                methods,
-                span,
-            } => self.check_impl(trait_name.as_deref(), type_name, methods, *span),
-        }
-    }
-
-    fn check_block(&mut self, statements: &[Statement]) -> Result<(), FusionError> {
-        for statement in statements {
-            self.check_statement(statement)?;
-        }
-
-        Ok(())
-    }
-
-    // =========================================================
-    // Match checking
-    // =========================================================
-
-    fn check_match(
-        &mut self,
-        expression: &Expression,
-        arms: &[MatchArm],
-        span: Span,
-    ) -> Result<(), FusionError> {
-        let expression_type = self.infer_expression(expression)?;
-
-        let mut matched_variants = HashSet::new();
-        let mut has_wildcard = false;
-
-        for arm in arms {
-            match &arm.pattern.kind {
-                PatternKind::Wildcard => {
-                    has_wildcard = true;
-                }
-
-                PatternKind::Identifier(name) if name == "_" => {
-                    has_wildcard = true;
-                }
-
-                PatternKind::Variant { name, .. } => {
-                    if !matched_variants.insert(name.clone()) {
-                        return Err(self.unknown_variable(
-                            format!("Duplicate match variant '{}'", name),
-                            arm.pattern.span,
-                        ));
-                    }
-                }
-
-                _ => {}
-            }
-
-            self.push_scope();
-
-            let pattern_result = self.check_pattern(&arm.pattern, &expression_type);
-
-            if let Err(error) = pattern_result {
-                self.pop_scope();
-                return Err(error);
-            }
-
-            let body_result = self.check_block(&arm.body);
-
-            self.pop_scope();
-
-            body_result?;
-        }
-
-        match &expression_type {
-            Type::Enum(enum_name) => {
-                if !has_wildcard {
-                    let definition = self.environment.enums.get(enum_name).ok_or_else(|| {
-                        self.unknown_variable(enum_name.clone(), expression.span())
-                    })?;
-
-                    for variant_name in definition.variants.keys() {
-                        let full_name = format!("{}::{}", enum_name, variant_name);
-
-                        if !matched_variants.contains(&full_name) {
-                            return Err(self.unknown_variable(
-                                format!("Non-exhaustive match: missing variant '{}'", full_name),
-                                span,
-                            ));
-                        }
-                    }
-                }
-            }
-
-            Type::Bool => {
-                if !has_wildcard {
-                    let mut has_true = false;
-                    let mut has_false = false;
-
-                    for arm in arms {
-                        match arm.pattern.kind {
-                            PatternKind::Boolean(true) => {
-                                has_true = true;
-                            }
-
-                            PatternKind::Boolean(false) => {
-                                has_false = true;
-                            }
-
-                            _ => {}
-                        }
-                    }
-
-                    if !has_true {
-                        return Err(
-                            self.unknown_variable("Non-exhaustive match: missing 'true'", span)
-                        );
-                    }
-
-                    if !has_false {
-                        return Err(
-                            self.unknown_variable("Non-exhaustive match: missing 'false'", span)
-                        );
-                    }
-                }
-            }
-
-            Type::Num | Type::Float | Type::String => {
-                if !has_wildcard {
-                    return Err(
-                        self.unknown_variable("Non-exhaustive match: missing wildcard '_'", span)
-                    );
-                }
-            }
-
-            Type::Unknown => {
-                // We cannot prove exhaustiveness for an unknown type.
-                // Do not reject the program solely because the type is
-                // unresolved.
-            }
-
-            _ => {
-                if !has_wildcard {
-                    return Err(
-                        self.unknown_variable("Non-exhaustive match: missing wildcard '_'", span)
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    // =========================================================
+    // ---------------------------------------------------------------------
     // Function checking
-    // =========================================================
+    // ---------------------------------------------------------------------
 
     fn check_function_body(
         &mut self,
-        function_name: &str,
+        name: &str,
         generic_parameters: &[String],
         parameters: &[Parameter],
-        return_type: &Option<String>,
+        return_type: Option<&String>,
         body: &[Statement],
-        function_span: Span,
-    ) -> Result<Type, FusionError> {
-        let old_function = self.current_function.take();
+        is_async: bool,
+        span: Span,
+    ) -> Result<(), FusionError> {
+        let mut generic_set = HashSet::new();
 
-        let generic_set: HashSet<String> = generic_parameters.iter().cloned().collect();
-
-        // Reject duplicate generic names.
-        if generic_set.len() != generic_parameters.len() {
-            self.current_function = old_function;
-
-            return Err(self.unknown_variable(
-                format!(
-                    "Function '{}' declares a generic parameter more than once",
-                    function_name
-                ),
-                function_span,
-            ));
+        for parameter in generic_parameters {
+            if !generic_set.insert(parameter.clone()) {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Duplicate generic parameter '{}'",
+                        parameter
+                    ),
+                    span,
+                });
+            }
         }
 
-        // Validate the declared return type before entering the body.
         let declared_return_type = match return_type {
-            Some(type_name) => Some(self.convert_type_with_generics(type_name, &generic_set)?),
+            Some(type_name) => Some(
+                self.convert_type_with_generics(
+                    type_name,
+                    generic_parameters,
+                    span,
+                )?,
+            ),
 
             None => None,
         };
 
+        let previous_function =
+            self.current_function.take();
+
+        self.current_function = Some(FunctionContext {
+            declared_return_type,
+            inferred_return_type: None,
+            has_return: false,
+        });
+
         self.push_scope();
 
         let result = (|| {
-            let mut parameter_names = HashSet::new();
-
             for parameter in parameters {
-                if !parameter_names.insert(parameter.name.clone()) {
-                    return Err(self.unknown_variable(
-                        format!("Parameter '{}' is declared more than once", parameter.name),
-                        parameter.name_span,
-                    ));
-                }
-
-                let ty = match &parameter.type_name {
-                    Some(type_name) => self.convert_type_with_generics(type_name, &generic_set)?,
+                let parameter_type = match &parameter.type_name {
+                    Some(type_name) => self
+                        .convert_type_with_generics(
+                            type_name,
+                            generic_parameters,
+                            parameter.span,
+                        )?,
 
                     None => Type::Unknown,
                 };
 
-                self.declare_variable(parameter.name.clone(), ty, true, parameter.name_span)?;
+                self.declare_variable(
+                    parameter.name.clone(),
+                    parameter_type,
+                    true,
+                    parameter.span,
+                )?;
             }
-
-            self.current_function = Some(FunctionContext {
-                declared_return_type: declared_return_type.clone(),
-                inferred_return_type: None,
-                has_return: false,
-            });
 
             self.check_block(body)?;
 
             let context = self
                 .current_function
                 .as_ref()
-                .expect("function context was installed");
+                .expect("function context exists")
+                .clone();
 
-            if let Some(declared) = &context.declared_return_type {
-                if !Self::block_returns(body) {
-                    return Err(FusionError::TypeMismatch {
-                        expected: declared.name(),
-                        found: "no return".to_string(),
-                        span: function_span,
-                    });
-                }
-
-                Ok(declared.clone())
-            } else {
-                let context = self.current_function.as_ref().unwrap();
-
-                match &context.inferred_return_type {
-                    None => Ok(Type::Void),
-
-                    Some(inferred) => Ok(inferred.clone()),
-                }
+            if context.declared_return_type.is_some()
+                && context.declared_return_type
+                    != Some(Type::Void)
+                && !context.has_return
+            {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Function '{}' must return a value",
+                        name
+                    ),
+                    span,
+                });
             }
+
+            if context.declared_return_type.is_none()
+                && context.has_return
+                && !self.block_returns(body)
+            {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Function '{}' may reach the end without returning",
+                        name
+                    ),
+                    span,
+                });
+            }
+
+            Ok(())
         })();
 
-        self.current_function = old_function;
         self.pop_scope();
+        self.current_function = previous_function;
 
-        result
+        if result.is_err() {
+            return result;
+        }
+
+        let _ = is_async;
+
+        Ok(())
     }
 
-    // =========================================================
-    // Trait checking
-    // =========================================================
-
-    fn validate_trait_method(&self, method: &TraitMethod) -> Result<(), FusionError> {
+    fn validate_trait_method(
+        &self,
+        method: &TraitMethod,
+        generic_parameters: &[String],
+    ) -> Result<(), FusionError> {
         let mut names = HashSet::new();
 
         for parameter in &method.parameters {
             if !names.insert(parameter.name.clone()) {
-                return Err(self.unknown_variable(
-                    format!("Parameter '{}' is declared more than once", parameter.name),
-                    parameter.name_span,
-                ));
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Duplicate parameter '{}'",
+                        parameter.name
+                    ),
+                    span: parameter.span,
+                });
             }
 
             if let Some(type_name) = &parameter.type_name {
-                self.convert_type(type_name)?;
+                self.convert_type_with_generics(
+                    type_name,
+                    generic_parameters,
+                    parameter.span,
+                )?;
             }
         }
 
         if let Some(return_type) = &method.return_type {
-            self.convert_type(return_type)?;
+            self.convert_type_with_generics(
+                return_type,
+                generic_parameters,
+                method.span,
+            )?;
         }
 
         Ok(())
     }
 
-    // =========================================================
-    // Impl checking
-    // =========================================================
-
     fn check_impl(
         &mut self,
-        trait_name: Option<&str>,
+        trait_name: Option<&String>,
         type_name: &str,
         methods: &[Statement],
         span: Span,
     ) -> Result<(), FusionError> {
-        let target_type = self.convert_type(type_name)?;
-
-        if let Some(trait_name) = trait_name {
-            // A trait must exist before it can be implemented.
-            //
-            // The current environment does not retain trait definitions,
-            // so the implementation can only validate the target type
-            // here. The parser/registration layer remains responsible for
-            // retaining trait metadata if stricter conformance checking
-            // is desired later.
-            let _ = trait_name;
+        if !self.environment.structs.contains_key(type_name)
+            && !self.environment.enums.contains_key(type_name)
+        {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Cannot implement methods for unknown type '{}'",
+                    type_name
+                ),
+                span,
+            });
         }
 
-        let _ = target_type;
-
-        let mut method_names = HashSet::new();
+        if let Some(trait_name) = trait_name {
+            if !self.environment.functions.contains_key(trait_name)
+                && !self.environment.structs.contains_key(trait_name)
+                && !self.environment.enums.contains_key(trait_name)
+            {
+                // Traits are not stored as a separate environment entry
+                // in the current TypeEnvironment, so trait existence is
+                // validated during the main AST pass.
+            }
+        }
 
         for method in methods {
             match method {
@@ -1845,91 +2392,85 @@ impl TypeChecker {
                     parameters,
                     return_type,
                     body,
-                    span: method_span,
-                    ..
+                    is_async,
+                    span,
                 } => {
-                    if !method_names.insert(name.clone()) {
-                        return Err(self.unknown_variable(
-                            format!("Method '{}' is declared more than once in impl", name),
-                            *method_span,
-                        ));
-                    }
-
-                    let inferred_return = self.check_function_body(
+                    self.check_function_body(
                         name,
                         generic_parameters,
                         parameters,
-                        return_type,
+                        return_type.as_ref(),
                         body,
-                        *method_span,
+                        *is_async,
+                        *span,
                     )?;
-
-                    // Keep the result meaningful for the checker even
-                    // though impl methods currently aren't entered into the
-                    // global FunctionType table.
-                    let _ = inferred_return;
                 }
 
-                other => {
+                _ => {
                     return Err(FusionError::Syntax {
-                        message: "Only function declarations are valid inside an impl block"
-                            .to_string(),
-                        span: other.span(),
+                        message:
+                            "Impl blocks may only contain functions"
+                                .to_string(),
+                        span: method.span(),
                     });
                 }
             }
         }
 
-        let _ = span;
-
         Ok(())
     }
 
-    // =========================================================
-    // Whole-program checking
-    // =========================================================
+    // ---------------------------------------------------------------------
+    // Program checking
+    // ---------------------------------------------------------------------
 
-    pub fn check(&mut self, program: &Program) -> Result<(), FusionError> {
-        // -----------------------------------------------------
-        // Pass 1: register struct names
-        // -----------------------------------------------------
-
+    pub fn check(
+        &mut self,
+        program: &Program,
+    ) -> Result<(), FusionError> {
+        // Pass 1: register struct names.
         for statement in &program.statements {
-            if let Statement::Struct { name, span, .. } = statement {
+            if let Statement::Struct {
+                name,
+                span,
+                ..
+            } = statement
+            {
                 if self.environment.structs.contains_key(name) {
-                    return Err(self
-                        .unknown_variable(format!("Struct '{}' is already defined", name), *span));
+                    return Err(FusionError::Syntax {
+                        message: format!(
+                            "Duplicate struct '{}'",
+                            name
+                        ),
+                        span: *span,
+                    });
                 }
 
-                // Do not allow a type name to collide with an enum.
-                if self.environment.enums.contains_key(name) {
-                    return Err(
-                        self.unknown_variable(format!("Type '{}' is already defined", name), *span)
-                    );
-                }
-
-                self.environment
-                    .structs
-                    .insert(name.clone(), StructDefinition { fields: Vec::new() });
+                self.environment.structs.insert(
+                    name.clone(),
+                    StructDefinition {
+                        fields: Vec::new(),
+                    },
+                );
             }
         }
 
-        // -----------------------------------------------------
-        // Pass 2: register enum names
-        // -----------------------------------------------------
-
+        // Pass 2: register enum names.
         for statement in &program.statements {
-            if let Statement::Enum { name, span, .. } = statement {
+            if let Statement::Enum {
+                name,
+                span,
+                ..
+            } = statement
+            {
                 if self.environment.enums.contains_key(name) {
-                    return Err(
-                        self.unknown_variable(format!("Enum '{}' is already defined", name), *span)
-                    );
-                }
-
-                if self.environment.structs.contains_key(name) {
-                    return Err(
-                        self.unknown_variable(format!("Type '{}' is already defined", name), *span)
-                    );
+                    return Err(FusionError::Syntax {
+                        message: format!(
+                            "Duplicate enum '{}'",
+                            name
+                        ),
+                        span: *span,
+                    });
                 }
 
                 self.environment.enums.insert(
@@ -1941,188 +2482,264 @@ impl TypeChecker {
             }
         }
 
-        // -----------------------------------------------------
-        // Pass 3: resolve struct fields
-        // -----------------------------------------------------
-
+        // Pass 3: resolve struct fields.
         for statement in &program.statements {
-            if let Statement::Struct { name, fields, .. } = statement {
-                let mut field_list = Vec::new();
-                let mut field_names = HashSet::new();
+            if let Statement::Struct {
+                name,
+                fields,
+                span,
+            } = statement
+            {
+                let mut seen = HashSet::new();
+                let mut resolved_fields = Vec::new();
 
                 for field in fields {
-                    if !field_names.insert(field.name.clone()) {
-                        return Err(self.unknown_variable(
-                            format!("Duplicate field '{}' in struct '{}'", field.name, name),
-                            field.name_span,
-                        ));
+                    if !seen.insert(field.name.clone()) {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Duplicate field '{}'",
+                                field.name
+                            ),
+                            span: field.span,
+                        });
                     }
 
-                    let field_type = self.convert_type(&field.type_name)?;
+                    let field_type =
+                        self.convert_type(&field.type_name, field.span)?;
 
-                    field_list.push((field.name.clone(), field_type));
+                    resolved_fields.push((
+                        field.name.clone(),
+                        field_type,
+                    ));
                 }
 
-                self.environment
-                    .structs
-                    .get_mut(name)
-                    .expect("struct was registered")
-                    .fields = field_list;
+                let definition =
+                    self.environment.structs.get_mut(name).ok_or_else(
+                        || FusionError::Syntax {
+                            message: format!(
+                                "Unknown struct '{}'",
+                                name
+                            ),
+                            span: *span,
+                        },
+                    )?;
+
+                definition.fields = resolved_fields;
             }
         }
 
-        // -----------------------------------------------------
-        // Pass 4: resolve enum variants
-        // -----------------------------------------------------
-
+        // Pass 4: resolve enum variants.
         for statement in &program.statements {
-            if let Statement::Enum { name, variants, .. } = statement {
-                let mut variant_map = HashMap::new();
+            if let Statement::Enum {
+                name,
+                variants,
+                span,
+            } = statement
+            {
+                let mut resolved_variants = HashMap::new();
 
                 for variant in variants {
-                    if variant_map.contains_key(&variant.name) {
-                        return Err(self.unknown_variable(
-                            format!("Duplicate variant '{}' in enum '{}'", variant.name, name),
-                            variant.name_span,
-                        ));
+                    if resolved_variants.contains_key(&variant.name) {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Duplicate enum variant '{}'",
+                                variant.name
+                            ),
+                            span: variant.span,
+                        });
                     }
 
-                    let mut field_types = Vec::new();
+                    let mut resolved_fields = Vec::new();
 
-                    for field in &variant.fields {
-                        field_types.push(self.convert_type(field)?);
+                    for field_type_name in &variant.fields {
+                        resolved_fields.push(
+                            self.convert_type(
+                                field_type_name,
+                                variant.span,
+                            )?,
+                        );
                     }
 
-                    variant_map.insert(
+                    resolved_variants.insert(
                         variant.name.clone(),
                         EnumVariantDefinition {
-                            fields: field_types,
+                            fields: resolved_fields,
                         },
                     );
                 }
 
-                self.environment
-                    .enums
-                    .get_mut(name)
-                    .expect("enum was registered")
-                    .variants = variant_map;
+                let definition =
+                    self.environment.enums.get_mut(name).ok_or_else(
+                        || FusionError::Syntax {
+                            message: format!(
+                                "Unknown enum '{}'",
+                                name
+                            ),
+                            span: *span,
+                        },
+                    )?;
+
+                definition.variants = resolved_variants;
             }
         }
 
-        // -----------------------------------------------------
-        // Pass 5: register function signatures
-        // -----------------------------------------------------
-
+        // Pass 5: register function signatures.
         for statement in &program.statements {
             if let Statement::Function {
                 name,
+                generic_parameters,
                 parameters,
                 return_type,
-                generic_parameters,
+                is_async,
                 span,
                 ..
             } = statement
             {
                 if self.environment.functions.contains_key(name) {
-                    return Err(self.unknown_variable(
-                        format!("Function '{}' is already defined", name),
-                        *span,
-                    ));
-                }
-
-                let generic_set: HashSet<String> = generic_parameters.iter().cloned().collect();
-
-                if generic_set.len() != generic_parameters.len() {
-                    return Err(self.unknown_variable(
-                        format!(
-                            "Function '{}' declares a generic parameter more than once",
+                    return Err(FusionError::Syntax {
+                        message: format!(
+                            "Duplicate function '{}'",
                             name
                         ),
-                        *span,
-                    ));
+                        span: *span,
+                    });
                 }
 
-                let mut parameter_names = HashSet::new();
+                let mut generic_set = HashSet::new();
+
+                for generic in generic_parameters {
+                    if !generic_set.insert(generic.clone()) {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Duplicate generic parameter '{}'",
+                                generic
+                            ),
+                            span: *span,
+                        });
+                    }
+                }
 
                 let mut parameter_types = Vec::new();
+                let mut parameter_names = HashSet::new();
 
                 for parameter in parameters {
                     if !parameter_names.insert(parameter.name.clone()) {
-                        return Err(self.unknown_variable(
-                            format!("Parameter '{}' is declared more than once", parameter.name),
-                            parameter.name_span,
-                        ));
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Duplicate parameter '{}'",
+                                parameter.name
+                            ),
+                            span: parameter.span,
+                        });
                     }
 
-                    let ty = match &parameter.type_name {
-                        Some(type_name) => {
-                            self.convert_type_with_generics(type_name, &generic_set)?
-                        }
+                    let parameter_type =
+                        match &parameter.type_name {
+                            Some(type_name) => self
+                                .convert_type_with_generics(
+                                    type_name,
+                                    generic_parameters,
+                                    parameter.span,
+                                )?,
 
-                        None => Type::Unknown,
-                    };
+                            None => Type::Unknown,
+                        };
 
-                    parameter_types.push(ty);
+                    parameter_types.push(parameter_type);
                 }
 
-                let return_ty = match return_type {
-                    Some(type_name) => self.convert_type_with_generics(type_name, &generic_set)?,
+                let base_return_type =
+                    match return_type {
+                        Some(type_name) => self
+                            .convert_type_with_generics(
+                                type_name,
+                                generic_parameters,
+                                *span,
+                            )?,
 
-                    None => Type::Unknown,
+                        None => Type::Void,
+                    };
+
+                let final_return_type = if *is_async {
+                    Type::Task(Box::new(base_return_type))
+                } else {
+                    base_return_type
                 };
 
                 self.environment.functions.insert(
                     name.clone(),
                     FunctionType {
                         parameters: parameter_types,
-                        return_type: return_ty,
+                        return_type: final_return_type,
                         generic_parameters: generic_parameters.clone(),
                     },
                 );
             }
         }
 
-        // -----------------------------------------------------
-        // Pass 6: check executable program statements
-        // -----------------------------------------------------
-
+        // Pass 6: validate executable bodies and declarations.
         for statement in &program.statements {
             match statement {
-                Statement::Struct { .. } | Statement::Enum { .. } | Statement::Trait { .. } => {
-                    // Structs and enums were fully validated during
-                    // registration. Trait signatures are checked here.
-                    if let Statement::Trait { methods, .. } = statement {
-                        for method in methods {
-                            self.validate_trait_method(method)?;
-                        }
-                    }
-                }
-
                 Statement::Function {
                     name,
                     generic_parameters,
                     parameters,
                     return_type,
                     body,
+                    is_async,
                     span,
-                    ..
                 } => {
-                    let inferred_return = self.check_function_body(
+                    self.check_function_body(
                         name,
                         generic_parameters,
                         parameters,
-                        return_type,
+                        return_type.as_ref(),
                         body,
+                        *is_async,
                         *span,
                     )?;
+                }
 
-                    // Update an untyped function signature with its inferred
-                    // return type so later calls see the real result.
-                    if return_type.is_none() {
-                        if let Some(function) = self.environment.functions.get_mut(name) {
-                            function.return_type = inferred_return;
-                        }
+                Statement::Trait {
+                    methods,
+                    span,
+                    ..
+                } => {
+                    for method in methods {
+                        self.validate_trait_method(
+                            method,
+                            &[],
+                        )?;
                     }
+
+                    let _ = span;
+                }
+
+                Statement::Impl {
+                    trait_name,
+                    type_name,
+                    methods,
+                    span,
+                } => {
+                    self.check_impl(
+                        trait_name.as_ref(),
+                        type_name,
+                        methods,
+                        *span,
+                    )?;
+                }
+
+                Statement::Struct { .. }
+                | Statement::Enum { .. } => {}
+
+                Statement::Main { body, .. } => {
+                    self.push_scope();
+
+                    let result = self.check_block(body);
+
+                    self.pop_scope();
+
+                    result?;
                 }
 
                 _ => {
@@ -2132,5 +2749,11 @@ impl TypeChecker {
         }
 
         Ok(())
+    }
+}
+
+impl Default for TypeChecker {
+    fn default() -> Self {
+        Self::new()
     }
 }

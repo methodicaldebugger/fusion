@@ -1,3 +1,4 @@
+// contents of ast.rs
 use crate::span::Span;
 
 #[derive(Debug, Clone)]
@@ -5,6 +6,7 @@ pub struct Program {
     pub statements: Vec<Statement>,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: String,
@@ -12,6 +14,7 @@ pub struct Parameter {
     pub type_name: Option<String>,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct VariableDeclaration {
     pub name: String,
@@ -20,6 +23,7 @@ pub struct VariableDeclaration {
     pub value: Option<Expression>,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct StructField {
     pub name: String,
@@ -27,6 +31,7 @@ pub struct StructField {
     pub type_name: String,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
@@ -34,6 +39,7 @@ pub struct EnumVariant {
     pub fields: Vec<String>,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct TraitMethod {
     pub name: String,
@@ -41,17 +47,20 @@ pub struct TraitMethod {
     pub return_type: Option<String>,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Vec<Statement>,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub kind: PatternKind,
     pub span: Span,
 }
+
 #[derive(Debug, Clone)]
 pub enum PatternKind {
     Wildcard,
@@ -60,7 +69,10 @@ pub enum PatternKind {
     Float(f64),
     String(String),
     Boolean(bool),
-    Variant { name: String, bindings: Vec<String> },
+    Variant {
+        name: String,
+        bindings: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +81,7 @@ pub enum Statement {
         declarations: Vec<VariableDeclaration>,
         span: Span,
     },
+
     ConstDeclaration {
         name: String,
         name_span: Span,
@@ -76,11 +89,13 @@ pub enum Statement {
         value: Expression,
         span: Span,
     },
+
     Assignment {
         target: Expression,
         value: Expression,
         span: Span,
     },
+
     Function {
         name: String,
         generic_parameters: Vec<String>,
@@ -90,51 +105,61 @@ pub enum Statement {
         is_async: bool,
         span: Span,
     },
+
     Struct {
         name: String,
         fields: Vec<StructField>,
         span: Span,
     },
+
     Enum {
         name: String,
         variants: Vec<EnumVariant>,
         span: Span,
     },
+
     Main {
         body: Vec<Statement>,
         span: Span,
     },
+
     Trait {
         name: String,
         methods: Vec<TraitMethod>,
         span: Span,
     },
+
     Impl {
         trait_name: Option<String>,
         type_name: String,
         methods: Vec<Statement>,
         span: Span,
     },
+
     Match {
         expression: Expression,
         arms: Vec<MatchArm>,
         span: Span,
     },
+
     Defer {
         expression: Expression,
         span: Span,
     },
+
     If {
         condition: Expression,
         body: Vec<Statement>,
         else_body: Option<Vec<Statement>>,
         span: Span,
     },
+
     While {
         condition: Expression,
         body: Vec<Statement>,
         span: Span,
     },
+
     For {
         variable: String,
         start: Expression,
@@ -142,26 +167,32 @@ pub enum Statement {
         body: Vec<Statement>,
         span: Span,
     },
+
     ForEach {
         variable: String,
         iterable: Expression,
         body: Vec<Statement>,
         span: Span,
     },
+
     Return {
         value: Option<Expression>,
         span: Span,
     },
+
     Break {
         span: Span,
     },
+
     Continue {
         span: Span,
     },
+
     Expression {
         expression: Expression,
         span: Span,
     },
+
     Call {
         expression: Expression,
         span: Span,
@@ -174,36 +205,44 @@ pub enum Expression {
         value: i64,
         span: Span,
     },
+
     Float {
         value: f64,
         span: Span,
     },
+
     Boolean {
         value: bool,
         span: Span,
     },
+
     String {
         value: String,
         span: Span,
     },
+
     Array {
         elements: Vec<Expression>,
         span: Span,
     },
+
     Identifier {
         name: String,
         span: Span,
     },
+
     Index {
         array: Box<Expression>,
         index: Box<Expression>,
         span: Span,
     },
+
     Property {
         object: Box<Expression>,
         name: String,
         span: Span,
     },
+
     MethodCall {
         object: Box<Expression>,
         method: String,
@@ -211,39 +250,46 @@ pub enum Expression {
         generic_arguments: Vec<String>,
         span: Span,
     },
+
     Await {
         expression: Box<Expression>,
         span: Span,
     },
+
     Call {
         name: String,
         arguments: Vec<Expression>,
         generic_arguments: Vec<String>,
         span: Span,
     },
+
     StructConstructor {
         name: String,
         fields: Vec<(String, Expression)>,
         span: Span,
     },
+
     EnumConstructor {
         enum_name: String,
         variant: String,
         arguments: Vec<Expression>,
         span: Span,
     },
+
     Binary {
         left: Box<Expression>,
         operator: Operator,
         right: Box<Expression>,
         span: Span,
     },
+
     Unary {
         operator: UnaryOperator,
         expression: Box<Expression>,
         span: Span,
     },
 }
+
 impl Expression {
     pub fn span(&self) -> Span {
         match self {
@@ -265,6 +311,7 @@ impl Expression {
         }
     }
 }
+
 impl Statement {
     pub fn span(&self) -> Span {
         match self {
@@ -291,11 +338,13 @@ impl Statement {
         }
     }
 }
+
 impl Pattern {
     pub fn span(&self) -> Span {
         self.span
     }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
     Plus,
@@ -311,6 +360,7 @@ pub enum Operator {
     And,
     Or,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOperator {
     Negate,

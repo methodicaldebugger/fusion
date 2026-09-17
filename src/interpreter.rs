@@ -839,6 +839,74 @@ impl Interpreter {
                 Flow::Normal
             }
 
+                        // -----------------------------------------------------------------
+            // ForEach
+            // -----------------------------------------------------------------
+            Statement::ForEach {
+                variable,
+                iterable,
+                body,
+                ..
+            } => {
+                let iterable_value = self.evaluate(iterable);
+
+                let values = match iterable_value {
+                    Value::Array(values) => values,
+                    _ => {
+                        panic!("ForEach iterable must be an array");
+                    }
+                };
+
+                self.environment.push_scope();
+                self.loop_depth += 1;
+
+                for value in values {
+                    // Fresh scope per iteration.
+                    self.environment.push_scope();
+
+                    self.environment.declare(variable.clone(), value, true);
+
+                    let mut flow = Flow::Normal;
+
+                    for statement in body {
+                        flow = self.execute_statement(statement);
+
+                        if !matches!(flow, Flow::Normal) {
+                            break;
+                        }
+                    }
+
+                    // Iteration defers execute before control leaves
+                    // this iteration.
+                    self.exit_scope();
+
+                    match flow {
+                        Flow::Normal => {}
+
+                        Flow::Continue => {
+                            continue;
+                        }
+
+                        Flow::Break => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
+                            return Flow::Normal;
+                        }
+
+                        Flow::Return(value) => {
+                            self.loop_depth -= 1;
+                            self.exit_scope();
+                            return Flow::Return(value);
+                        }
+                    }
+                }
+
+                self.loop_depth -= 1;
+                self.exit_scope();
+
+                Flow::Normal
+            }
+
             // -----------------------------------------------------------------
             // Match
             // -----------------------------------------------------------------
@@ -1104,21 +1172,31 @@ impl Interpreter {
             }
 
             // -----------------------------------------------------------------
-            // Method calls
-            // -----------------------------------------------------------------
-            Expression::MethodCall {
-                object,
-                method,
-                arguments,
-                ..
-            } => self.evaluate_method_call(object, method, arguments),
+// Method calls
+// -----------------------------------------------------------------
+Expression::MethodCall {
+    object,
+    method,
+    arguments,
+    ..
+} => self.evaluate_method_call(object, method, arguments),
 
-            // -----------------------------------------------------------------
-            // Function calls
-            // -----------------------------------------------------------------
-            Expression::Call {
-                name, arguments, ..
-            } => {
+// -----------------------------------------------------------------
+// Await
+// -----------------------------------------------------------------
+// Async runtime semantics are not implemented yet.
+//
+// For the 0.2 interpreter, await simply evaluates the wrapped
+// expression and returns its value. The real Task<T> runtime
+// behavior will be introduced with async/await support.
+Expression::Await { expression, .. } => self.evaluate(expression),
+
+// -----------------------------------------------------------------
+// Function calls
+// -----------------------------------------------------------------
+Expression::Call {
+    name, arguments, ..
+} => {
                 // Struct constructor.
                 if let Some(struct_definition) = self.structs.get(name).cloned() {
                     if arguments.len() != struct_definition.fields.len() {

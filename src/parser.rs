@@ -1491,6 +1491,7 @@ impl Parser {
             parameters,
             return_type,
             body,
+            is_async: false,
             span: self.span_from(start),
         })
     }
@@ -2305,6 +2306,7 @@ impl Parser {
                             object: Box::new(expression),
                             method: name,
                             arguments,
+                            generic_arguments: Vec::new(),
                             span: Span::new(start, end),
                         };
                     } else {
