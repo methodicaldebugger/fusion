@@ -19,6 +19,8 @@ pub struct Parser {
     seen_main: bool,
     pending_block_styles: Vec<BlockStyle>,
     current_function_return_type: Option<Option<String>>,
+    function_depth: usize,
+    loop_depth: usize,
 }
 
 impl Parser {
@@ -30,6 +32,8 @@ impl Parser {
             pending_block_styles: Vec::new(),
             seen_main: false,
             current_function_return_type: None,
+            function_depth: 0,
+            loop_depth: 0,
         }
     }
 
@@ -254,7 +258,12 @@ impl Parser {
 
             Token::Main => Ok(Some(self.parse_main()?)),
 
-            Token::Fn => Ok(Some(self.parse_function()?)),
+            Token::Fn => {
+                if self.function_depth > 0 {
+                    return self.error("Nested function definitions are not allowed");
+                }
+                Ok(Some(self.parse_function()?))
+            },
 
             Token::Struct => Ok(Some(self.parse_struct()?)),
 
@@ -297,6 +306,9 @@ impl Parser {
             }
 
             Token::Break => {
+                if self.loop_depth == 0 {
+                    return self.error("'break' is only valid inside a loop");
+                }
                 let start = self.current_span().start;
                 self.advance();
 
@@ -306,6 +318,9 @@ impl Parser {
             }
 
             Token::Continue => {
+                if self.loop_depth == 0 {
+                    return self.error("'continue' is only valid inside a loop");
+                }
                 let start = self.current_span().start;
                 self.advance();
 
@@ -643,7 +658,10 @@ impl Parser {
 
         let condition = self.parse_expression()?;
 
-        let body = self.parse_style_block()?;
+        self.loop_depth += 1;
+        let body_result = self.parse_style_block();
+        self.loop_depth -= 1;
+        let body = body_result?;
 
         Ok(Statement::While {
             condition,
@@ -684,7 +702,10 @@ impl Parser {
 
         let end_expression = self.parse_expression()?;
 
-        let body = self.parse_style_block()?;
+        self.loop_depth += 1;
+        let body_result = self.parse_style_block();
+        self.loop_depth -= 1;
+        let body = body_result?;
 
         Ok(Statement::For {
             variable,
@@ -1156,11 +1177,14 @@ impl Parser {
 
         let pattern = self.parse_pattern()?;
 
-        if !self.consume(&Token::FatArrow) {
-            return self.error("Expected '=>' after match pattern");
+        let has_arrow = self.consume(&Token::FatArrow);
+        let has_colon = if !has_arrow { self.consume(&Token::Colon) } else { false };
+
+        if !has_arrow && !has_colon {
+            return self.error("Expected '=>' or ':' after match pattern");
         }
 
-        if self.current() == &Token::Colon {
+        if has_arrow && self.current() == &Token::Colon {
             return self.error("':' is not allowed after '=>'; use a block style directly");
         }
 
@@ -1365,22 +1389,39 @@ impl Parser {
             let parameter_start = self.current_span().start;
             let name_span = self.current_span();
 
-            let parameter_name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
+            // Accept both `name: type` and `type name` parameter syntax.
+            let (parameter_name, type_name) = match self.current() {
+                Token::Identifier(first) => {
+                    let first = first.clone();
                     self.advance();
-                    name
-                }
 
-                _ => {
-                    return self.error("Expected parameter name");
+                    if self.consume(&Token::Colon) {
+                        (first, Some(self.parse_type()?))
+                    } else {
+                        let parameter_name = match self.current() {
+                            Token::Identifier(name) => {
+                                let name = name.clone();
+                                self.advance();
+                                name
+                            }
+                            _ => return self.error("Expected parameter name"),
+                        };
+                        (parameter_name, Some(first))
+                    }
                 }
-            };
-
-            let type_name = if self.consume(&Token::Colon) {
-                Some(self.parse_type()?)
-            } else {
-                None
+                Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
+                    let type_name = self.parse_type()?;
+                    let parameter_name = match self.current() {
+                        Token::Identifier(name) => {
+                            let name = name.clone();
+                            self.advance();
+                            name
+                        }
+                        _ => return self.error("Expected parameter name"),
+                    };
+                    (parameter_name, Some(type_name))
+                }
+                _ => return self.error("Expected parameter name"),
             };
 
             parameters.push(Parameter {
@@ -1426,6 +1467,7 @@ impl Parser {
 
         let previous_return_type = self.current_function_return_type.clone();
         self.current_function_return_type = Some(return_type.clone());
+        self.function_depth += 1;
 
         let body_result = match style {
             BlockStyle::Indentation => {
@@ -1438,6 +1480,7 @@ impl Parser {
             BlockStyle::Unknown => unreachable!(),
         };
 
+        self.function_depth -= 1;
         self.current_function_return_type = previous_return_type;
 
         let body = body_result?;
@@ -1776,6 +1819,56 @@ impl Parser {
         Ok(arguments)
     }
 
+    fn looks_like_named_struct_constructor(&self) -> bool {
+        matches!(
+            (self.peek_at(self.position + 1), self.peek_at(self.position + 2)),
+            (Some(Token::Identifier(_)), Some(Token::Colon))
+        )
+    }
+
+    fn parse_named_struct_fields(&mut self) -> Result<Vec<(String, Expression)>, ParseError> {
+        if !self.consume(&Token::LeftParen) {
+            return self.error("Expected '('");
+        }
+
+        let mut fields = Vec::new();
+
+        if self.current() == &Token::RightParen {
+            self.advance();
+            return Ok(fields);
+        }
+
+        loop {
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+                _ => return self.error("Expected field name in struct constructor"),
+            };
+
+            if !self.consume(&Token::Colon) {
+                return self.error("Expected ':' after struct constructor field name");
+            }
+
+            fields.push((name, self.parse_expression()?));
+
+            if self.consume(&Token::Comma) {
+                if self.current() == &Token::RightParen {
+                    self.advance();
+                    return Ok(fields);
+                }
+                continue;
+            }
+
+            if !self.consume(&Token::RightParen) {
+                return self.error("Expected ')' after struct constructor fields");
+            }
+            return Ok(fields);
+        }
+    }
+
     fn parse_arguments(&mut self) -> Result<Vec<Expression>, ParseError> {
         if !self.consume(&Token::LeftParen) {
             return self.error("Expected '('");
@@ -2078,13 +2171,22 @@ impl Parser {
                     };
 
                     if self.current() == &Token::LeftParen {
-                        let arguments = self.parse_arguments()?;
+                        if self.looks_like_named_struct_constructor() {
+                            let fields = self.parse_named_struct_fields()?;
+                            Expression::StructConstructor {
+                                name,
+                                fields,
+                                span: self.span_from(start),
+                            }
+                        } else {
+                            let arguments = self.parse_arguments()?;
 
-                        Expression::Call {
-                            name,
-                            arguments,
-                            generic_arguments,
-                            span: self.span_from(start),
+                            Expression::Call {
+                                name,
+                                arguments,
+                                generic_arguments,
+                                span: self.span_from(start),
+                            }
                         }
                     } else {
                         Expression::Identifier {

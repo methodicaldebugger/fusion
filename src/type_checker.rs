@@ -512,6 +512,7 @@ impl TypeChecker {
     // =========================================================
     // Expression inference
     // =========================================================
+    
 
     fn infer_expression(&self, expression: &Expression) -> Result<Type, FusionError> {
         match expression {
@@ -1248,7 +1249,6 @@ impl TypeChecker {
                 value,
                 span,
             } => {
-                println!("ASSIGNMENT AST: {:?}", statement);
                 self.check_assignment(target, value, *span)
             }
 
