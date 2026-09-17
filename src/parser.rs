@@ -1749,51 +1749,51 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn looks_like_generic_call(&self) -> bool {
-    if self.current() != &Token::Less {
-        return false;
-    }
-
-    let mut position = self.position + 1;
-
-    // There must be at least one generic type argument.
-    if position >= self.tokens.len() {
-        return false;
-    }
-
-    loop {
-        let token = match self.peek_at(position) {
-            Some(token) => token,
-            None => return false,
-        };
-
-        match token {
-            Token::NumType
-            | Token::FloatType
-            | Token::BoolType
-            | Token::StringType
-            | Token::Identifier(_) => {
-                position += 1;
-            }
-
-            _ => return false,
+        if self.current() != &Token::Less {
+            return false;
         }
 
-        match self.peek_at(position) {
-            Some(Token::Comma) => {
-                position += 1;
-            }
+        let mut position = self.position + 1;
 
-            Some(Token::Greater) => {
-                position += 1;
-                break;
-            }
-
-            _ => return false,
+        // There must be at least one generic type argument.
+        if position >= self.tokens.len() {
+            return false;
         }
-    }
 
-    matches!(self.peek_at(position), Some(Token::LeftParen))
-}
+        loop {
+            let token = match self.peek_at(position) {
+                Some(token) => token,
+                None => return false,
+            };
+
+            match token {
+                Token::NumType
+                | Token::FloatType
+                | Token::BoolType
+                | Token::StringType
+                | Token::Identifier(_) => {
+                    position += 1;
+                }
+
+                _ => return false,
+            }
+
+            match self.peek_at(position) {
+                Some(Token::Comma) => {
+                    position += 1;
+                }
+
+                Some(Token::Greater) => {
+                    position += 1;
+                    break;
+                }
+
+                _ => return false,
+            }
+        }
+
+        matches!(self.peek_at(position), Some(Token::LeftParen))
+    }
 
     fn parse_generic_arguments(&mut self) -> Result<Vec<String>, ParseError> {
         if !self.consume(&Token::Less) {
@@ -2165,7 +2165,7 @@ impl Parser {
                     }
                 } else {
                     let generic_arguments = if self.looks_like_generic_call() {
-                    self.parse_generic_arguments()?
+                        self.parse_generic_arguments()?
                     } else {
                         Vec::new()
                     };

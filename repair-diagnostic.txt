@@ -1,0 +1,12 @@
+src/parser.rs len=66262
+  'Token::Fn => Ok(Some(self.parse_function()?)),' count=1
+  'fn parse_function(&mut self) -> Result<Statement, ParseError> {' count=1
+  'Expression::MethodCall {' count=1
+src/type_checker.rs len=75871
+  'Expression::MethodCall {' count=1
+  'Statement::For {' count=1
+  'Expression::Call {' count=1
+src/interpreter.rs len=55404
+  'Statement::For {' count=1
+  '// Match' count=1
+  '// Function calls' count=1

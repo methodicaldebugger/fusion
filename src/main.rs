@@ -1111,240 +1111,240 @@ fn add(a, b):
         );
     }
     #[test]
-fn less_than_comparison_works() {
-    assert_eq!(
-        run_program(
-            r#"main:
+    fn less_than_comparison_works() {
+        assert_eq!(
+            run_program(
+                r#"main:
     print(2 < 3)
     print(3 < 2)
 "#
-        ),
-        vec!["true", "false"]
-    );
-}
+            ),
+            vec!["true", "false"]
+        );
+    }
 
-#[test]
-fn greater_than_comparison_works() {
-    assert_eq!(
-        run_program(
-            r#"main:
+    #[test]
+    fn greater_than_comparison_works() {
+        assert_eq!(
+            run_program(
+                r#"main:
     print(3 > 2)
     print(2 > 3)
 "#
-        ),
-        vec!["true", "false"]
-    );
-}
+            ),
+            vec!["true", "false"]
+        );
+    }
 
-#[test]
-fn equality_comparison_works() {
-    assert_eq!(
-        run_program(
-            r#"main:
+    #[test]
+    fn equality_comparison_works() {
+        assert_eq!(
+            run_program(
+                r#"main:
     print(10 == 10)
     print(10 == 20)
 "#
-        ),
-        vec!["true", "false"]
-    );
-}
+            ),
+            vec!["true", "false"]
+        );
+    }
 
-#[test]
-fn inequality_comparison_works() {
-    assert_eq!(
-        run_program(
-            r#"main:
+    #[test]
+    fn inequality_comparison_works() {
+        assert_eq!(
+            run_program(
+                r#"main:
     print(10 != 20)
     print(10 != 10)
 "#
-        ),
-        vec!["true", "false"]
-    );
-}
-#[test]
-fn while_loop_executes_repeatedly_2() {
-    assert_eq!(
-        run_program(
-            r#"main:
+            ),
+            vec!["true", "false"]
+        );
+    }
+    #[test]
+    fn while_loop_executes_repeatedly_2() {
+        assert_eq!(
+            run_program(
+                r#"main:
     x = 0
 
     while x < 3:
         print(x)
         x = x + 1
 "#
-        ),
-        vec!["0", "1", "2"]
-    );
-}
-#[test]
-fn comparison_after_identifier_is_not_parsed_as_generic_arguments() {
-    assert_eq!(
-        run_program(
-            r#"main:
+            ),
+            vec!["0", "1", "2"]
+        );
+    }
+    #[test]
+    fn comparison_after_identifier_is_not_parsed_as_generic_arguments() {
+        assert_eq!(
+            run_program(
+                r#"main:
     x = 2
     print(x < 3)
     print(x > 1)
 "#
-        ),
-        vec!["true", "true"]
-    );
-}
-#[test]
-#[should_panic]
-fn uninitialized_variable_cannot_be_read() {
-    run_program(
-        r#"main:
+            ),
+            vec!["true", "true"]
+        );
+    }
+    #[test]
+    #[should_panic]
+    fn uninitialized_variable_cannot_be_read() {
+        run_program(
+            r#"main:
     num x
     print(x)
 "#,
-    );
-}
-#[test]
-fn explicit_variable_type_must_match_value() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn explicit_variable_type_must_match_value() {
+        type_check_should_fail(
+            r#"main:
     num x = "hello"
 "#,
-    );
-}
-#[test]
-fn function_argument_type_mismatch_is_rejected_2() {
-    type_check_should_fail(
-        r#"fn add(num a, num b) -> num:
+        );
+    }
+    #[test]
+    fn function_argument_type_mismatch_is_rejected_2() {
+        type_check_should_fail(
+            r#"fn add(num a, num b) -> num:
     return a + b
 
 main:
     print(add("hello", 10))
 "#,
-    );
-}
-#[test]
-fn function_return_type_mismatch_is_rejected() {
-    type_check_should_fail(
-        r#"fn get_number() -> num:
+        );
+    }
+    #[test]
+    fn function_return_type_mismatch_is_rejected() {
+        type_check_should_fail(
+            r#"fn get_number() -> num:
     return "hello"
 
 main:
     print(get_number())
 "#,
-    );
-}
-#[test]
-fn function_requiring_return_value_cannot_return_without_value() {
-    type_check_should_fail(
-        r#"fn get_number() -> num:
+        );
+    }
+    #[test]
+    fn function_requiring_return_value_cannot_return_without_value() {
+        type_check_should_fail(
+            r#"fn get_number() -> num:
     return
 
 main:
     print(get_number())
 "#,
-    );
-}
-#[test]
-fn void_function_cannot_return_value() {
-    type_check_should_fail(
-        r#"fn do_work():
+        );
+    }
+    #[test]
+    fn void_function_cannot_return_value() {
+        type_check_should_fail(
+            r#"fn do_work():
     return 10
 
 main:
     do_work()
 "#,
-    );
-}
-#[test]
-fn function_requires_all_arguments() {
-    type_check_should_fail(
-        r#"fn add(num a, num b) -> num:
+        );
+    }
+    #[test]
+    fn function_requires_all_arguments() {
+        type_check_should_fail(
+            r#"fn add(num a, num b) -> num:
     return a + b
 
 main:
     print(add(10))
 "#,
-    );
-}
-#[test]
-fn function_rejects_extra_arguments() {
-    type_check_should_fail(
-        r#"fn add(num a, num b) -> num:
+        );
+    }
+    #[test]
+    fn function_rejects_extra_arguments() {
+        type_check_should_fail(
+            r#"fn add(num a, num b) -> num:
     return a + b
 
 main:
     print(add(10, 20, 30))
 "#,
-    );
-}
-#[test]
-fn if_rejects_non_boolean_condition_2() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn if_rejects_non_boolean_condition_2() {
+        type_check_should_fail(
+            r#"main:
     if 10:
         print("yes")
 "#,
-    );
-}
-#[test]
-fn arithmetic_rejects_incompatible_types() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn arithmetic_rejects_incompatible_types() {
+        type_check_should_fail(
+            r#"main:
     x = "hello" + 10
 "#,
-    );
-}
-#[test]
-fn boolean_cannot_be_used_in_arithmetic() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn boolean_cannot_be_used_in_arithmetic() {
+        type_check_should_fail(
+            r#"main:
     x = true + false
 "#,
-    );
-}
-#[test]
-fn ordering_comparison_rejects_incompatible_types() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn ordering_comparison_rejects_incompatible_types() {
+        type_check_should_fail(
+            r#"main:
     x = 10 < "hello"
 "#,
-    );
-}
-#[test]
-fn array_rejects_incompatible_element_types() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn array_rejects_incompatible_element_types() {
+        type_check_should_fail(
+            r#"main:
     values = [10, "hello", true]
 "#,
-    );
-}
-#[test]
-fn array_index_requires_num() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn array_index_requires_num() {
+        type_check_should_fail(
+            r#"main:
     values = [10, 20, 30]
     x = values["hello"]
 "#,
-    );
-}
-#[test]
-fn non_array_cannot_be_indexed() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn non_array_cannot_be_indexed() {
+        type_check_should_fail(
+            r#"main:
     x = 10
     y = x[0]
 "#,
-    );
-}
-#[test]
-fn reassignment_must_preserve_variable_type() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn reassignment_must_preserve_variable_type() {
+        type_check_should_fail(
+            r#"main:
     num x = 10
     x = "hello"
 "#,
-    );
-}
-#[test]
-fn match_patterns_must_match_scrutinee_type() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn match_patterns_must_match_scrutinee_type() {
+        type_check_should_fail(
+            r#"main:
     x = 10
 
     match x:
@@ -1353,34 +1353,34 @@ fn match_patterns_must_match_scrutinee_type() {
         10:
             print("ten")
 "#,
-    );
-}
-#[test]
-fn generic_argument_must_match_explicit_type_parameter() {
-    type_check_should_fail(
-        r#"fn identity<T>(T value) -> T:
+        );
+    }
+    #[test]
+    fn generic_argument_must_match_explicit_type_parameter() {
+        type_check_should_fail(
+            r#"fn identity<T>(T value) -> T:
     return value
 
 main:
     x = identity<string>(42)
 "#,
-    );
-}
-#[test]
-fn generic_function_cannot_return_wrong_type() {
-    type_check_should_fail(
-        r#"fn identity<T>(T value) -> T:
+        );
+    }
+    #[test]
+    fn generic_function_cannot_return_wrong_type() {
+        type_check_should_fail(
+            r#"fn identity<T>(T value) -> T:
     return 10
 
 main:
     x = identity<string>("hello")
 "#,
-    );
-}
-#[test]
-fn duplicate_function_definition_is_rejected() {
-    type_check_should_fail(
-        r#"fn test() -> num:
+        );
+    }
+    #[test]
+    fn duplicate_function_definition_is_rejected() {
+        type_check_should_fail(
+            r#"fn test() -> num:
     return 10
 
 fn test() -> num:
@@ -1389,104 +1389,104 @@ fn test() -> num:
 main:
     print(test())
 "#,
-    );
-}
-#[test]
-fn duplicate_variable_declaration_is_rejected() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn duplicate_variable_declaration_is_rejected() {
+        type_check_should_fail(
+            r#"main:
     num x = 10
     num x = 20
 "#,
-    );
-}
-#[test]
-fn assignment_to_unknown_variable_is_rejected() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn assignment_to_unknown_variable_is_rejected() {
+        type_check_should_fail(
+            r#"main:
     x = 10
     y = 20
     z = 30
     unknown = 40
 "#,
-    );
-}
-#[test]
-fn break_outside_loop_is_rejected() {
-    parse_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn break_outside_loop_is_rejected() {
+        parse_should_fail(
+            r#"main:
     break
 "#,
-    );
-}
-#[test]
-fn continue_outside_loop_is_rejected() {
-    parse_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn continue_outside_loop_is_rejected() {
+        parse_should_fail(
+            r#"main:
     continue
 "#,
-    );
-}
-#[test]
-fn nested_function_definition_is_rejected() {
-    parse_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn nested_function_definition_is_rejected() {
+        parse_should_fail(
+            r#"main:
     fn nested() -> num:
         return 10
 "#,
-    );
-}
-#[test]
-fn program_requires_main() {
-    parse_should_fail(
-        r#"fn test() -> num:
+        );
+    }
+    #[test]
+    fn program_requires_main() {
+        parse_should_fail(
+            r#"fn test() -> num:
     return 10
 "#,
-    );
-}
-#[test]
-fn non_function_value_cannot_be_called() {
-    type_check_should_fail(
-        r#"main:
+        );
+    }
+    #[test]
+    fn non_function_value_cannot_be_called() {
+        type_check_should_fail(
+            r#"main:
     x = 10
     y = x()
 "#,
-    );
-}
-#[test]
-fn struct_field_assignment_requires_correct_type() {
-    type_check_should_fail(
-        r#"struct Person:
+        );
+    }
+    #[test]
+    fn struct_field_assignment_requires_correct_type() {
+        type_check_should_fail(
+            r#"struct Person:
     name: string
     age: num
 
 main:
     person = Person(name: "Alice", age: "twenty")
 "#,
-    );
-}
-#[test]
-fn unknown_struct_field_is_rejected_2() {
-    type_check_should_fail(
-        r#"struct Person:
+        );
+    }
+    #[test]
+    fn unknown_struct_field_is_rejected_2() {
+        type_check_should_fail(
+            r#"struct Person:
     name: string
     age: num
 
 main:
     person = Person(name: "Alice", height: 180)
 "#,
-    );
-}
-#[test]
-fn unknown_enum_variant_is_rejected() {
-    type_check_should_fail(
-        r#"enum Status:
+        );
+    }
+    #[test]
+    fn unknown_enum_variant_is_rejected() {
+        type_check_should_fail(
+            r#"enum Status:
     Active
     Inactive
 
 main:
     status = Status.Unknown
 "#,
-    );
-}
+        );
+    }
 }
