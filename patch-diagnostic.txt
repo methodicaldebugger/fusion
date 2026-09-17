@@ -1,0 +1,11 @@
+raw=10033 compact=10030
+bad_count_sample=8
+bad=10000 byte=91 context=b'ccqNmSOLQJSz3rB1oBs+uGSYApoLEX[...truncatedintentionally...]'
+bad=10001 byte=46 context=b'cqNmSOLQJSz3rB1oBs+uGSYApoLEX[...truncatedintentionally...]'
+bad=10002 byte=46 context=b'qNmSOLQJSz3rB1oBs+uGSYApoLEX[...truncatedintentionally...]'
+bad=10003 byte=46 context=b'NmSOLQJSz3rB1oBs+uGSYApoLEX[...truncatedintentionally...]'
+bad=10026 byte=46 context=b'oLEX[...truncatedintentionally...]'
+bad=10027 byte=46 context=b'LEX[...truncatedintentionally...]'
+bad=10028 byte=46 context=b'EX[...truncatedintentionally...]'
+bad=10029 byte=93 context=b'X[...truncatedintentionally...]'
+non-strict error=Error('Incorrect padding')

@@ -1,0 +1,71 @@
+name: Repair bootstrap implementation
+
+on:
+  push:
+    branches: [fusion-bootstrap-ready-v2]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Repair source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Parser: async fn, function initializer, and generic method calls.
+          p=Path('src/parser.rs'); s=p.read_text()
+          s=s.replace('Token::Fn => Ok(Some(self.parse_function()?)),', "Token::Fn => Ok(Some(self.parse_function(false)?)),\n\n            Token::Async => {\n                self.advance();\n                if self.current() != &Token::Fn {\n                    return self.error(\"Expected 'fn' after 'async'\");\n                }\n                Ok(Some(self.parse_function(true)?))\n            }")
+          s=s.replace('fn parse_function(&mut self) -> Result<Statement, ParseError> {', 'fn parse_function(&mut self, is_async: bool) -> Result<Statement, ParseError> {')
+          s=s.replace('''            return_type,\n            body,\n            span: self.span_from(start),\n        })''','''            return_type,\n            body,\n            is_async,\n            span: self.span_from(start),\n        })''',1)
+          old='''                    if self.current() == &Token::LeftParen {\n                        let arguments = self.parse_arguments()?;\n                        let end = self.previous_span().end;\n\n                        expression = Expression::MethodCall {\n                            object: Box::new(expression),\n                            method: name,\n                            arguments,\n                            span: Span::new(start, end),\n                        };'''
+          new='''                    let generic_arguments = if self.looks_like_generic_call() {\n                        self.parse_generic_arguments()?\n                    } else {\n                        Vec::new()\n                    };\n\n                    if self.current() == &Token::LeftParen {\n                        let arguments = self.parse_arguments()?;\n                        let end = self.previous_span().end;\n\n                        expression = Expression::MethodCall {\n                            object: Box::new(expression),\n                            method: name,\n                            arguments,\n                            generic_arguments,\n                            span: Span::new(start, end),\n                        };'''
+          if old not in s: raise SystemExit('parser method call block missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          # Type checker: acknowledge generic method arguments, check foreach, await.
+          p=Path('src/type_checker.rs'); s=p.read_text()
+          s=s.replace('''            Expression::MethodCall {\n                object,\n                method,\n                arguments,\n                span,\n            } => {''','''            Expression::MethodCall {\n                object,\n                method,\n                arguments,\n                generic_arguments: _,\n                span,\n            } => {''',1)
+          marker='''            // -------------------------------------------------\n            // Match\n            // -------------------------------------------------\n            Statement::Match {'''
+          foreach='''            // -------------------------------------------------\n            // ForEach\n            // -------------------------------------------------\n            Statement::ForEach { variable, iterable, body, span } => {\n                let iterable_type = self.infer_expression(iterable)?;\n                let element_type = match iterable_type {\n                    Type::Array(element) | Type::Iterator(element) => *element,\n                    other => return Err(self.type_mismatch(\"array or iterator\", other.name(), iterable.span())),\n                };\n                self.push_scope();\n                let result = (|| {\n                    self.declare_variable(variable.clone(), element_type, true, *span)?;\n                    self.loop_depth += 1;\n                    let result = self.check_block(body);\n                    self.loop_depth -= 1;\n                    result\n                })();\n                self.pop_scope();\n                result\n            }\n\n'''
+          if marker not in s: raise SystemExit('type checker match marker missing')
+          s=s.replace(marker,foreach+marker,1)
+          call='''            Expression::Call {\n                name,\n                arguments,\n                generic_arguments,\n                ..\n            } => {'''
+          await='''            Expression::Await { expression, span } => {\n                match self.infer_expression(expression)? {\n                    Type::Task(inner) => Ok(*inner),\n                    other => Err(self.type_mismatch(\"Task<T>\", other.name(), *span)),\n                }\n            }\n\n'''
+          if call not in s: raise SystemExit('type checker call marker missing')
+          s=s.replace(call,await+call,1)
+          p.write_text(s)
+
+          # Interpreter: foreach over arrays and await as synchronous identity.
+          p=Path('src/interpreter.rs'); s=p.read_text()
+          marker='''            // -----------------------------------------------------------------\n            // Match\n            // -----------------------------------------------------------------'''
+          foreach='''            // -----------------------------------------------------------------\n            // ForEach\n            // -----------------------------------------------------------------\n            Statement::ForEach { variable, iterable, body, .. } => {\n                let value = self.evaluate(iterable);\n                let values = match value {\n                    Value::Array(values) => values,\n                    _ => panic!(\"ForEach iterable must be an array\"),\n                };\n                self.environment.push_scope();\n                self.loop_depth += 1;\n                for item in values {\n                    self.environment.push_scope();\n                    self.environment.set(variable.clone(), item);\n                    let flow = self.execute_statement_list(body);\n                    self.exit_scope();\n                    match flow {\n                        Flow::Normal | Flow::Continue => {}\n                        Flow::Break => break,\n                        Flow::Return(value) => {\n                            self.loop_depth -= 1;\n                            self.exit_scope();\n                            return Flow::Return(value);\n                        }\n                    }\n                }\n                self.loop_depth -= 1;\n                self.exit_scope();\n                Flow::Normal\n            }\n\n'''
+          if marker not in s: raise SystemExit('interpreter match marker missing')
+          s=s.replace(marker,foreach+marker,1)
+          marker='''            // -----------------------------------------------------------------\n            // Function calls\n            // -----------------------------------------------------------------'''
+          await_eval='''            // -----------------------------------------------------------------\n            // Await\n            // -----------------------------------------------------------------\n            Expression::Await { expression, .. } => self.evaluate(expression),\n\n'''
+          if marker not in s: raise SystemExit('interpreter function-call marker missing')
+          s=s.replace(marker,await_eval+marker,1)
+          p.write_text(s)
+          for name in ['patch-head.txt','patch-diagnostic.txt','repair-diagnostic.txt']:
+              q=Path(name)
+              if q.exists(): q.unlink()
+          PY
+          cargo fmt --all
+          cargo check --all-targets
+          cargo test --all-targets
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Repair parser checker and interpreter semantics"
+          git push origin HEAD:fusion-bootstrap-ready-v2

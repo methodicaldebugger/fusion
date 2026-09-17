@@ -546,3 +546,4 @@ Build the conformance test suite
 Then begin bootstrapping the lexer
 
 At that point I'd consider Fusion bootstrap-ready.
+Link to repository: https://github.com/methodicaldebugger/fusion.git

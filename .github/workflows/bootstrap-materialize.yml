@@ -1,0 +1,28 @@
+name: Materialize bootstrap branch changes
+
+on:
+  push:
+    branches: [bootstrap-readiness]
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply staged implementation patch
+        run: |
+          base64 -d bootstrap.patch.gz.b64 | gzip -d > bootstrap.patch
+          git apply --check bootstrap.patch
+          git apply bootstrap.patch
+          rm bootstrap.patch bootstrap.patch.gz.b64
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.rs src/parser.rs src/type_checker.rs src/interpreter.rs
+          git commit -m "Implement bootstrap language semantics and runtime features"
+          git push origin HEAD:bootstrap-readiness
