@@ -19,10 +19,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d bootstrap.patch.gz.b64 | gzip -d > bootstrap.patch
-          sed -n '1,120p' bootstrap.patch > patch-head.txt
+          python3 - <<'PY'
+          import base64, gzip, pathlib
+          src = pathlib.Path('bootstrap.patch.gz.b64').read_bytes()
+          raw = base64.b64decode(b''.join(src.split()))
+          patch = gzip.decompress(raw)
+          pathlib.Path('bootstrap.patch').write_bytes(patch)
+          pathlib.Path('patch-head.txt').write_bytes(patch[:20000])
+          print('encoded bytes:', len(src))
+          print('gzip bytes:', len(raw))
+          print('patch bytes:', len(patch))
+          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add patch-head.txt
-          git commit -m "Inspect staged bootstrap patch"
+          git commit -m "Inspect decoded bootstrap patch"
           git push origin HEAD:fusion-bootstrap-ready-v2
