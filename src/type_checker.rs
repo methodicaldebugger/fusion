@@ -1248,7 +1248,6 @@ impl TypeChecker {
                 value,
                 span,
             } => {
-                println!("ASSIGNMENT AST: {:?}", statement);
                 self.check_assignment(target, value, *span)
             }
 
