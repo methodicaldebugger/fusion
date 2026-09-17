@@ -15,23 +15,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Decode staged patch
+      - name: Diagnose staged patch
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           python3 - <<'PY'
-          import base64, gzip, pathlib
-          src = pathlib.Path('bootstrap.patch.gz.b64').read_bytes()
-          raw = base64.b64decode(b''.join(src.split()))
-          patch = gzip.decompress(raw)
-          pathlib.Path('bootstrap.patch').write_bytes(patch)
-          pathlib.Path('patch-head.txt').write_bytes(patch[:20000])
-          print('encoded bytes:', len(src))
-          print('gzip bytes:', len(raw))
-          print('patch bytes:', len(patch))
+          import base64, gzip, pathlib, traceback
+          out=[]
+          p=pathlib.Path('bootstrap.patch.gz.b64')
+          out.append(f'exists={p.exists()} size={p.stat().st_size if p.exists() else -1}')
+          try:
+              src=p.read_bytes()
+              out.append(f'first16={src[:16]!r}')
+              raw=base64.b64decode(b''.join(src.split()), validate=True)
+              out.append(f'decoded={len(raw)} first16={raw[:16]!r}')
+              patch=gzip.decompress(raw)
+              out.append(f'patch={len(patch)} first200={patch[:200]!r}')
+          except Exception as e:
+              out.append(type(e).__name__ + ': ' + str(e))
+              out.append(traceback.format_exc())
+          pathlib.Path('patch-diagnostic.txt').write_text('\n'.join(out), encoding='utf-8')
           PY
+          cat patch-diagnostic.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add patch-head.txt
-          git commit -m "Inspect decoded bootstrap patch"
+          git add patch-diagnostic.txt
+          git commit -m "Record bootstrap patch diagnostics"
           git push origin HEAD:fusion-bootstrap-ready-v2
