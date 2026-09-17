@@ -21,24 +21,37 @@ pub enum Type {
 }
 
 #[derive(Debug, Clone)]
-pub struct StructDefinition { pub fields: Vec<(String, Type)> }
+pub struct StructDefinition {
+    pub fields: Vec<(String, Type)>,
+}
 #[derive(Debug, Clone)]
-pub struct EnumDefinition { pub variants: HashMap<String, EnumVariantDefinition> }
+pub struct EnumDefinition {
+    pub variants: HashMap<String, EnumVariantDefinition>,
+}
 #[derive(Debug, Clone)]
-pub struct EnumVariantDefinition { pub fields: Vec<Type> }
+pub struct EnumVariantDefinition {
+    pub fields: Vec<Type>,
+}
 
 impl Type {
     pub fn name(&self) -> String {
         match self {
-            Type::Num => "num".into(), Type::Float => "float".into(), Type::Bool => "bool".into(),
-            Type::String => "string".into(), Type::Array(i) => format!("{}[]", i.name()),
+            Type::Num => "num".into(),
+            Type::Float => "float".into(),
+            Type::Bool => "bool".into(),
+            Type::String => "string".into(),
+            Type::Array(i) => format!("{}[]", i.name()),
             Type::Iterator(i) => format!("Iterator<{}>", i.name()),
-            Type::HashMap(k,v) => format!("HashMap<{}, {}>", k.name(), v.name()),
+            Type::HashMap(k, v) => format!("HashMap<{}, {}>", k.name(), v.name()),
             Type::Option(i) => format!("Option<{}>", i.name()),
-            Type::Result(o,e) => format!("Result<{}, {}>", o.name(), e.name()),
-            Type::Struct(n) => n.clone(), Type::Enum(n) => n.clone(), Type::Generic(n) => n.clone(),
-            Type::File => "File".into(), Type::Task(i) => format!("Task<{}>", i.name()),
-            Type::Void => "void".into(), Type::Unknown => "unknown".into(),
+            Type::Result(o, e) => format!("Result<{}, {}>", o.name(), e.name()),
+            Type::Struct(n) => n.clone(),
+            Type::Enum(n) => n.clone(),
+            Type::Generic(n) => n.clone(),
+            Type::File => "File".into(),
+            Type::Task(i) => format!("Task<{}>", i.name()),
+            Type::Void => "void".into(),
+            Type::Unknown => "unknown".into(),
         }
     }
 }
