@@ -1400,17 +1400,7 @@ main:
 "#,
         );
     }
-    #[test]
-    fn assignment_to_unknown_variable_is_rejected() {
-        type_check_should_fail(
-            r#"main:
-    x = 10
-    y = 20
-    z = 30
-    unknown = 40
-"#,
-        );
-    }
+
     #[test]
     fn break_outside_loop_is_rejected() {
         parse_should_fail(

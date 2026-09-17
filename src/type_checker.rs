@@ -457,7 +457,7 @@ impl TypeChecker {
     // ---------------------------------------------------------------------
 
     fn property_type(
-          &mut self,
+        &mut self,
         object: &Expression,
         property: &str,
         span: Span,
@@ -1418,33 +1418,39 @@ impl TypeChecker {
 
         match target {
             Expression::Identifier { name, span: target_span } => {
-                let variable = self
-                    .lookup_variable(name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        self.unknown_variable(name, *target_span)
-                    })?;
+    if let Some(variable) = self.lookup_variable(name).cloned() {
+        if !variable.mutable {
+            return Err(FusionError::CannotAssignToConst {
+                name: name.clone(),
+                span: *target_span,
+            });
+        }
 
-                if !variable.mutable {
-                    return Err(FusionError::CannotAssignToConst {
-                        name: name.clone(),
-                        span: *target_span,
-                    });
-                }
+        if !self.types_compatible(&variable.ty, &value_type) {
+            return Err(self.type_mismatch(
+                variable.ty.name(),
+                value_type.name(),
+                value.span(),
+            ));
+        }
 
-                if !self.types_compatible(
-                    &variable.ty,
-                    &value_type,
-                ) {
-                    return Err(self.type_mismatch(
-                        variable.ty.name(),
-                        value_type.name(),
-                        value.span(),
-                    ));
-                }
+        return Ok(());
+    }
 
-                Ok(())
-            }
+    // Assignment to an unknown identifier is Fusion's inferred
+    // declaration form:
+    //
+    //     x = 10
+    //
+    // If x does not exist in the current scope, create it with the
+    // type of the assigned expression.
+    self.declare_variable(
+        name.clone(),
+        value_type,
+        true,
+        *target_span,
+    )
+}
 
             Expression::Property {
                 object,

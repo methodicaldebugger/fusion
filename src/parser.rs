@@ -1383,45 +1383,52 @@ impl Parser {
             return self.error("Expected '(' after function name");
         }
 
-        let mut parameters = Vec::new();
+                let mut parameters = Vec::new();
 
         while self.current() != &Token::RightParen && self.current() != &Token::Eof {
             let parameter_start = self.current_span().start;
             let name_span = self.current_span();
 
-            // Accept both `name: type` and `type name` parameter syntax.
             let (parameter_name, type_name) = match self.current() {
+                // `name: type`
                 Token::Identifier(first) => {
                     let first = first.clone();
                     self.advance();
 
                     if self.consume(&Token::Colon) {
-                        (first, Some(self.parse_type()?))
+                        let type_name = self.parse_type()?;
+                        (first, Some(type_name))
                     } else {
-                        let parameter_name = match self.current() {
-                            Token::Identifier(name) => {
-                                let name = name.clone();
-                                self.advance();
-                                name
-                            }
-                            _ => return self.error("Expected parameter name"),
-                        };
-                        (parameter_name, Some(first))
+                        // Plain `name` = untyped parameter.
+                        (first, None)
                     }
                 }
-                Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
+
+                // Optional `type name` syntax.
+                Token::NumType
+                | Token::FloatType
+                | Token::BoolType
+                | Token::StringType => {
                     let type_name = self.parse_type()?;
+
                     let parameter_name = match self.current() {
                         Token::Identifier(name) => {
                             let name = name.clone();
                             self.advance();
                             name
                         }
-                        _ => return self.error("Expected parameter name"),
+
+                        _ => {
+                            return self.error("Expected parameter name");
+                        }
                     };
+
                     (parameter_name, Some(type_name))
                 }
-                _ => return self.error("Expected parameter name"),
+
+                _ => {
+                    return self.error("Expected parameter name");
+                }
             };
 
             parameters.push(Parameter {
