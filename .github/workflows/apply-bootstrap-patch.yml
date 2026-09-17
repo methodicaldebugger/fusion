@@ -1,0 +1,29 @@
+name: Apply bootstrap patch
+
+on:
+  push:
+    branches: [fusion-bootstrap-ready]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply prepared changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d tools/fusion-bootstrap.patch.gz.b64 | gzip -d > /tmp/fusion.patch
+          if git apply --check /tmp/fusion.patch; then
+            git apply /tmp/fusion.patch
+            rm tools/fusion-bootstrap.patch.gz.b64
+            git add src
+            git commit -m "Implement bootstrap readiness foundations"
+            git push origin fusion-bootstrap-ready
+          else
+            echo "Prepared patch does not apply cleanly; leaving branch unchanged."
+          fi
