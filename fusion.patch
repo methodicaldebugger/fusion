@@ -1,0 +1,140 @@
+--- a/src/parser.rs
++++ b/src/parser.rs
+@@ -373,17 +373,27 @@
+ 
+         self.establish_main_style(style)?;
+ 
+-        let body = match style {
++        // `main` is a function-like scope for parser restrictions (most
++        // importantly, function declarations are only allowed at the
++        // top level).  It is not represented as `Statement::Function`, so
++        // keep the depth bookkeeping here.
++        self.function_depth += 1;
++
++        let body_result = match style {
+             BlockStyle::Indentation => {
+                 self.skip_newlines();
+-                self.parse_indentation_block()?
++                self.parse_indentation_block()
+             }
+ 
+-            BlockStyle::Braces => self.parse_brace_block()?,
++            BlockStyle::Braces => self.parse_brace_block(),
+ 
+             BlockStyle::Unknown => unreachable!(),
+         };
+ 
++        self.function_depth -= 1;
++
++        let body = body_result?;
++
+         Ok(Statement::Main {
+             body,
+             span: self.span_from(start),
+@@ -1398,6 +1408,25 @@
+                     if self.consume(&Token::Colon) {
+                         let type_name = self.parse_type()?;
+                         (first, Some(type_name))
++                    } else if generic_parameters.iter().any(|parameter| parameter == &first)
++                        && matches!(self.current(), Token::Identifier(_))
++                    {
++                        // Generic type-first syntax: `T value`.
++                        //
++                        // Ordinary identifiers remain the existing untyped
++                        // `name` form.  Restricting this interpretation to a
++                        // declared generic parameter removes the ambiguity
++                        // between `foo` and `T value`.
++                        let parameter_name = match self.current() {
++                            Token::Identifier(name) => {
++                                let name = name.clone();
++                                self.advance();
++                                name
++                            }
++                            _ => unreachable!(),
++                        };
++
++                        (parameter_name, Some(first))
+                     } else {
+                         // Plain `name` = untyped parameter.
+                         (first, None)
+--- a/src/type_checker.rs
++++ b/src/type_checker.rs
+@@ -164,8 +164,6 @@
+ 
+         matches!(expected, Type::Unknown)
+             || matches!(found, Type::Unknown)
+-            || matches!((expected, found), (Type::Generic(_), _))
+-            || matches!((expected, found), (_, Type::Generic(_)))
+     }
+ 
+     fn numeric_type(&self, ty: &Type) -> bool {
+@@ -2310,14 +2308,35 @@
+             Ok(())
+         })();
+ 
++        // Capture the body-inferred return type before restoring the
++        // enclosing function context.
++        let inferred_return_type = self
++            .current_function
++            .as_ref()
++            .and_then(|context| context.inferred_return_type.clone())
++            .unwrap_or(Type::Void);
++
+         self.pop_scope();
+         self.current_function = previous_function;
+ 
+-        if result.is_err() {
+-            return result;
++        if let Err(error) = result {
++            return Err(error);
+         }
+ 
+-        let _ = is_async;
++        // Publish inferred return types for functions without an explicit
++        // return annotation. The registration pass uses `Unknown` so forward
++        // calls can still be resolved before the body is checked.
++        if return_type.is_none() {
++            let final_return_type = if is_async {
++                Type::Task(Box::new(inferred_return_type))
++            } else {
++                inferred_return_type
++            };
++
++            if let Some(function) = self.environment.functions.get_mut(name) {
++                function.return_type = final_return_type;
++            }
++        }
+ 
+         Ok(())
+     }
+@@ -2654,6 +2673,10 @@
+                     parameter_types.push(parameter_type);
+                 }
+ 
++                // An omitted return type is initially `Unknown`, not `Void`.
++                // The body checker infers the actual return type from `return`
++                // statements.  A function with no return statements is later
++                // normalized to `Void`.
+                 let base_return_type =
+                     match return_type {
+                         Some(type_name) => self
+@@ -2663,7 +2686,7 @@
+                                 *span,
+                             )?,
+ 
+-                        None => Type::Void,
++                        None => Type::Unknown,
+                     };
+ 
+                 let final_return_type = if *is_async {
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1408,7 +1408,7 @@
+         #[test]
+     fn void_function_cannot_return_value() {
+         type_check_should_fail(
+-            r#"fn do_work():
++            r#"fn do_work() -> void:
+     return 10
+ 
+ main:

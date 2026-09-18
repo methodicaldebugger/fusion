@@ -373,16 +373,26 @@ impl Parser {
 
         self.establish_main_style(style)?;
 
-        let body = match style {
+        // `main` is a function-like scope for parser restrictions (most
+        // importantly, function declarations are only allowed at the
+        // top level).  It is not represented as `Statement::Function`, so
+        // keep the depth bookkeeping here.
+        self.function_depth += 1;
+
+        let body_result = match style {
             BlockStyle::Indentation => {
                 self.skip_newlines();
-                self.parse_indentation_block()?
+                self.parse_indentation_block()
             }
 
-            BlockStyle::Braces => self.parse_brace_block()?,
+            BlockStyle::Braces => self.parse_brace_block(),
 
             BlockStyle::Unknown => unreachable!(),
         };
+
+        self.function_depth -= 1;
+
+        let body = body_result?;
 
         Ok(Statement::Main {
             body,
@@ -1398,6 +1408,25 @@ impl Parser {
                     if self.consume(&Token::Colon) {
                         let type_name = self.parse_type()?;
                         (first, Some(type_name))
+                    } else if generic_parameters.iter().any(|parameter| parameter == &first)
+                        && matches!(self.current(), Token::Identifier(_))
+                    {
+                        // Generic type-first syntax: `T value`.
+                        //
+                        // Ordinary identifiers remain the existing untyped
+                        // `name` form.  Restricting this interpretation to a
+                        // declared generic parameter removes the ambiguity
+                        // between `foo` and `T value`.
+                        let parameter_name = match self.current() {
+                            Token::Identifier(name) => {
+                                let name = name.clone();
+                                self.advance();
+                                name
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        (parameter_name, Some(first))
                     } else {
                         // Plain `name` = untyped parameter.
                         (first, None)

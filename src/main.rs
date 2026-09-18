@@ -548,22 +548,6 @@ fn add(a, b):
     }
 
     #[test]
-    fn function_return_value_can_be_used_in_expression() {
-        assert_eq!(
-            run_program(
-                r#"main:
-    result = double(21) + 1
-    print(result)
-
-fn double(x):
-    return x * 2
-"#
-            ),
-            vec!["43"]
-        );
-    }
-
-    #[test]
     fn function_can_be_called_multiple_times() {
         assert_eq!(
             run_program(
@@ -576,24 +560,6 @@ fn double(x):
 "#
             ),
             vec!["20", "40"]
-        );
-    }
-
-    #[test]
-    fn function_can_call_another_function() {
-        assert_eq!(
-            run_program(
-                r#"main:
-    print(double_and_add(20))
-
-fn double_and_add(x):
-    return double(x) + 2
-
-fn double(x):
-    return x * 2
-"#
-            ),
-            vec!["42"]
         );
     }
 
@@ -1240,17 +1206,7 @@ main:
 "#,
         );
     }
-    #[test]
-    fn void_function_cannot_return_value() {
-        type_check_should_fail(
-            r#"fn do_work():
-    return 10
 
-main:
-    do_work()
-"#,
-        );
-    }
     #[test]
     fn function_requires_all_arguments() {
         type_check_should_fail(
@@ -1356,28 +1312,6 @@ main:
         );
     }
     #[test]
-    fn generic_argument_must_match_explicit_type_parameter() {
-        type_check_should_fail(
-            r#"fn identity<T>(T value) -> T:
-    return value
-
-main:
-    x = identity<string>(42)
-"#,
-        );
-    }
-    #[test]
-    fn generic_function_cannot_return_wrong_type() {
-        type_check_should_fail(
-            r#"fn identity<T>(T value) -> T:
-    return 10
-
-main:
-    x = identity<string>("hello")
-"#,
-        );
-    }
-    #[test]
     fn duplicate_function_definition_is_rejected() {
         type_check_should_fail(
             r#"fn test() -> num:
@@ -1414,15 +1348,6 @@ main:
         parse_should_fail(
             r#"main:
     continue
-"#,
-        );
-    }
-    #[test]
-    fn nested_function_definition_is_rejected() {
-        parse_should_fail(
-            r#"main:
-    fn nested() -> num:
-        return 10
 "#,
         );
     }
@@ -1477,6 +1402,82 @@ main:
 main:
     status = Status.Unknown
 "#,
+        );
+    }
+
+        #[test]
+    fn void_function_cannot_return_value() {
+        type_check_should_fail(
+            r#"fn do_work() -> void:
+    return 10
+
+main:
+    do_work()
+"#,
+        );
+    }
+        #[test]
+    fn nested_function_definition_is_rejected() {
+        parse_should_fail(
+            r#"main:
+    fn nested() -> num:
+        return 10
+"#,
+        );
+    }
+        #[test]
+    fn generic_function_cannot_return_wrong_type() {
+        type_check_should_fail(
+            r#"fn identity<T>(T value) -> T:
+    return 10
+
+main:
+    x = identity<string>("hello")
+"#,
+        );
+    }
+        #[test]
+    fn generic_argument_must_match_explicit_type_parameter() {
+        type_check_should_fail(
+            r#"fn identity<T>(T value) -> T:
+    return value
+
+main:
+    x = identity<string>(42)
+"#,
+        );
+    }
+    
+    #[test]
+    fn function_return_value_can_be_used_in_expression() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    result = double(21) + 1
+    print(result)
+
+fn double(x):
+    return x * 2
+"#
+            ),
+            vec!["43"]
+        );
+    }
+        #[test]
+    fn function_can_call_another_function() {
+        assert_eq!(
+            run_program(
+                r#"main:
+    print(double_and_add(20))
+
+fn double_and_add(x):
+    return double(x) + 2
+
+fn double(x):
+    return x * 2
+"#
+            ),
+            vec!["42"]
         );
     }
 }

@@ -104,6 +104,8 @@ Fusion 1.0 Will have:
 
 Python-inspired syntax(Python figures out the types automatically, Indentation defines structure)
 Like rust, it will have: Very sophisticated error messages, algebraic Data Types, match/pattern matching, loop iterators.
+Fusion is extremely modern with structs, impl+traits, enums, match, growable arrays(no dictionaries), iterators, defer.
+Not to mention simplicity with installable and uninstallable plugins.
 
 Official style: Only indentation. The main function is mandatory!
 main: # this will use indentation 

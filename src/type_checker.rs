@@ -164,8 +164,6 @@ impl TypeChecker {
 
         matches!(expected, Type::Unknown)
             || matches!(found, Type::Unknown)
-            || matches!((expected, found), (Type::Generic(_), _))
-            || matches!((expected, found), (_, Type::Generic(_)))
     }
 
     fn numeric_type(&self, ty: &Type) -> bool {
@@ -2310,14 +2308,35 @@ impl TypeChecker {
             Ok(())
         })();
 
+        // Capture the body-inferred return type before restoring the
+        // enclosing function context.
+        let inferred_return_type = self
+            .current_function
+            .as_ref()
+            .and_then(|context| context.inferred_return_type.clone())
+            .unwrap_or(Type::Void);
+
         self.pop_scope();
         self.current_function = previous_function;
 
-        if result.is_err() {
-            return result;
+        if let Err(error) = result {
+            return Err(error);
         }
 
-        let _ = is_async;
+        // Publish inferred return types for functions without an explicit
+        // return annotation. The registration pass uses `Unknown` so forward
+        // calls can still be resolved before the body is checked.
+        if return_type.is_none() {
+            let final_return_type = if is_async {
+                Type::Task(Box::new(inferred_return_type))
+            } else {
+                inferred_return_type
+            };
+
+            if let Some(function) = self.environment.functions.get_mut(name) {
+                function.return_type = final_return_type;
+            }
+        }
 
         Ok(())
     }
@@ -2654,6 +2673,10 @@ impl TypeChecker {
                     parameter_types.push(parameter_type);
                 }
 
+                // An omitted return type is initially `Unknown`, not `Void`.
+                // The body checker infers the actual return type from `return`
+                // statements.  A function with no return statements is later
+                // normalized to `Void`.
                 let base_return_type =
                     match return_type {
                         Some(type_name) => self
@@ -2663,7 +2686,7 @@ impl TypeChecker {
                                 *span,
                             )?,
 
-                        None => Type::Void,
+                        None => Type::Unknown,
                     };
 
                 let final_return_type = if *is_async {
