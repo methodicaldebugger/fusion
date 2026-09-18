@@ -1,217 +1,245 @@
-Fusion is intended to be:
-easy to learn, strongly typed, statically typed, type-inferred, expressive, practical
-interoperable, native, garbage-collected, suitable for both beginners and experienced developers.
+!!!build bridges between communities!!!
 
-It will have a modern rust debugger, rust iterators, rust match statements.
-No classes or pointers, instead use structs and traits.
+Hello everyone, I would like to build fusion(a brand new programing language). For more details continue reading.
 
+Fusion is an open-source programming language and compiler project with a long-term goal of making software ecosystems interoperate through one language, one toolchain, and one developer experience. The main idea here is knowledge interoperability. "Can a programmer's knowledge transfer across ecosystems?" "Fusion aims to do for programming ecosystems what SQL did for databases: provide a common interface across many underlying implementations."
 
-The language takes inspiration from several ecosystems without attempting to reproduce them exactly.
-For example:
-Python → approachable syntax and indentation
-Rust → algebraic data types, pattern matching, iterators, diagnostics
-Dart → managed runtime and potential JIT/AOT architecture
-SQL → the idea of a common abstraction over different implementations
+If you suffer from fragmentation, fusion is for you! This includes: Companies that already use many languages, Library maintainers, Cloud providers, Enterprise software companies, Universities and beginners who learn programing.
 
+Fusion has a easy to learn python-inspired synthax, a rust style debugger, TO THE PROGRAMER IT FEELS LIKE ONE LANGUAGE. A beginner learns Fusion. An expert can access advanced ecosystems when they need them.
 
-It will have both indentation and brackets:
-main: #<-- this means indentation will be used like in python
-main{ //<-- this means brackets will be used like in C
-}
-A file should consistently use one style.
-The goal is to minimize boilerplate while allowing developers to use a familiar structural style.
+A beginner will install fusion(including the fusion toolchain and rust-style debugger + package manager(like cargo))
+This allows the user to build: CLI applications, backend services, developer tools, desktop applications, data processing,
+scientific computing, games and graphics, cloud applications, distributed systems.
+
+The user could use the package manager(or manualy) download and install plugins. There are 2 types of plugins.
+The first type makes fusion more pleasant to use: cloud builds, UI framework, repl + jupyter, AOT + JIT, SQLite support, actors system.
+The second type extends fusions reach into existing ecosystems. Ideally fusion would embeed foreign source code, that way it does not need to be rewritten. C plugin could compile C source code, provide little overhead, this way C files do not have to be revritten into fusion. The same goes for other plugins C++, rust, nim, zig, swift, golang, dart, C#, java, Kotlin/native and so on.
+
+Foreign code must live inside explicit foreign-language boundaries(foreign files).
 
 
 
 
-Comments may be written as such:
-<//> <- single line comment
-<#> <- single line comment
-</*>
-multiline comment
-<*/>
-
-
-Type system: Fusion is intended to be statically and strongly typed with type inference.
-For example:
-x = true
-name = "Fusion"
-count = 42
-const version = 1
-
-
-Explicit types can also be written:
-num x = 42
-float y = 3.4
-bool z = true
-string name = "Fusion"
-int[] numbers = [1, 2, 3]
-
-Variables are mutable by default.
-Use const for values that should not change.
 
 
 
-We only have a growable array!! Instead of: an array, vector, list, linked list, slice, dynamic array.
+
+
+
+ChatGPT can distinguish between a foreign programing language that has:
+
+easy integration
+possible but difficult
+possible with a bridge/adapter
+possible only for certain libraries
+technically possible but not worth doing
+effectively impractical
+
+
+The developer shouldn't have to think:
+“Oh no, this is a Python library, therefore I need a completely different API.”
+You can't make every arbitrary library magically interoperable so fusion needs adapters!
+
+You may use libraries in other languages, not mentioned above, with a wrapper, binding, ABI boundary, generated bindings, RPC bridge, WebAssembly module, etc.
+
+There are several levels of “foreign library”:
+Level 1 — Native ABI. Excellent interoperability. Very little overhead.
+Level 2 — Managed runtime. Very powerful, but requires runtime integration.
+Level 3 — Embedded runtime. More overhead, but potentially extremely useful.
+Level 4 — RPC/process bridge. The foreign library runs independently. This can be surprisingly powerful because the boundary is clean.
+Level 5 — WebAssembly. This could provide a very portable integration mechanism.
+
+A possible compiler feature, fusion could even suggest it.
+
+Example:
+Warning: Function simulate() consumes 68% of CPU.
+Suggestion: Move to Rust for ~8x speedup.
+
+Imagine clicking:
+Convert to Rust -> The IDE generates: -> pub fn simulate(...) {    ...     }
+and creates the wrapper automatically.
+
+Fusion could say:
+Options:
+[Optimize Fusion]
+[Move to Rust]
+[Move to GPU]
+[Parallelize]
+
+That is futuristic!
+
+
+
+Developers will ask: "I'll build it in Fusion. Which ecosystem is the best implementation for this specific capability?"
+When to switch to another languag within fusion?
+Only when you need capabilities that Fusion intentionally doesn't try to optimize for. These are almost always libraries, not entire applications.
+If you can't build it in fusion, build it in another ecosystem.
+
+
+
+Evergreen Technologies(me basicaly)
+Evergreen Technologies provides professional services that support organizations building software at scale:
+hosted cloud builds, enterprise collaboration features, managed package registries, commercial IDE features, long-term support subscriptions.
+These services are commercial, while the core Fusion language and ecosystem remain open.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+WE WILL BUILD INTERPRETER-FIRST INTERNALLY, BUT DESIGN COMPILER-FIRST ARCHITECTURALLY!
+Fusion 1.0 Will have:
+
+Python-inspired syntax(Python figures out the types automatically, Indentation defines structure)
+Like rust, it will have: Very sophisticated error messages, algebraic Data Types, match/pattern matching, loop iterators.
+
+Official style: Only indentation. The main function is mandatory!
+main: # this will use indentation 
+main{ // this will use parenthesis
+the parser sees and remembers what you decided no mixing inside the file! This means minimal boilerplate to start programing! 
+
+Static typing with type inference, variables are mutable by default, strong typing.
+comments are created like in python and C (<#> as well as <//> and </**/>)
+Functions either: return a value (int, float, string, etc.) or have no return type at all
+Only return returns information from functions.
+Fusion is like zig it lets you write conceptually: 
+file = open("data.txt") 
+defer file.close() 
+process(file) 
+The meaning is: When this scope exits, execute file.close(). You don't have to remember to put: file.close() at every possible exit point.
+
+GC → automatically manages memory
+defer → deterministically releases resources
+scopes → let programmers control when deferred cleanup happens
+That's much simpler than importing C++'s entire RAII/ownership system.
+When file leaves scope, its destructor runs. This makes resource management deterministic.
+Fusion takeaway: Even with GC, deterministic resource cleanup is extremely valuable for things like files, sockets, GPU resources, database connections, and foreign handles.
+
+Algebraic Data Types(like the kind in rust)
+match like in rust(It matches the structure, not just values, Exhaustiveness checking, It works with nested data, You can add conditions, Destructuring structs, Matching references safely, The compiler can optimize it, It replaces many language features)
+Pattern matching (like rust)
+loop iterators(like rust with zero cost abstractions, but not all of them, only a small set of iterators:map(), filter(), reduce(), fold(), collect(), find(), any(), all(), count(), take(), skip(), zip(), flatten())
+Make Option and Result foundational:
+Option instead of null "Option<int>" This eliminates a huge class of null-pointer bugs.
+Result for errors "Result<T, E>" Instead of throwing exceptions everywhere.
+
+Structs
+impl+Traits (instead of interfaces)
+only growable arrays(with 10+ operations) no dictionaries
+iterators(8+ operations)
+hash map(8+ operations)
+Async/await
+Generics
+Properties
+Modules
+Package manager
+Automatic memory management
+type conversion
+generics
+option/result
+file I/O + defer
+async/await
+
+Build a standard library, a package manager, .
+Fusion -> Fusion IR -> LLVM -> Machine code. LLVM is an existing compiler infrastructure used by many languages. Building your own optimizer and code generator from scratch would multiply the amount of work.
+
+Fusion will NOT have:
+a generic <loop{}> like rust has, fusion will only have <for 0..10:> + <while x>0;> + iterators like in rust
+Classes(they are not neccessary, you have structs)
+No inheritance(no need for it)
+Pointers(not neccessary)
+Complex macros
+Header files
+Preprocessor directives
+NO OWNERSHIP, NO borrow checker, NO lifetime annotations
+
+
+
+Below we have some examples of fusion programs:
+
+num x
+float y
+string welcome = "hello"
+const z = 5
+only for and while loops(nothing more complicated)
+bool gravity = true
+boolean operators <&&>, <||>, <!>, <and>, <or>, <not>
+
+
+We only have a growable array!! Instead of: an array, vector, list, linked list, slice, dynamic array. 
 A Fusion programmer doesn't need to learn five different collection types just to store a sequence of things.
 
 num[] numbers = [1, 2, 3]
 string[] names = [
-    "Alice",
-    "Bob",
-    "Charlie"
+    "Alice",
+    "Bob",
+    "Charlie"
 ]
 print(numbers[0])
 numbers[2] = 42
 x = numbers[i]
 length: numbers.length
 
-Built-in methods: numbers.push(5), numbers.pop(), numbers.clear(), numbers.contains(42), numbers.sort(), numbers.reverse(), length: numbers.length
+Built-in methods: numbers.push(5), numbers.pop(), numbers.clear(), numbers.contains(42), numbers.sort(), numbers.reverse().
 Printing variables: print(x), print("Hello"), print("{name} is {age} years old.")
 debug(person) // debug always shows the full structural representation.
+Fusion is statically typed, it can automatically call the appropriate formatting code
+
+struct Enemy:
+    life: num
+    damage: num
+    angle: float
+
+fn do_damage(a: Enemy):
+    print(a.life)
+    print(a.damage)
+    print(a.angle)
+
+main:
+    a = Enemy()
+
+    a.life = 100
+    a.damage = 5
+    a.angle = 45.0
+
+    do_damage(a)
+
+fn inspect(a: Enemy):
+    print(a.life)   // Value parameter: the function receives an Enemy value. It cannot modify the original Enemy.
 
 
-Fusion is like zig it lets you write conceptually: 
-file = open("data.txt") 
-defer file.close() 
-process(file) 
-The meaning is: When this scope exits, execute file.close(). You don't have to remember to put: file.close() at every possible exit point.
-
-
-Fusion will have:
-GC → automatically manages memory
-defer → deterministically releases resources
-scopes → let programmers control when deferred cleanup happens
-
-
-Make Option and Result foundational:
-Option instead of null "Option<int>" This eliminates a huge class of null-pointer bugs.
-Result for errors "Result<T, E>" Instead of throwing exceptions everywhere.
-
-
-Fusion intends to provide Rust-style algebraic data types and pattern matching.
-The goals include: exhaustive matching, nested patterns, destructuring
-conditional patterns, safe reference matching, compiler optimization.
-
-Example:
-match value:
-    Some(x):
-        print(x)
-    None:
-        print("Nothing")
-
-Pattern matching is intended to reduce complex chains of conditional logic.
-
-Iterators
-Fusion intends to provide a deliberately small collection of useful iterators.
-Planned operations include:
-map, filter, reduce, fold, collect, find, any, all, count, take, skip, zip, flatten.
-
-The goal is to provide expressive collection processing while allowing the compiler to optimize common iterator patterns.
+fn damage(a: ref Enemy):
+    a.life -= a.damage    // Reference parameter: the function gets access to the original object.
 
 
 
 
 
-Fusion's goal is interoperability, not universal replacement.
-Functions
-Functions return values explicitly.
-fn add(a, b):
-    return a + b
-Functions that do not return a value do not need a return type.
 
 
-Structs and traits
-Fusion plans to support:
-structs
-traits
-generics
-properties
-modules
-algebraic data types
-enums
-iterators
+I would build a very small Fusion language that can call C libraries first, while deliberately designing the compiler so that self-hosting becomes easy later. The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain." Fusion needs to access the ecosystems of other languages, to connect them, foreign languages and libraries are a valuable asset fusion cannot live without.
 
-Fusion intentionally does not plan to use traditional class inheritance.
-The goal is to favor composition and explicit relationships.
-
-
-Fusion is not intended to replace every programming language.
-
-The project does not initially aim to provide:
-ownership/borrow checking
-lifetime annotations
-complex macros
-header files
-preprocessor directives
-class inheritance
-traditional classes
-arbitrary loop constructs
-manual pointer-based programming as a primary abstraction
-
-Fusion is intentionally making different tradeoffs.
-
-
-Concurrency
-Fusion plans to support:
-async and await.
-The exact concurrency and runtime model remains an area of design and experimentation.
+So you need to prove that claim early. If Fusion 1.0 can make C libraries feel like ordinary Fusion libraries, I've demonstrated the central idea.
+Fusion should be able to integrate or embeed a foreign language NOT inside a .fusion file but in run/compile a separate file(like .c). Foreign languages are project-level dependencies, not syntax-level extensions. If that experience genuinely feels like “I installed Fusion, imported a C library, and never had to think about the C toolchain”, you've demonstrated the central idea behind Fusion.
 
 
 
+Current status:
+Make interpreter and type checker agree on every supported operation
+Build the conformance test suite
+Then begin bootstrapping the lexer
 
-Fusion may initially use an interpreter because it provides a fast development cycle.
-
-
-However:
-Build the interpreter first, but design the architecture around the compiler.
-This allows language experimentation without locking the project into an interpreter-only execution model.
-
-The long-term goal is to support:
-5 layers of integration, JIT and AOT, repl + jupyiter, sqllite, actors system(erlang/elixir).
-Fusion 1.0 doesn't need to implement every integration!
-It needs to make implementing those integrations possible without redesigning the language.
-
-Here is what fusion 1.0(already self-hoasting) needs to make possible:
-5 layers of interoperability, cloud builds, jit+aot, actors(like elixir/erlang)
-repl+jupyter, UI framework(like flutter), sqlite. 
-These should be build by the community(not me) and the architecture of fusion, should enable this.
-
-
-Fusions (current) pipeline:
-                    Fusion source
-                         │
-                         ▼
-                      Lexer
-                         │
-                    Token + Span
-                         │
-                         ▼
-                      Parser
-                         │
-                         ▼
-                        AST
-                         │
-              ┌──────────┴──────────┐
-              │                     │
-        source spans           syntax only
-              │                     │
-              └──────────┬──────────┘
-                         ▼
-                  Name Resolution
-                         │
-                         ▼
-                    Typed HIR
-                         │
-                  type checking
-                         │
-                         ▼
-                       MIR
-                         │
-             ┌───────────┼───────────┐
-             ▼           ▼           ▼
-        Interpreter      JIT         AOT
-             │           │           │
-             └───────────┼───────────┘
-                         ▼
-                    Fusion Runtime
+At that point I'd consider Fusion bootstrap-ready.
+Link to repository: https://github.com/methodicaldebugger/fusion.git

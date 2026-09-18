@@ -1,4 +1,4 @@
-Send me files you have made by visiting the link: https://fusion.ifree.page
+My website: https://fusion.ifree.page
 
 The integration quality of foreign languages and foreign libraries may vary:
 
@@ -34,7 +34,6 @@ THIS IS WHERE I STOP HELPING
 Once C interoperability has been achieved, fusion is completed from my perspective.
 
 3. Fusion 1.2-infinity:
-JIT + AOT, repl + jupyiter.
 Now we implement more languages and foreign libraries(the developer can use foreign libraries, but may only write the foreign language itself, if there is a plugin available).
 
 We implement many plugins, that allow the developer write other programing languages. C++, ABIs, Rust, JVM/Java, .NET/C#, Swift/Objective-C, Go, Dart, Kotlin/Native, Zig, WebAssembly, different runtimes, different memory models, different build systems, package distribution, licensing, security, debugging, cross-platform deployment.

@@ -1,4 +1,4 @@
-Send me files you have made by visiting the link: https://fusion.ifree.page
+Feel free to visit my website the link: https://fusion.ifree.page
 
 
 When fusion has:
