@@ -114,8 +114,20 @@ impl Resolver {
                 self.define(name, *name_span, DefinitionKind::Constant)?;
             }
             Statement::Assignment { target, value, .. } => {
-                self.resolve_expression(target)?;
-                self.resolve_expression(value)?;
+                match target {
+                    Expression::Identifier { name, span } => {
+                        if self.lookup(name).is_none() {
+                            self.resolve_expression(value)?;
+                            self.define(name, *span, DefinitionKind::Variable)?;
+                        } else {
+                            self.resolve_expression(value)?;
+                        }
+                    }
+                    _ => {
+                        self.resolve_expression(target)?;
+                        self.resolve_expression(value)?;
+                    }
+                }
             }
             Statement::Expression { expression, .. } | Statement::Call { expression, .. } =>
                 self.resolve_expression(expression)?,

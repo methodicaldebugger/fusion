@@ -1,4 +1,34 @@
+/*
+We still need to implement the following features:
+- Generics
+- Defer + I/O
+- Traits + impl
+- Enums
+- better Error handling
+- Modules
+- option/result
+- async/await
 
+There are many operations that are not yet implemented, including:
+- type_conversion(operations):
+as       explicit conversion
+from     user-defined conversion
+try      fallible conversion
+
+- growable arrays(operations):
+create, add, remove_last, access, modify, get_length, iterate, clear, insert_at_index, remove_at_index.
+- hash map(operations):
+create, insert, get, remove, contains_key, iterate, clear, iterate, keys, values.
+- iterators(operations):
+map, filter, enumerate, collect, find, any, all, fold.
+
+make the standard library prelude-like, so users don't have to write:
+import array
+import hashmap
+import iterator
+
+chatgpt don't delete these comments, thx
+*/
 pub mod ast;
 pub mod codegen;
 pub mod environment;

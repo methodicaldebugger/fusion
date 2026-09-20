@@ -25,6 +25,11 @@ fn run_interpreter(source: &str) -> Result<(), String> {
     let program = fusion::compile_source(source)?;
     let mut interpreter = fusion::interpreter::Interpreter::new();
     interpreter.execute(&program);
+
+    for line in interpreter.output() {
+        println!("{}", line);
+    }
+
     Ok(())
 }
 

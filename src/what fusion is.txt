@@ -75,7 +75,8 @@ Developers will ask: "I'll build it in Fusion. Which ecosystem is the best imple
 When to switch to another languag within fusion?
 Only when you need capabilities that Fusion intentionally doesn't try to optimize for. These are almost always libraries, not entire applications.
 If you can't build it in fusion, build it in another ecosystem.
-
+Fusion source code should stay Fusion. Foreign source code should stay in its original language and live in its original files.
+No rewrite is neccessary or installing foreign programing languages. Fusion's tooling handles the foreign side.
 
 
 Evergreen Technologies(me basicaly)
@@ -227,7 +228,8 @@ fn damage(a: ref Enemy):
 
 
 
-
+The memory model: GC + deterministic resource cleanup via defer. GC manages memory. defer manages resources.
+Option + Result + GC is an interesting combination.
 
 
 
@@ -238,10 +240,34 @@ Fusion should be able to integrate or embeed a foreign language NOT inside a .fu
 
 
 
-Current status:
-Make interpreter and type checker agree on every supported operation
-Build the conformance test suite
-Then begin bootstrapping the lexer
+Current status is getting Fusion bootstrap-ready by:
+Adding more features like:
+We still need to implement the following features:
+- Generics
+- Defer + I/O
+- Traits + impl
+- Enums
+- better Error handling
+- Modules
+- option/result
+- async/await
 
-At that point I'd consider Fusion bootstrap-ready.
-Link to repository: https://github.com/methodicaldebugger/fusion.git
+There are many operations that are not yet implemented, including:
+- type_conversion(operations):
+as       explicit conversion
+from     user-defined conversion
+try      fallible conversion
+
+- growable arrays(operations):
+create, add, remove_last, access, modify, get_length, iterate, clear, insert_at_index, remove_at_index.
+- hash map(operations):
+create, insert, get, remove, contains_key, iterate, clear, iterate, keys, values.
+- iterators(operations):
+map, filter, enumerate, collect, find, any, all, fold.
+
+make the standard library prelude-like, so users don't have to write:
+import array
+import hashmap
+import iterator
+
+Link to repository(that truncates, because it is too large): https://github.com/methodicaldebugger/fusion.git
