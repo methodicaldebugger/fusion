@@ -216,11 +216,26 @@ impl LLVMBackend {
                 self.locals.insert(name.clone(), (ty, slot));
             }
             Statement::Assignment { target, value, .. } => {
-                let Expression::Identifier { name, .. } = target else { return Err(self.unsupported("only variable assignment is currently lowered")); };
-                let (ty, slot) = self.locals.get(name).cloned().ok_or_else(|| self.unsupported(format!("unknown local '{}'", name)))?;
-                let v = self.emit_expr(value, out)?;
-                writeln!(out, "  store {} {}, ptr {}", ty.text(), v, slot).unwrap();
-            }
+    let Expression::Identifier { name, .. } = target else {
+        return Err(self.unsupported("only variable assignment is currently lowered"));
+    };
+
+    if let Some((ty, slot)) = self.locals.get(name).cloned() {
+        // Existing variable: evaluate the new value and store it.
+        let v = self.emit_expr(value, out)?;
+        writeln!(out, "  store {} {}, ptr {}", ty.text(), v, slot).unwrap();
+    } else {
+        // New variable: Fusion treats `x = value` as an inferred declaration.
+        let ty = self.expr_type(value);
+        let v = self.emit_expr(value, out)?;
+        let slot = format!("%local_{}_{}", sanitize_symbol(name), self.next_temp);
+
+        writeln!(out, "  {} = alloca {}, align 8", slot, ty.text()).unwrap();
+        writeln!(out, "  store {} {}, ptr {}", ty.text(), v, slot).unwrap();
+
+        self.locals.insert(name.clone(), (ty, slot));
+    }
+}
             Statement::Expression { expression, .. } | Statement::Call { expression, .. } => { let _ = self.emit_expr(expression, out)?; }
             Statement::Return { value, .. } => {
                 if self.current_is_main {
