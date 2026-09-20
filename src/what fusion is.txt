@@ -14,17 +14,33 @@ scientific computing, games and graphics, cloud applications, distributed system
 
 The user could use the package manager(or manualy) download and install plugins. There are 2 types of plugins.
 The first type makes fusion more pleasant to use: cloud builds, UI framework, repl + jupyter, AOT + JIT, SQLite support, actors system.
-The second type extends fusions reach into existing ecosystems. Ideally fusion would embeed foreign source code, that way it does not need to be rewritten. C plugin could compile C source code, provide little overhead, this way C files do not have to be revritten into fusion. The same goes for other plugins C++, rust, nim, zig, swift, golang, dart, C#, java, Kotlin/native and so on.
+The second type extends fusions reach into existing ecosystems. Ideally fusion would embeed foreign source code(in foreign files), that way it does not need to be rewritten. The user doesn't install foreign languages or rewrite files, just installs a plugin and copy-pastes existing foreign files.   
+C plugin could compile C source code, provide little overhead, this way C files do not have to be revritten into fusion. The same goes for other plugins C++, rust, nim, zig, swift, golang, dart, C#, java, Kotlin/native and so on. Foreign code must live inside explicit foreign-language boundaries(foreign files).
 
-Foreign code must live inside explicit foreign-language boundaries(foreign files).
+When you install fusion(vanilla/basic), you get something like this:
+Fusion installation
+│
+├── fusion compiler/interpreter
+├── fusion toolchain
+├── fusion package manager
+└── plugin manager
+       │
+       ├── C plugin
+       ├── C++ plugin
+       ├── Rust plugin
+       ├── SQLite plugin
+       ├── Cloud-build plugin
+       └── ...
 
+Fusion orchestrates everything and potentialy adds systems plugins, if required.
+fusion.toml could eventually specify something conceptually like:
 
+[plugins]
+c = "..."
+sqlite = "..."
 
-
-
-
-
-
+Then Fusion's toolchain manager knows:
+"This project requires the C plugin."
 
 
 ChatGPT can distinguish between a foreign programing language that has:
