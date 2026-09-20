@@ -131,20 +131,6 @@ impl Parser {
         }
     }
 
-    fn require_block_style(&self, style: BlockStyle) -> Result<(), ParseError> {
-        if self.seen_main && self.block_style != style {
-            return Err(ParseError {
-                message: format!(
-                    "Mixed block styles are not allowed: expected {:?}, found {:?}",
-                    self.block_style, style
-                ),
-                span: self.current_span(),
-            });
-        }
-
-        Ok(())
-    }
-
     fn establish_main_style(&mut self, style: BlockStyle) -> Result<(), ParseError> {
         if self.seen_main {
             return Err(ParseError {
@@ -200,13 +186,6 @@ impl Parser {
     // ------------------------------------------------------------
     // Type helpers
     // ------------------------------------------------------------
-
-    fn current_is_type_keyword(&self) -> bool {
-        matches!(
-            self.current(),
-            Token::NumType | Token::FloatType | Token::BoolType | Token::StringType
-        )
-    }
 
     fn parse_type(&mut self) -> Result<String, ParseError> {
         match self.current() {
@@ -1943,52 +1922,6 @@ impl Parser {
         }
 
         Ok(arguments)
-    }
-
-    // ------------------------------------------------------------
-    // Struct constructor
-    // ------------------------------------------------------------
-
-    fn parse_struct_fields(&mut self) -> Result<Vec<(String, Expression)>, ParseError> {
-        let mut fields = Vec::new();
-
-        loop {
-            if self.current() == &Token::RightBrace {
-                break;
-            }
-
-            let name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-
-                _ => {
-                    return self.error("Expected field name in struct constructor");
-                }
-            };
-
-            if !self.consume(&Token::Colon) {
-                return self.error("Expected ':' after struct constructor field name");
-            }
-
-            let value = self.parse_expression()?;
-
-            fields.push((name, value));
-
-            if self.consume(&Token::Comma) {
-                continue;
-            }
-
-            break;
-        }
-
-        if !self.consume(&Token::RightBrace) {
-            return self.error("Expected '}' after struct constructor fields");
-        }
-
-        Ok(fields)
     }
 
     // ------------------------------------------------------------

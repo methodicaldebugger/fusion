@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use crate::span::{Span, Spanned};
+use crate::span::Spanned;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockMode {
@@ -397,27 +397,6 @@ impl Lexer {
             "true" => Token::Boolean(true),
             "false" => Token::Boolean(false),
             _ => Token::Identifier(ident.into()),
-        }
-    }
-
-    fn skip_line_start_whitespace(&mut self) {
-        while matches!(self.peek(), Some(' ' | '\t')) {
-            self.advance();
-        }
-    }
-
-    fn line_is_ignorable(&self, position: usize) -> bool {
-        let mut pos = position;
-
-        while matches!(self.input.get(pos), Some(' ' | '\t')) {
-            pos += 1;
-        }
-
-        match self.input.get(pos) {
-            None | Some('\n') => true,
-            Some('#') => true,
-            Some('/') if self.input.get(pos + 1) == Some(&'/') => true,
-            _ => false,
         }
     }
 

@@ -2,7 +2,6 @@
 
 use crate::ast::*;
 use crate::hir::*;
-use crate::errors::ParseError;
 
 pub struct HirLowerer;
 
@@ -52,7 +51,10 @@ impl HirLowerer {
 
             Statement::Return { value, span } => {
                 Ok(HirStatement::Return {
-                    value: Some(self.lower_expression(value)?),
+                    value: match value {
+                        Some(value) => Some(self.lower_expression(value)?),
+                        None => None,
+                    },
                     span: *span,
                 })
             }
@@ -86,7 +88,10 @@ impl HirLowerer {
                 Ok(HirStatement::VariableDeclaration {
                     name: declaration.name.clone(),
                     declared_type: declaration.declared_type.clone(),
-                    value: self.lower_expression(&declaration.value)?,
+                    value: match &declaration.value {
+                        Some(value) => self.lower_expression(value)?,
+                        None => return Err(format!("variable '{}' has no initializer; HIR requires a value", declaration.name)),
+                    },
                     span: *span,
                 })
             }
@@ -202,6 +207,12 @@ impl HirLowerer {
                         .map(|e| self.lower_expression(e))
                         .collect::<Result<_, _>>()?,
                 ))
+            }
+
+            Expression::Await { .. } => {
+                // HIR does not yet model an async state machine. Keep this as an
+                // explicit lowering error rather than silently changing semantics.
+                Err("await is parsed but async lowering is not implemented yet".to_string())
             }
 
             Expression::Call {
