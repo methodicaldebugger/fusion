@@ -69,10 +69,7 @@ pub enum PatternKind {
     Float(f64),
     String(String),
     Boolean(bool),
-    Variant {
-        name: String,
-        bindings: Vec<String>,
-    },
+    Variant { name: String, bindings: Vec<String> },
 }
 
 #[derive(Debug, Clone)]

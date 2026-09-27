@@ -49,3 +49,20 @@ The current backend covers scalar literals, locals, functions, calls, printing,
 arithmetic, comparisons, boolean operations, if/while/for and returns.
 Collections, pattern matching, defer and foreign calls are intentionally
 reported as backend gaps rather than silently miscompiled.
+
+## 0.2 standard-library runtime additions
+
+The interpreter now exposes these built-ins without external Rust dependencies:
+
+- Async/task syntax: `async fn`, `await`
+- Filesystem: `read_file`, `write_file`, `file_exists`, `remove_file`, `create_dir`, `list_dir`
+- CLI/system: `args`, `process_run`, `system`, `cwd`, `env_get`
+- Time: `sleep_ms`, `now_ms`, `unix_time`, `date_utc`
+- Randomness: `random_int`, `random_float`
+- Networking: `tcp_connect`, `TcpStream.send/receive/close`
+- Serialization: `serialize`, `deserialize` (primitive/array subset)
+- Formatting: `format(template, values)` with `{0}`, `{1}`, ... placeholders
+- Encoding: `hex_encode/decode`, `base64_encode/decode`
+- Logging: `log_debug`, `log_info`, `log_warn`, `log_error`
+
+These are intentionally interpreter-first implementations. The compiler/IR architecture remains independent of the host runtime details so the same APIs can later be backed by a native Fusion runtime.

@@ -6,11 +6,11 @@ These will be a part of the standard library(these are not planned to be impleme
 - Process/system functionality
 - Time and dates
 - Randomness
-- networking, 
+- networking,
 - serialisation,
 - formating,
 - encoding,
-- logging, 
+- logging,
 
 
 whenever new implementations are made, tests need to be generated(valid and invalid).
@@ -26,19 +26,19 @@ pub mod hir_lower;
 pub mod interpreter;
 pub mod ir;
 pub mod lexer;
+pub mod llvm_backend;
 pub mod name_resolution;
 pub mod parser;
 pub mod span;
 pub mod type_checker;
 pub mod types;
 pub mod value;
-pub mod llvm_backend;
 
 use lexer::{BlockMode, Lexer};
+use llvm_backend::LLVMBackend;
+use name_resolution::Resolver;
 use parser::Parser;
 use type_checker::TypeChecker;
-use name_resolution::Resolver;
-use llvm_backend::LLVMBackend;
 
 pub fn compile_source(source: &str) -> Result<ast::Program, String> {
     let mut lexer = Lexer::new(source, BlockMode::Unknown);
@@ -46,23 +46,28 @@ pub fn compile_source(source: &str) -> Result<ast::Program, String> {
     let mut parser = Parser::new(tokens);
     let program = parser.parse().map_err(|e| format!("parser: {}", e))?;
     let mut resolver = Resolver::new();
-    resolver.resolve(&program).map_err(|e| format!("resolver: {}", e))?;
+    resolver
+        .resolve(&program)
+        .map_err(|e| format!("resolver: {}", e))?;
     let mut checker = TypeChecker::new();
-    checker.check(&program).map_err(|e| format!("type checker: {}", e))?;
+    checker
+        .check(&program)
+        .map_err(|e| format!("type checker: {}", e))?;
     Ok(program)
 }
 
 pub fn emit_llvm(source: &str) -> Result<String, String> {
     let program = compile_source(source)?;
-    LLVMBackend::new().emit_program(&program).map_err(|e| e.to_string())
+    LLVMBackend::new()
+        .emit_program(&program)
+        .map_err(|e| e.to_string())
 }
-
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::interpreter::Interpreter;
     use crate::lexer::Token;
-    use super::*;
 
     // -------------------------------------------------------------------------
     // Test helpers
@@ -1011,11 +1016,9 @@ main {
         let mut lexer = Lexer::new(source, BlockMode::Unknown);
         let tokens = lexer.tokenize().expect("should lex");
 
-        assert!(
-            !tokens
-                .iter()
-                .any(|token| matches!(token.node, Token::Indent | Token::Dedent))
-        );
+        assert!(!tokens
+            .iter()
+            .any(|token| matches!(token.node, Token::Indent | Token::Dedent)));
     }
 
     #[test]
@@ -1380,7 +1383,7 @@ main:
         );
     }
 
-        #[test]
+    #[test]
     fn void_function_cannot_return_value() {
         type_check_should_fail(
             r#"fn do_work() -> void:
@@ -1391,7 +1394,7 @@ main:
 "#,
         );
     }
-        #[test]
+    #[test]
     fn nested_function_definition_is_rejected() {
         parse_should_fail(
             r#"main:
@@ -1400,7 +1403,7 @@ main:
 "#,
         );
     }
-        #[test]
+    #[test]
     fn generic_function_cannot_return_wrong_type() {
         type_check_should_fail(
             r#"fn identity<T>(T value) -> T:
@@ -1411,7 +1414,7 @@ main:
 "#,
         );
     }
-        #[test]
+    #[test]
     fn generic_argument_must_match_explicit_type_parameter() {
         type_check_should_fail(
             r#"fn identity<T>(T value) -> T:
@@ -1422,7 +1425,7 @@ main:
 "#,
         );
     }
-    
+
     #[test]
     fn function_return_value_can_be_used_in_expression() {
         assert_eq!(
@@ -1438,7 +1441,7 @@ fn double(x):
             vec!["43"]
         );
     }
-        #[test]
+    #[test]
     fn function_can_call_another_function() {
         assert_eq!(
             run_program(
@@ -1457,20 +1460,24 @@ fn double(x):
     }
     #[test]
     fn input_builtin_is_a_string_expression() {
-        let program = compile_test_program(r#"main:
+        let program = compile_test_program(
+            r#"main:
     value = input()
     print(value)
-"#);
+"#,
+        );
         assert!(matches!(program.statements[0], ast::Statement::Main { .. }));
     }
 
     #[test]
     fn explicit_as_conversion_works() {
         assert_eq!(
-            run_program(r#"main:
+            run_program(
+                r#"main:
     x = 42 as float
     print(x)
-"#),
+"#
+            ),
             vec!["42"]
         );
     }
@@ -1478,13 +1485,15 @@ fn double(x):
     #[test]
     fn from_conversion_uses_user_defined_converter() {
         assert_eq!(
-            run_program(r#"fn from_num(value) -> num:
+            run_program(
+                r#"fn from_num(value) -> num:
     return value + 10
 
 main:
     x = num::from(32)
     print(x)
-"#),
+"#
+            ),
             vec!["42"]
         );
     }
@@ -1492,12 +1501,14 @@ main:
     #[test]
     fn try_conversion_returns_option() {
         assert_eq!(
-            run_program(r#"main:
+            run_program(
+                r#"main:
     x = num::try("42")
     print(x)
     y = num::try("not-a-number")
     print(y)
-"#),
+"#
+            ),
             vec!["Some(42)", "None"]
         );
     }
@@ -1506,39 +1517,48 @@ main:
     fn defer_closes_file_and_file_io_works() {
         let path = std::env::temp_dir().join(format!("fusion_test_{}.txt", std::process::id()));
         let path_string = path.to_string_lossy().replace('\\', "\\\\");
-        let source = format!(r#"main:
+        let source = format!(
+            r#"main:
     file = open("{}")
     defer file.close()
     file.write("hello fusion")
-"#, path_string);
+"#,
+            path_string
+        );
         run_program(&source);
-        let contents = std::fs::read_to_string(&path).expect("Fusion should create and write the file");
+        let contents =
+            std::fs::read_to_string(&path).expect("Fusion should create and write the file");
         assert_eq!(contents, "hello fusion");
         std::fs::remove_file(path).ok();
     }
 
     #[test]
     fn invalid_conversion_is_rejected() {
-        type_check_should_fail(r#"main:
+        type_check_should_fail(
+            r#"main:
     x = true as float
-"#);
+"#,
+        );
     }
 
     #[test]
     fn invalid_file_method_arguments_are_rejected() {
-        type_check_should_fail(r#"main:
+        type_check_should_fail(
+            r#"main:
     file = open("test.txt")
     file.write(42)
-"#);
+"#,
+        );
     }
 
     #[test]
     fn invalid_conversion_arity_is_rejected() {
-        parse_should_fail(r#"main:
+        parse_should_fail(
+            r#"main:
     x = num::from(1, 2)
-"#);
+"#,
+        );
     }
-
 
     // =========================================================================
     // Generics, traits, enums, modules, collections, iterators, and strings
@@ -1546,18 +1566,25 @@ main:
 
     #[test]
     fn generic_function_can_be_called_with_explicit_type_argument() {
-        assert_eq!(run_program(r#"fn identity<T>(T value) -> T:
+        assert_eq!(
+            run_program(
+                r#"fn identity<T>(T value) -> T:
     return value
 
 main:
     x = identity<num>(42)
     print(x)
-"#), vec!["42"]);
+"#
+            ),
+            vec!["42"]
+        );
     }
 
     #[test]
     fn trait_impl_methods_can_be_called_through_the_receiver() {
-        assert_eq!(run_program(r#"struct Person:
+        assert_eq!(
+            run_program(
+                r#"struct Person:
     name: string
 
 trait Greeter:
@@ -1570,12 +1597,17 @@ impl Greeter for Person:
 main:
     p = Person(name: "Fusion")
     print(p.greet())
-"#), vec!["hello Fusion"]);
+"#
+            ),
+            vec!["hello Fusion"]
+        );
     }
 
     #[test]
     fn enum_pattern_matching_works() {
-        assert_eq!(run_program(r#"enum State:
+        assert_eq!(
+            run_program(
+                r#"enum State:
     Ready
     Failed(string)
 
@@ -1584,22 +1616,32 @@ main:
     match state:
         State::Ready => print("ready")
         State::Failed(message) => print(message)
-"#), vec!["broken"]);
+"#
+            ),
+            vec!["broken"]
+        );
     }
 
     #[test]
     fn import_module_syntax_is_accepted() {
-        let program = compile_test_program(r#"import std.io
+        let program = compile_test_program(
+            r#"import std.io
 
 main:
     print("module syntax")
-"#);
-        assert!(program.statements.iter().any(|s| matches!(s, ast::Statement::Import { path, .. } if path == "std.io")));
+"#,
+        );
+        assert!(program
+            .statements
+            .iter()
+            .any(|s| matches!(s, ast::Statement::Import { path, .. } if path == "std.io")));
     }
 
     #[test]
     fn growable_array_operations_work() {
-        assert_eq!(run_program(r#"main:
+        assert_eq!(
+            run_program(
+                r#"main:
     numbers = [1, 2, 3]
     numbers.add(4)
     numbers.insert_at_index(1, 9)
@@ -1610,12 +1652,17 @@ main:
     print(numbers.remove_last())
     numbers.clear()
     print(numbers.get_length())
-"#), vec!["7", "5", "9", "4", "0"]);
+"#
+            ),
+            vec!["7", "5", "9", "4", "0"]
+        );
     }
 
     #[test]
     fn array_iteration_and_iterator_operations_work() {
-        assert_eq!(run_program(r#"fn double(x: num) -> num:
+        assert_eq!(
+            run_program(
+                r#"fn double(x: num) -> num:
     return x * 2
 
 fn even(x: num) -> bool:
@@ -1636,12 +1683,17 @@ main:
     print(numbers.iterate().all(even))
     total = numbers.iterate().fold(0, add)
     print(total)
-"#), vec!["[2, 4, 6]", "[2]", "Some(2)", "true", "false", "6"]);
+"#
+            ),
+            vec!["[2, 4, 6]", "[2]", "Some(2)", "true", "false", "6"]
+        );
     }
 
     #[test]
     fn hash_map_operations_work() {
-        assert_eq!(run_program(r#"main:
+        assert_eq!(
+            run_program(
+                r#"main:
     m = hashmap()
     m.insert("one", 1)
     m.insert("two", 2)
@@ -1652,12 +1704,17 @@ main:
     print(m.remove("one"))
     m.clear()
     print(m.get_length())
-"#), vec!["true", "Some(2)", "[one, two]", "[1, 2]", "Some(1)", "0"]);
+"#
+            ),
+            vec!["true", "Some(2)", "[one, two]", "[1, 2]", "Some(1)", "0"]
+        );
     }
 
     #[test]
     fn string_operations_work() {
-        assert_eq!(run_program(r#"main:
+        assert_eq!(
+            run_program(
+                r#"main:
     text = "  Hello Fusion  "
     print(text.trim())
     print(text.to_uppercase())
@@ -1670,46 +1727,70 @@ main:
     print(text.ends_with("  "))
     print(text.contains("Fusion"))
     print(text.length())
-"#), vec!["Hello Fusion", "  HELLO FUSION  ", "  hello fusion  ", "Hello", "Some(8)", "  Hello World  ", "[, , Hello, Fusion, , ]", "true", "true", "true", "16"]);
+"#
+            ),
+            vec![
+                "Hello Fusion",
+                "  HELLO FUSION  ",
+                "  hello fusion  ",
+                "Hello",
+                "Some(8)",
+                "  Hello World  ",
+                "[, , Hello, Fusion, , ]",
+                "true",
+                "true",
+                "true",
+                "16"
+            ]
+        );
     }
 
     #[test]
     fn invalid_generic_arity_is_rejected() {
-        type_check_should_fail(r#"fn identity<T>(T value) -> T:
+        type_check_should_fail(
+            r#"fn identity<T>(T value) -> T:
     return value
 
 main:
     x = identity(42)
-"#);
+"#,
+        );
     }
 
     #[test]
     fn invalid_array_operation_types_are_rejected() {
-        type_check_should_fail(r#"main:
+        type_check_should_fail(
+            r#"main:
     numbers = [1, 2, 3]
     numbers.access("wrong")
-"#);
+"#,
+        );
     }
 
     #[test]
     fn invalid_hash_map_key_type_is_rejected() {
-        type_check_should_fail(r#"main:
+        type_check_should_fail(
+            r#"main:
     HashMap<string, num> m = hashmap()
     m.insert(1, "number key")
-"#);
+"#,
+        );
     }
 
     #[test]
     fn invalid_string_operation_types_are_rejected() {
-        type_check_should_fail(r#"main:
+        type_check_should_fail(
+            r#"main:
     text = "hello"
     text.concatenate(42)
-"#);
+"#,
+        );
     }
 
     #[test]
     fn incomplete_trait_impl_is_rejected() {
-        type_check_should_fail(r#"struct Person:
+        type_check_should_fail(
+            r#"struct Person:
     name: string
 
 trait Greeter:
@@ -1721,8 +1802,163 @@ impl Greeter for Person:
 
 main:
     print("x")
-"#);
+"#,
+        );
     }
-
 }
 
+#[cfg(test)]
+mod stdlib_feature_tests {
+    use super::*;
+    use crate::interpreter::Interpreter;
+    use crate::lexer::{BlockMode, Lexer};
+    use crate::parser::Parser;
+    use std::fs;
+
+    fn run(source: &str) -> Vec<String> {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("parse");
+        let mut checker = TypeChecker::new();
+        checker.check(&program).expect("type-check");
+        let mut interpreter = Interpreter::new();
+        interpreter.execute(&program);
+        interpreter.output().to_vec()
+    }
+
+    fn invalid(source: &str) {
+        assert!(
+            compile_source(source).is_err(),
+            "program should be rejected"
+        );
+    }
+
+    #[test]
+    fn async_await_executes_task() {
+        assert_eq!(
+            run(r#"async fn answer() -> num:
+    return 42
+
+main:
+    value = await answer()
+    print(value)
+"#),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn filesystem_round_trip() {
+        let path =
+            std::env::temp_dir().join(format!("fusion_stdlib_{}_test.txt", std::process::id()));
+        let path = path.to_string_lossy().replace('\\', "\\\\");
+        let source = format!(
+            r#"main:
+    write_file("{}", "hello fusion")
+    print(file_exists("{}"))
+    print(read_file("{}"))
+    remove_file("{}")
+"#,
+            path, path, path, path
+        );
+        assert_eq!(run(&source), vec!["true", "hello fusion"]);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn time_random_encoding_format_serialization_and_logging_work() {
+        let out = run(r#"main:
+    print(date_utc(0))
+    print(hex_encode("Fusion"))
+    print(hex_decode("467573696f6e"))
+    print(base64_encode("Fusion"))
+    print(base64_decode("RnVzaW9u"))
+    print(format("value={0}", [42]))
+    print(serialize([1, 2, 3]))
+    print(deserialize("[1,2,3]"))
+    print(random_int(7, 7))
+    log_info("ready")
+"#);
+        assert_eq!(out[0], "1970-01-01 00:00:00 UTC");
+        assert_eq!(out[1], "467573696f6e");
+        assert_eq!(out[2], "Fusion");
+        assert_eq!(out[3], "RnVzaW9u");
+        assert_eq!(out[4], "Fusion");
+        assert_eq!(out[5], "value=42");
+        assert_eq!(out[6], "[1, 2, 3]");
+        assert_eq!(out[7], "[1, 2, 3]");
+        assert_eq!(out[8], "7");
+        assert_eq!(out[9], "[INFO] ready");
+    }
+
+    #[test]
+    fn process_args_system_and_network_apis_type_check() {
+        compile_source(
+            r#"main:
+    a = args()
+    s = system()
+    code = process_run("true", [])
+"#,
+        )
+        .expect("process APIs should type-check");
+        compile_source(
+            r#"main:
+    stream = tcp_connect("127.0.0.1", 1)
+    stream.close()
+"#,
+        )
+        .expect("network API should type-check");
+    }
+
+    #[test]
+    fn invalid_async_await_type_is_rejected() {
+        invalid(
+            r#"main:
+    value = await 42
+"#,
+        );
+    }
+
+    #[test]
+    fn invalid_filesystem_arguments_are_rejected() {
+        invalid(
+            r#"main:
+    value = read_file(42)
+"#,
+        );
+        invalid(
+            r#"main:
+    write_file("x", 42)
+"#,
+        );
+    }
+
+    #[test]
+    fn invalid_process_and_network_arguments_are_rejected() {
+        invalid(
+            r#"main:
+    process_run(42, [])
+"#,
+        );
+        invalid(
+            r#"main:
+    tcp_connect("localhost", "8080")
+"#,
+        );
+    }
+
+    #[test]
+    fn invalid_encoding_and_format_arguments_are_rejected() {
+        invalid(
+            r#"main:
+    hex_encode(42)
+"#,
+        );
+        invalid(
+            r#"main:
+    format(42, [1])
+"#,
+        );
+    }
+}

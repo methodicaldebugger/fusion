@@ -1,7 +1,8 @@
 //contents of value.rs
-use std::collections::HashMap;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs::File as StdFile;
+use std::net::TcpStream;
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
@@ -28,6 +29,8 @@ pub enum Value {
     Option(Option<Box<Value>>),
 
     File(Rc<RefCell<Option<StdFile>>>),
+    TcpStream(Rc<RefCell<Option<TcpStream>>>),
+    Task(Box<Value>),
 
     None,
 }
@@ -60,7 +63,9 @@ impl std::fmt::Display for Value {
             Value::HashMap(entries) => {
                 write!(f, "{{")?;
                 for (i, (key, value)) in entries.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}: {}", key, value)?;
                 }
                 write!(f, "}}")
@@ -69,7 +74,9 @@ impl std::fmt::Display for Value {
             Value::Iterator(values) => {
                 write!(f, "Iterator[")?;
                 for (i, value) in values.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", value)?;
                 }
                 write!(f, "]")
@@ -120,6 +127,8 @@ impl std::fmt::Display for Value {
             Value::Option(None) => write!(f, "None"),
 
             Value::File(_) => write!(f, "<file>"),
+            Value::TcpStream(_) => write!(f, "<tcp-stream>"),
+            Value::Task(value) => write!(f, "Task({})", value),
 
             Value::None => write!(f, "none"),
         }
@@ -136,11 +145,33 @@ impl PartialEq for Value {
             (Value::Array(a), Value::Array(b)) => a == b,
             (Value::HashMap(a), Value::HashMap(b)) => a == b,
             (Value::Iterator(a), Value::Iterator(b)) => a == b,
-            (Value::Struct { name: an, fields: af }, Value::Struct { name: bn, fields: bf }) => an == bn && af == bf,
-            (Value::Enum { enum_name: ae, variant: av, values: ax }, Value::Enum { enum_name: be, variant: bv, values: bx }) => ae == be && av == bv && ax == bx,
+            (
+                Value::Struct {
+                    name: an,
+                    fields: af,
+                },
+                Value::Struct {
+                    name: bn,
+                    fields: bf,
+                },
+            ) => an == bn && af == bf,
+            (
+                Value::Enum {
+                    enum_name: ae,
+                    variant: av,
+                    values: ax,
+                },
+                Value::Enum {
+                    enum_name: be,
+                    variant: bv,
+                    values: bx,
+                },
+            ) => ae == be && av == bv && ax == bx,
             (Value::Option(a), Value::Option(b)) => a == b,
             (Value::None, Value::None) => true,
             (Value::File(a), Value::File(b)) => Rc::ptr_eq(a, b),
+            (Value::TcpStream(a), Value::TcpStream(b)) => Rc::ptr_eq(a, b),
+            (Value::Task(a), Value::Task(b)) => a == b,
             _ => false,
         }
     }

@@ -1,4 +1,3 @@
-
 //! Project-level foreign dependency model.
 //!
 //! Fusion deliberately keeps foreign source out of `.fusion` files. This module
@@ -52,7 +51,10 @@ impl ForeignLibrary {
             return Err("compile_c called for a non-C foreign library".into());
         }
         if self.sources.is_empty() {
-            return Err(format!("foreign library '{}' has no source files", self.name));
+            return Err(format!(
+                "foreign library '{}' has no source files",
+                self.name
+            ));
         }
 
         let mut cmd = Command::new("clang");
@@ -68,9 +70,14 @@ impl ForeignLibrary {
         }
         cmd.arg("-o").arg(out);
 
-        let status = cmd.status().map_err(|e| format!("could not start clang: {}", e))?;
+        let status = cmd
+            .status()
+            .map_err(|e| format!("could not start clang: {}", e))?;
         if !status.success() {
-            return Err(format!("clang failed while compiling foreign library '{}'", self.name));
+            return Err(format!(
+                "clang failed while compiling foreign library '{}'",
+                self.name
+            ));
         }
         Ok(())
     }

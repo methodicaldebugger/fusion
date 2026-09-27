@@ -1,5 +1,8 @@
-
-use std::{env, fs, path::PathBuf, process::{Command, ExitCode}};
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::{Command, ExitCode},
+};
 
 fn usage() {
     eprintln!("Fusion 0.2");
@@ -17,7 +20,10 @@ fn read_source(path: &str) -> Result<String, String> {
 fn write_or_print(path: Option<&str>, data: &str) -> Result<(), String> {
     match path {
         Some(p) => fs::write(p, data).map_err(|e| format!("could not write '{}': {}", p, e)),
-        None => { print!("{}", data); Ok(()) }
+        None => {
+            print!("{}", data);
+            Ok(())
+        }
     }
 }
 
@@ -49,7 +55,11 @@ fn find_clang() -> Result<PathBuf, String> {
     // often installed but its bin directory is not on PATH.
     for variable in ["FUSION_LLVM_DIR", "LLVM_HOME"] {
         if let Ok(dir) = env::var(variable) {
-            let candidate = PathBuf::from(dir).join("bin").join(if cfg!(windows) { "clang.exe" } else { "clang" });
+            let candidate = PathBuf::from(dir).join("bin").join(if cfg!(windows) {
+                "clang.exe"
+            } else {
+                "clang"
+            });
             if candidate.is_file() {
                 return Ok(candidate);
             }
@@ -67,10 +77,18 @@ fn find_clang() -> Result<PathBuf, String> {
         let candidates = [
             PathBuf::from(r"C:\Program Files\LLVM\bin\clang.exe"),
             PathBuf::from(r"C:\Program Files (x86)\LLVM\bin\clang.exe"),
-            PathBuf::from(r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin\clang.exe"),
-            PathBuf::from(r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang.exe"),
-            PathBuf::from(r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin\clang.exe"),
-            PathBuf::from(r"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\x64\bin\clang.exe"),
+            PathBuf::from(
+                r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin\clang.exe",
+            ),
+            PathBuf::from(
+                r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang.exe",
+            ),
+            PathBuf::from(
+                r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin\clang.exe",
+            ),
+            PathBuf::from(
+                r"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\x64\bin\clang.exe",
+            ),
         ];
         for candidate in candidates {
             if candidate.is_file() {
@@ -86,15 +104,30 @@ fn find_clang() -> Result<PathBuf, String> {
 
 fn build(source: &str, output: &str) -> Result<(), String> {
     let ll = fusion::emit_llvm(source)?;
-    let base = std::env::temp_dir().join(format!("fusion-{}-{}.ll", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let base = std::env::temp_dir().join(format!(
+        "fusion-{}-{}.ll",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     fs::write(&base, ll).map_err(|e| format!("temporary LLVM file: {}", e))?;
 
     let clang = find_clang()?;
-    let status = Command::new(&clang).arg("-O2").arg(&base).arg("-o").arg(output).status()
+    let status = Command::new(&clang)
+        .arg("-O2")
+        .arg(&base)
+        .arg("-o")
+        .arg(output)
+        .status()
         .map_err(|e| format!("could not start clang at '{}': {}", clang.display(), e))?;
     let _ = fs::remove_file(&base);
     if !status.success() {
-        return Err(format!("clang failed while lowering LLVM IR (using '{}')", clang.display()));
+        return Err(format!(
+            "clang failed while lowering LLVM IR (using '{}')",
+            clang.display()
+        ));
     }
     Ok(())
 }
@@ -104,28 +137,49 @@ fn main() -> ExitCode {
     let command = args.next().unwrap_or_else(|| "run".into());
     let path = match args.next() {
         Some(p) => p,
-        None => { usage(); return ExitCode::from(2); }
+        None => {
+            usage();
+            return ExitCode::from(2);
+        }
     };
     let mut output = None;
     while let Some(a) = args.next() {
-        if a == "-o" { output = args.next(); } else { eprintln!("unknown option '{}'", a); return ExitCode::from(2); }
+        if a == "-o" {
+            output = args.next();
+        } else {
+            eprintln!("unknown option '{}'", a);
+            return ExitCode::from(2);
+        }
     }
 
     let source = match read_source(&path) {
         Ok(s) => s,
-        Err(e) => { eprintln!("error: {}", e); return ExitCode::from(1); }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            return ExitCode::from(1);
+        }
     };
 
     let result = match command.as_str() {
         "run" => run_interpreter(&source),
-        "check" => fusion::compile_source(&source).map(|_| { println!("ok: {}", path); }),
-        "emit-llvm" => fusion::emit_llvm(&source).and_then(|ll| write_or_print(output.as_deref(), &ll)),
+        "check" => fusion::compile_source(&source).map(|_| {
+            println!("ok: {}", path);
+        }),
+        "emit-llvm" => {
+            fusion::emit_llvm(&source).and_then(|ll| write_or_print(output.as_deref(), &ll))
+        }
         "build" => build(&source, output.as_deref().unwrap_or("a.out")),
-        _ => { usage(); return ExitCode::from(2); }
+        _ => {
+            usage();
+            return ExitCode::from(2);
+        }
     };
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => { eprintln!("error: {}", e); ExitCode::from(1) }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            ExitCode::from(1)
+        }
     }
 }

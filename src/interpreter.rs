@@ -1,15 +1,20 @@
 //contents of interpreter.rs
-use std::collections::HashMap;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::env;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Seek, Write};
+use std::net::TcpStream;
+use std::path::Path;
+use std::process::Command;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::ast::*;
 use crate::environment::Environment;
 use crate::types::{EnumDefinition, EnumVariantDefinition, StructDefinition, Type};
 use crate::value::Value;
-
 
 #[derive(Debug)]
 enum Flow {
@@ -35,6 +40,7 @@ pub struct Function {
     pub return_type: Option<String>,
     pub body: Vec<Statement>,
     pub generic_parameters: Vec<String>,
+    pub is_async: bool,
 }
 
 impl Interpreter {
@@ -65,10 +71,19 @@ impl Interpreter {
             "bool" => Type::Bool,
             "string" => Type::String,
             "File" => Type::File,
-            other if other.ends_with("[]") => Type::Array(Box::new(self.type_from_name(&other[..other.len()-2]))),
-            other if other.starts_with("Array<") && other.ends_with('>') => Type::Array(Box::new(self.type_from_name(&other[6..other.len()-1]))),
-            other if other.starts_with("Iterator<") && other.ends_with('>') => Type::Iterator(Box::new(self.type_from_name(&other[9..other.len()-1]))),
-            other if other.starts_with("Option<") && other.ends_with('>') => Type::Option(Box::new(self.type_from_name(&other[7..other.len()-1]))),
+            "TcpStream" => Type::TcpStream,
+            other if other.ends_with("[]") => {
+                Type::Array(Box::new(self.type_from_name(&other[..other.len() - 2])))
+            }
+            other if other.starts_with("Array<") && other.ends_with('>') => {
+                Type::Array(Box::new(self.type_from_name(&other[6..other.len() - 1])))
+            }
+            other if other.starts_with("Iterator<") && other.ends_with('>') => {
+                Type::Iterator(Box::new(self.type_from_name(&other[9..other.len() - 1])))
+            }
+            other if other.starts_with("Option<") && other.ends_with('>') => {
+                Type::Option(Box::new(self.type_from_name(&other[7..other.len() - 1])))
+            }
             other => Type::Struct(other.to_string()),
         }
     }
@@ -80,11 +95,21 @@ impl Interpreter {
             "bool" => matches!(value, Value::Boolean(_)),
             "string" => matches!(value, Value::String(_)),
             "File" => matches!(value, Value::File(_)),
-            other if other.starts_with("Array<") && other.ends_with('>') => matches!(value, Value::Array(_)),
-            other if other.starts_with("Iterator<") && other.ends_with('>') => matches!(value, Value::Iterator(_)),
-            other if other.starts_with("HashMap<") && other.ends_with('>') => matches!(value, Value::HashMap(_)),
+            "TcpStream" => matches!(value, Value::TcpStream(_)),
+            other if other.starts_with("Array<") && other.ends_with('>') => {
+                matches!(value, Value::Array(_))
+            }
+            other if other.starts_with("Iterator<") && other.ends_with('>') => {
+                matches!(value, Value::Iterator(_))
+            }
+            other if other.starts_with("HashMap<") && other.ends_with('>') => {
+                matches!(value, Value::HashMap(_))
+            }
+            other if other.starts_with("Task<") && other.ends_with('>') => {
+                matches!(value, Value::Task(_))
+            }
             other if other.starts_with("Option<") && other.ends_with('>') => {
-                let inner = &other[7..other.len()-1];
+                let inner = &other[7..other.len() - 1];
                 match value {
                     Value::Option(Some(v)) => self.value_matches_type(v, inner),
                     Value::Option(None) => true,
@@ -254,6 +279,7 @@ impl Interpreter {
             "string" => matches!(value, Value::String(_)),
             "bool" => matches!(value, Value::Boolean(_)),
             "File" => matches!(value, Value::File(_)),
+            "TcpStream" => matches!(value, Value::TcpStream(_)),
 
             struct_name => match value {
                 Value::Struct { name, .. } => name == struct_name,
@@ -277,16 +303,28 @@ impl Interpreter {
     ) -> Value {
         match name {
             "input" => {
-                if !arguments.is_empty() { panic!("input() expects no arguments"); }
+                if !arguments.is_empty() {
+                    panic!("input() expects no arguments");
+                }
                 let mut input = String::new();
-                io::stdin().read_line(&mut input).expect("failed to read input");
+                io::stdin()
+                    .read_line(&mut input)
+                    .expect("failed to read input");
                 return Value::String(input.trim_end_matches(&['\r', '\n'][..]).to_string());
             }
             "open" => {
-                if arguments.len() != 1 { panic!("open() expects one path argument"); }
+                if arguments.len() != 1 {
+                    panic!("open() expects one path argument");
+                }
                 let path = self.evaluate(&arguments[0]);
-                let Value::String(path) = path else { panic!("open() expects a string path"); };
-                let file = OpenOptions::new().read(true).write(true).create(true).open(&path)
+                let Value::String(path) = path else {
+                    panic!("open() expects a string path");
+                };
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .open(&path)
                     .unwrap_or_else(|e| panic!("cannot open '{}': {}", path, e));
                 return Value::File(Rc::new(RefCell::new(Some(file))));
             }
@@ -294,7 +332,9 @@ impl Interpreter {
                 return Value::Array(arguments.iter().map(|a| self.evaluate(a)).collect());
             }
             "hashmap" => {
-                if arguments.len() % 2 != 0 { panic!("hashmap() expects an even number of key/value arguments"); }
+                if arguments.len() % 2 != 0 {
+                    panic!("hashmap() expects an even number of key/value arguments");
+                }
                 let mut entries = Vec::new();
                 let values: Vec<Value> = arguments.iter().map(|a| self.evaluate(a)).collect();
                 for pair in values.chunks(2) {
@@ -303,12 +343,265 @@ impl Interpreter {
                 return Value::HashMap(entries);
             }
             "iterator" => {
-                if arguments.len() != 1 { panic!("iterator() expects one array argument"); }
+                if arguments.len() != 1 {
+                    panic!("iterator() expects one array argument");
+                }
                 match self.evaluate(&arguments[0]) {
                     Value::Array(values) => return Value::Iterator(values),
                     Value::Iterator(values) => return Value::Iterator(values),
                     _ => panic!("iterator() expects an array or iterator"),
                 }
+            }
+            "args" => {
+                if !arguments.is_empty() {
+                    panic!("args() expects no arguments");
+                }
+                return Value::Array(env::args().map(Value::String).collect());
+            }
+            "read_file" => {
+                if arguments.len() != 1 {
+                    panic!("read_file() expects one path");
+                }
+                let Value::String(path) = self.evaluate(&arguments[0]) else {
+                    panic!("read_file() expects string path");
+                };
+                return Value::String(
+                    std::fs::read_to_string(&path)
+                        .unwrap_or_else(|e| panic!("read_file '{}': {}", path, e)),
+                );
+            }
+            "write_file" => {
+                if arguments.len() != 2 {
+                    panic!("write_file() expects path and contents");
+                }
+                let Value::String(path) = self.evaluate(&arguments[0]) else {
+                    panic!("write_file() expects string path");
+                };
+                let Value::String(data) = self.evaluate(&arguments[1]) else {
+                    panic!("write_file() expects string contents");
+                };
+                std::fs::write(&path, data)
+                    .unwrap_or_else(|e| panic!("write_file '{}': {}", path, e));
+                return Value::None;
+            }
+            "file_exists" => {
+                if arguments.len() != 1 {
+                    panic!("file_exists() expects one path");
+                }
+                let Value::String(path) = self.evaluate(&arguments[0]) else {
+                    panic!("file_exists() expects string path");
+                };
+                return Value::Boolean(Path::new(&path).exists());
+            }
+            "remove_file" => {
+                if arguments.len() != 1 {
+                    panic!("remove_file() expects one path");
+                }
+                let Value::String(path) = self.evaluate(&arguments[0]) else {
+                    panic!("remove_file() expects string path");
+                };
+                std::fs::remove_file(&path)
+                    .unwrap_or_else(|e| panic!("remove_file '{}': {}", path, e));
+                return Value::None;
+            }
+            "create_dir" => {
+                if arguments.len() != 1 {
+                    panic!("create_dir() expects one path");
+                }
+                let Value::String(path) = self.evaluate(&arguments[0]) else {
+                    panic!("create_dir() expects string path");
+                };
+                std::fs::create_dir_all(&path)
+                    .unwrap_or_else(|e| panic!("create_dir '{}': {}", path, e));
+                return Value::None;
+            }
+            "list_dir" => {
+                if arguments.len() != 1 {
+                    panic!("list_dir() expects one path");
+                }
+                let Value::String(path) = self.evaluate(&arguments[0]) else {
+                    panic!("list_dir() expects string path");
+                };
+                let mut out = Vec::new();
+                for entry in std::fs::read_dir(&path)
+                    .unwrap_or_else(|e| panic!("list_dir '{}': {}", path, e))
+                {
+                    let e = entry.unwrap();
+                    out.push(Value::String(e.file_name().to_string_lossy().into_owned()));
+                }
+                return Value::Array(out);
+            }
+            "sleep_ms" => {
+                let ms = match self.evaluate(
+                    arguments
+                        .get(0)
+                        .unwrap_or_else(|| panic!("sleep_ms() expects milliseconds")),
+                ) {
+                    Value::Number(ms) => ms,
+                    other => panic!("sleep_ms() expects a number of milliseconds, got {}", other),
+                };
+                if arguments.len() != 1 {
+                    panic!("sleep_ms() expects one argument");
+                }
+                std::thread::sleep(Duration::from_millis(ms.max(0) as u64));
+                return Value::None;
+            }
+            "now_ms" => {
+                if !arguments.is_empty() {
+                    panic!("now_ms() expects no arguments");
+                }
+                return Value::Number(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64,
+                );
+            }
+            "unix_time" => {
+                if !arguments.is_empty() {
+                    panic!("unix_time() expects no arguments");
+                }
+                return Value::Number(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                );
+            }
+            "date_utc" => {
+                if arguments.len() != 1 {
+                    panic!("date_utc() expects unix seconds");
+                }
+                let Value::Number(secs) = self.evaluate(&arguments[0]) else {
+                    panic!("date_utc() expects num");
+                };
+                return Value::String(format_utc_date(secs));
+            }
+            "random_int" => {
+                if arguments.len() != 2 {
+                    panic!("random_int() expects min and max");
+                }
+                let Value::Number(a) = self.evaluate(&arguments[0]) else {
+                    panic!("random_int() expects numbers");
+                };
+                let Value::Number(b) = self.evaluate(&arguments[1]) else {
+                    panic!("random_int() expects numbers");
+                };
+                return Value::Number(random_int(a, b));
+            }
+            "random_float" => {
+                if !arguments.is_empty() {
+                    panic!("random_float() expects no arguments");
+                }
+                return Value::Float(random_float());
+            }
+            "process_run" => {
+                if arguments.len() != 2 {
+                    panic!("process_run() expects program and args array");
+                }
+                let Value::String(program) = self.evaluate(&arguments[0]) else {
+                    panic!("process_run() expects program string");
+                };
+                let Value::Array(args) = self.evaluate(&arguments[1]) else {
+                    panic!("process_run() expects string array");
+                };
+                let mut cmd = Command::new(program);
+                for arg in args {
+                    let Value::String(a) = arg else {
+                        panic!("process_run() args must be strings");
+                    };
+                    cmd.arg(a);
+                }
+                let status = cmd
+                    .status()
+                    .unwrap_or_else(|e| panic!("process_run: {}", e));
+                return Value::Number(status.code().unwrap_or(-1) as i64);
+            }
+            "system" => {
+                if !arguments.is_empty() {
+                    panic!("system() expects no arguments");
+                }
+                return Value::String(env::consts::OS.to_string());
+            }
+            "tcp_connect" => {
+                if arguments.len() != 2 {
+                    panic!("tcp_connect() expects host and port");
+                }
+                let Value::String(host) = self.evaluate(&arguments[0]) else {
+                    panic!("tcp_connect() host must be string");
+                };
+                let Value::Number(port) = self.evaluate(&arguments[1]) else {
+                    panic!("tcp_connect() port must be num");
+                };
+                let stream = TcpStream::connect((host.as_str(), port as u16))
+                    .unwrap_or_else(|e| panic!("tcp_connect: {}", e));
+                return Value::TcpStream(Rc::new(RefCell::new(Some(stream))));
+            }
+            "serialize" => {
+                if arguments.len() != 1 {
+                    panic!("serialize() expects one value");
+                }
+                return Value::String(serialize_value(&self.evaluate(&arguments[0])));
+            }
+            "format" => {
+                if arguments.len() != 2 {
+                    panic!("format() expects template and values array");
+                }
+                let Value::String(mut template) = self.evaluate(&arguments[0]) else {
+                    panic!("format() template must be string");
+                };
+                let Value::Array(values) = self.evaluate(&arguments[1]) else {
+                    panic!("format() values must be array");
+                };
+                for (i, v) in values.iter().enumerate() {
+                    template = template.replace(&format!("{{{}}}", i), &v.to_string());
+                }
+                return Value::String(template);
+            }
+            "hex_encode" => {
+                if arguments.len() != 1 {
+                    panic!("hex_encode() expects string");
+                }
+                let Value::String(s) = self.evaluate(&arguments[0]) else {
+                    panic!("hex_encode() expects string");
+                };
+                return Value::String(s.as_bytes().iter().map(|b| format!("{:02x}", b)).collect());
+            }
+            "hex_decode" => {
+                if arguments.len() != 1 {
+                    panic!("hex_decode() expects string");
+                }
+                let Value::String(s) = self.evaluate(&arguments[0]) else {
+                    panic!("hex_decode() expects string");
+                };
+                return Value::String(hex_decode(&s));
+            }
+            "base64_encode" => {
+                if arguments.len() != 1 {
+                    panic!("base64_encode() expects string");
+                }
+                let Value::String(s) = self.evaluate(&arguments[0]) else {
+                    panic!("base64_encode() expects string");
+                };
+                return Value::String(base64_encode(s.as_bytes()));
+            }
+            "base64_decode" => {
+                if arguments.len() != 1 {
+                    panic!("base64_decode() expects string");
+                }
+                let Value::String(s) = self.evaluate(&arguments[0]) else {
+                    panic!("base64_decode() expects string");
+                };
+                return Value::String(base64_decode(&s));
+            }
+            "log_debug" | "log_info" | "log_warn" | "log_error" => {
+                if arguments.len() != 1 {
+                    panic!("log_*() expects one message");
+                }
+                let value = self.evaluate(&arguments[0]);
+                self.output
+                    .push(format!("[{}] {}", &name[4..].to_uppercase(), value));
+                return Value::None;
             }
             "print" => {
                 for argument in arguments {
@@ -320,15 +613,26 @@ impl Interpreter {
             _ => {}
         }
 
-        let function = self.functions.get(name).cloned()
+        let function = self
+            .functions
+            .get(name)
+            .cloned()
             .unwrap_or_else(|| panic!("Unknown function '{}'", name));
-        let values: Vec<Value> = arguments.iter().map(|argument| self.evaluate(argument)).collect();
+        let values: Vec<Value> = arguments
+            .iter()
+            .map(|argument| self.evaluate(argument))
+            .collect();
         self.invoke_function(name, &function, values)
     }
 
     fn invoke_function(&mut self, name: &str, function: &Function, values: Vec<Value>) -> Value {
         if values.len() != function.parameters.len() {
-            panic!("Function '{}' expects {} arguments, got {}", name, function.parameters.len(), values.len());
+            panic!(
+                "Function '{}' expects {} arguments, got {}",
+                name,
+                function.parameters.len(),
+                values.len()
+            );
         }
         for (parameter, value) in function.parameters.iter().zip(values.iter()) {
             self.check_parameter_type(name, parameter, value, &function.generic_parameters);
@@ -337,28 +641,45 @@ impl Interpreter {
         self.loop_depth = 0;
         self.environment.push_scope();
         for (parameter, value) in function.parameters.iter().zip(values.into_iter()) {
-            self.environment.declare(parameter.name.clone(), value, true);
+            self.environment
+                .declare(parameter.name.clone(), value, true);
         }
         let mut flow = Flow::Normal;
         for statement in &function.body {
             flow = self.execute_statement(statement);
-            if !matches!(flow, Flow::Normal) { break; }
+            if !matches!(flow, Flow::Normal) {
+                break;
+            }
         }
         let returned_value = match flow {
             Flow::Return(value) => value,
             Flow::Normal => {
                 if function.return_type.is_some() {
-                    self.exit_scope(); self.loop_depth = previous_loop_depth;
+                    self.exit_scope();
+                    self.loop_depth = previous_loop_depth;
                     panic!("Function '{}' expected a return value", name);
                 }
                 Value::None
             }
-            Flow::Break => { self.exit_scope(); self.loop_depth = previous_loop_depth; panic!("break escaped function '{}'", name); }
-            Flow::Continue => { self.exit_scope(); self.loop_depth = previous_loop_depth; panic!("continue escaped function '{}'", name); }
+            Flow::Break => {
+                self.exit_scope();
+                self.loop_depth = previous_loop_depth;
+                panic!("break escaped function '{}'", name);
+            }
+            Flow::Continue => {
+                self.exit_scope();
+                self.loop_depth = previous_loop_depth;
+                panic!("continue escaped function '{}'", name);
+            }
         };
         self.exit_scope();
         self.loop_depth = previous_loop_depth;
-        self.check_return_type(name, &function.return_type, &returned_value, &function.generic_parameters);
+        self.check_return_type(
+            name,
+            &function.return_type,
+            &returned_value,
+            &function.generic_parameters,
+        );
         returned_value
     }
 
@@ -445,6 +766,7 @@ impl Interpreter {
                 return_type,
                 body,
                 generic_parameters,
+                is_async,
                 ..
             } = statement
             {
@@ -459,6 +781,7 @@ impl Interpreter {
                         return_type: return_type.clone(),
                         body: body.clone(),
                         generic_parameters: generic_parameters.clone(),
+                        is_async: *is_async,
                     },
                 );
             }
@@ -468,9 +791,21 @@ impl Interpreter {
         // Pass 4: register impl methods
         // ---------------------------------------------------------------------
         for statement in &program.statements {
-            if let Statement::Impl { type_name, methods, .. } = statement {
+            if let Statement::Impl {
+                type_name, methods, ..
+            } = statement
+            {
                 for method in methods {
-                    if let Statement::Function { name, parameters, return_type, body, generic_parameters, .. } = method {
+                    if let Statement::Function {
+                        name,
+                        parameters,
+                        return_type,
+                        body,
+                        generic_parameters,
+                        is_async,
+                        ..
+                    } = method
+                    {
                         self.methods.insert(
                             (type_name.clone(), name.clone()),
                             Function {
@@ -478,6 +813,7 @@ impl Interpreter {
                                 return_type: return_type.clone(),
                                 body: body.clone(),
                                 generic_parameters: generic_parameters.clone(),
+                                is_async: *is_async,
                             },
                         );
                     }
@@ -858,7 +1194,7 @@ impl Interpreter {
                 Flow::Normal
             }
 
-                        // -----------------------------------------------------------------
+            // -----------------------------------------------------------------
             // ForEach
             // -----------------------------------------------------------------
             Statement::ForEach {
@@ -871,7 +1207,10 @@ impl Interpreter {
 
                 let values = match iterable_value {
                     Value::Array(values) | Value::Iterator(values) => values,
-                    Value::HashMap(entries) => entries.into_iter().map(|(k,v)| Value::Array(vec![k,v])).collect(),
+                    Value::HashMap(entries) => entries
+                        .into_iter()
+                        .map(|(k, v)| Value::Array(vec![k, v]))
+                        .collect(),
                     _ => {
                         panic!("ForEach iterable must be an array, iterator, or hash map");
                     }
@@ -963,6 +1302,7 @@ impl Interpreter {
                 return_type,
                 body,
                 generic_parameters,
+                is_async,
                 ..
             } => {
                 self.functions.insert(
@@ -972,6 +1312,7 @@ impl Interpreter {
                         return_type: return_type.clone(),
                         body: body.clone(),
                         generic_parameters: generic_parameters.clone(),
+                        is_async: *is_async,
                     },
                 );
 
@@ -1193,31 +1534,34 @@ impl Interpreter {
             }
 
             // -----------------------------------------------------------------
-// Method calls
-// -----------------------------------------------------------------
-Expression::MethodCall {
-    object,
-    method,
-    arguments,
-    ..
-} => self.evaluate_method_call(object, method, arguments),
+            // Method calls
+            // -----------------------------------------------------------------
+            Expression::MethodCall {
+                object,
+                method,
+                arguments,
+                ..
+            } => self.evaluate_method_call(object, method, arguments),
 
-// -----------------------------------------------------------------
-// Await
-// -----------------------------------------------------------------
-// Async runtime semantics are not implemented yet.
-//
-// For the 0.2 interpreter, await simply evaluates the wrapped
-// expression and returns its value. The real Task<T> runtime
-// behavior will be introduced with async/await support.
-Expression::Await { expression, .. } => self.evaluate(expression),
+            // -----------------------------------------------------------------
+            // Await
+            // -----------------------------------------------------------------
+            // Async runtime semantics are not implemented yet.
+            //
+            // For the 0.2 interpreter, await simply evaluates the wrapped
+            // expression and returns its value. The real Task<T> runtime
+            // behavior will be introduced with async/await support.
+            Expression::Await { expression, .. } => match self.evaluate(expression) {
+                Value::Task(value) => *value,
+                other => panic!("await expects Task<T>, got {}", other),
+            },
 
-// -----------------------------------------------------------------
-// Function calls
-// -----------------------------------------------------------------
-Expression::Call {
-    name, arguments, ..
-} => {
+            // -----------------------------------------------------------------
+            // Function calls
+            // -----------------------------------------------------------------
+            Expression::Call {
+                name, arguments, ..
+            } => {
                 // Struct constructor.
                 if let Some(struct_definition) = self.structs.get(name).cloned() {
                     if arguments.len() != struct_definition.fields.len() {
@@ -1367,7 +1711,12 @@ Expression::Call {
             // -----------------------------------------------------------------
             // Type conversion
             // -----------------------------------------------------------------
-            Expression::Conversion { kind, expression, target_type, .. } => {
+            Expression::Conversion {
+                kind,
+                expression,
+                target_type,
+                ..
+            } => {
                 let value = self.evaluate(expression);
                 self.convert_value(value, kind, target_type)
             }
@@ -1432,8 +1781,18 @@ Expression::Call {
             Type::Bool => matches!(value, Value::Boolean(_)),
             Type::String => matches!(value, Value::String(_)),
             Type::File => matches!(value, Value::File(_)),
-            Type::Array(inner) => match value { Value::Array(values) => values.iter().all(|v| self.value_matches_type_value(v, inner)), _ => false },
-            Type::Iterator(inner) => match value { Value::Iterator(values) => values.iter().all(|v| self.value_matches_type_value(v, inner)), _ => false },
+            Type::Array(inner) => match value {
+                Value::Array(values) => values
+                    .iter()
+                    .all(|v| self.value_matches_type_value(v, inner)),
+                _ => false,
+            },
+            Type::Iterator(inner) => match value {
+                Value::Iterator(values) => values
+                    .iter()
+                    .all(|v| self.value_matches_type_value(v, inner)),
+                _ => false,
+            },
             Type::HashMap(_, _) => matches!(value, Value::HashMap(_)),
             Type::Option(inner) => match value {
                 Value::Option(Some(v)) => self.value_matches_type_value(v, inner),
@@ -1465,9 +1824,19 @@ Expression::Call {
                 (Value::Number(v), "string") => Ok(Value::String(v.to_string())),
                 (Value::Float(v), "string") => Ok(Value::String(v.to_string())),
                 (Value::Boolean(v), "string") => Ok(Value::String(v.to_string())),
-                (Value::String(v), "num") => v.parse::<i64>().map(Value::Number).map_err(|e| e.to_string()),
-                (Value::String(v), "float") => v.parse::<f64>().map(Value::Float).map_err(|e| e.to_string()),
-                (Value::String(v), "bool") => match v.as_str() { "true" => Ok(Value::Boolean(true)), "false" => Ok(Value::Boolean(false)), _ => Err("expected 'true' or 'false'".into()) },
+                (Value::String(v), "num") => v
+                    .parse::<i64>()
+                    .map(Value::Number)
+                    .map_err(|e| e.to_string()),
+                (Value::String(v), "float") => v
+                    .parse::<f64>()
+                    .map(Value::Float)
+                    .map_err(|e| e.to_string()),
+                (Value::String(v), "bool") => match v.as_str() {
+                    "true" => Ok(Value::Boolean(true)),
+                    "false" => Ok(Value::Boolean(false)),
+                    _ => Err("expected 'true' or 'false'".into()),
+                },
                 (Value::Boolean(v), "num") => Ok(Value::Number(if v { 1 } else { 0 })),
                 (Value::Number(v), "bool") => Ok(Value::Boolean(v != 0)),
                 (Value::Float(v), "bool") => Ok(Value::Boolean(v != 0.0)),
@@ -1476,14 +1845,24 @@ Expression::Call {
             }
         };
         match kind {
-            ConversionKind::As => explicit(value, target).unwrap_or_else(|e| panic!("invalid 'as' conversion: {}", e)),
+            ConversionKind::As => {
+                explicit(value, target).unwrap_or_else(|e| panic!("invalid 'as' conversion: {}", e))
+            }
             ConversionKind::Try => {
                 let function = format!("try_{}", target);
                 if self.functions.contains_key(&function) {
                     let saved = value.clone();
                     self.environment.push_scope();
-                    self.environment.declare("__conversion_value".into(), saved, true);
-                    let result = self.call_function(&function, &[Expression::Identifier { name: "__conversion_value".into(), span: crate::span::Span::point(0) }], &[]);
+                    self.environment
+                        .declare("__conversion_value".into(), saved, true);
+                    let result = self.call_function(
+                        &function,
+                        &[Expression::Identifier {
+                            name: "__conversion_value".into(),
+                            span: crate::span::Span::point(0),
+                        }],
+                        &[],
+                    );
                     self.environment.pop_scope();
                     result
                 } else {
@@ -1495,12 +1874,21 @@ Expression::Call {
                 if self.functions.contains_key(&function) {
                     let saved = value.clone();
                     self.environment.push_scope();
-                    self.environment.declare("__conversion_value".into(), saved, true);
-                    let result = self.call_function(&function, &[Expression::Identifier { name: "__conversion_value".into(), span: crate::span::Span::point(0) }], &[]);
+                    self.environment
+                        .declare("__conversion_value".into(), saved, true);
+                    let result = self.call_function(
+                        &function,
+                        &[Expression::Identifier {
+                            name: "__conversion_value".into(),
+                            span: crate::span::Span::point(0),
+                        }],
+                        &[],
+                    );
                     self.environment.pop_scope();
                     return result;
                 }
-                explicit(value, target).unwrap_or_else(|e| panic!("invalid 'from' conversion: {}", e))
+                explicit(value, target)
+                    .unwrap_or_else(|e| panic!("invalid 'from' conversion: {}", e))
             }
         }
     }
@@ -1514,35 +1902,93 @@ Expression::Call {
         let object_value = self.evaluate(object);
 
         match object_value.clone() {
+            Value::TcpStream(stream) => match method {
+                "send" => {
+                    if arguments.len() != 1 {
+                        panic!("send() expects one string");
+                    }
+                    let Value::String(text) = self.evaluate(&arguments[0]) else {
+                        panic!("send() expects string");
+                    };
+                    let mut b = stream.borrow_mut();
+                    let Some(s) = b.as_mut() else {
+                        panic!("stream is closed");
+                    };
+                    s.write_all(text.as_bytes()).unwrap();
+                    Value::None
+                }
+                "receive" => {
+                    if !arguments.is_empty() {
+                        panic!("receive() expects no arguments");
+                    }
+                    let mut b = stream.borrow_mut();
+                    let Some(s) = b.as_mut() else {
+                        panic!("stream is closed");
+                    };
+                    let mut buf = String::new();
+                    s.read_to_string(&mut buf).unwrap();
+                    Value::String(buf)
+                }
+                "close" => {
+                    if !arguments.is_empty() {
+                        panic!("close() expects no arguments");
+                    }
+                    stream.borrow_mut().take();
+                    Value::None
+                }
+                _ => panic!("Unknown TcpStream method '{}'", method),
+            },
             Value::File(file) => match method {
                 "read" => {
-                    if !arguments.is_empty() { panic!("read() expects no arguments"); }
+                    if !arguments.is_empty() {
+                        panic!("read() expects no arguments");
+                    }
                     let mut borrowed = file.borrow_mut();
-                    let Some(f) = borrowed.as_mut() else { panic!("file is closed"); };
-                    f.seek(std::io::SeekFrom::Start(0)).expect("failed to seek file");
+                    let Some(f) = borrowed.as_mut() else {
+                        panic!("file is closed");
+                    };
+                    f.seek(std::io::SeekFrom::Start(0))
+                        .expect("failed to seek file");
                     let mut text = String::new();
                     f.read_to_string(&mut text).expect("failed to read file");
                     Value::String(text)
                 }
                 "write" => {
-                    if arguments.len() != 1 { panic!("write() expects one argument"); }
+                    if arguments.len() != 1 {
+                        panic!("write() expects one argument");
+                    }
                     let text = self.evaluate(&arguments[0]);
-                    let Value::String(text) = text else { panic!("write() expects a string"); };
+                    let Value::String(text) = text else {
+                        panic!("write() expects a string");
+                    };
                     let mut borrowed = file.borrow_mut();
-                    let Some(f) = borrowed.as_mut() else { panic!("file is closed"); };
+                    let Some(f) = borrowed.as_mut() else {
+                        panic!("file is closed");
+                    };
                     f.write_all(text.as_bytes()).expect("failed to write file");
                     f.flush().expect("failed to write file");
                     Value::None
                 }
-                "close" => { if !arguments.is_empty() { panic!("close() expects no arguments"); } file.borrow_mut().take(); Value::None }
+                "close" => {
+                    if !arguments.is_empty() {
+                        panic!("close() expects no arguments");
+                    }
+                    file.borrow_mut().take();
+                    Value::None
+                }
                 _ => panic!("Unknown File method '{}'", method),
             },
             Value::Array(values) => self.evaluate_array_method(object, values, method, arguments),
             Value::Iterator(values) => self.evaluate_iterator_method(values, method, arguments),
-            Value::HashMap(entries) => self.evaluate_hashmap_method(object, entries, method, arguments),
+            Value::HashMap(entries) => {
+                self.evaluate_hashmap_method(object, entries, method, arguments)
+            }
             Value::String(text) => self.evaluate_string_method(text, method, arguments),
             Value::Struct { name, .. } => {
-                let function = self.methods.get(&(name.clone(), method.to_string())).cloned()
+                let function = self
+                    .methods
+                    .get(&(name.clone(), method.to_string()))
+                    .cloned()
                     .unwrap_or_else(|| panic!("Unknown method '{}.{}'", name, method));
                 let mut values = Vec::with_capacity(arguments.len() + 1);
                 values.push(object_value);
@@ -1553,42 +1999,191 @@ Expression::Call {
         }
     }
 
-    fn evaluate_array_method(&mut self, object: &Expression, values: Vec<Value>, method: &str, arguments: &[Expression]) -> Value {
+    fn evaluate_array_method(
+        &mut self,
+        object: &Expression,
+        values: Vec<Value>,
+        method: &str,
+        arguments: &[Expression],
+    ) -> Value {
         match method {
             "add" | "push" => {
-                if arguments.len() != 1 { panic!("{}() expects one argument", method); }
+                if arguments.len() != 1 {
+                    panic!("{}() expects one argument", method);
+                }
                 let value = self.evaluate(&arguments[0]);
-                match object { Expression::Identifier { name, .. } => {
-                    let array = self.environment.get_mut(name).unwrap_or_else(|| panic!("Unknown array '{}'", name));
-                    if let Value::Array(items) = array { items.push(value); Value::None } else { panic!("{}() requires an array", method) }
-                }, _ => panic!("{}() requires an array variable", method) }
+                match object {
+                    Expression::Identifier { name, .. } => {
+                        let array = self
+                            .environment
+                            .get_mut(name)
+                            .unwrap_or_else(|| panic!("Unknown array '{}'", name));
+                        if let Value::Array(items) = array {
+                            items.push(value);
+                            Value::None
+                        } else {
+                            panic!("{}() requires an array", method)
+                        }
+                    }
+                    _ => panic!("{}() requires an array variable", method),
+                }
             }
             "remove_last" | "pop" => {
-                if !arguments.is_empty() { panic!("{}() expects no arguments", method); }
-                match object { Expression::Identifier { name, .. } => {
-                    match self.environment.get_mut(name) { Some(Value::Array(items)) => items.pop().unwrap_or(Value::None), _ => panic!("{}() requires an array variable", method) }
-                }, _ => panic!("{}() requires an array variable", method) }
+                if !arguments.is_empty() {
+                    panic!("{}() expects no arguments", method);
+                }
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => items.pop().unwrap_or(Value::None),
+                        _ => panic!("{}() requires an array variable", method),
+                    },
+                    _ => panic!("{}() requires an array variable", method),
+                }
             }
             "access" => {
-                if arguments.len()!=1 { panic!("access() expects one index"); }
-                let Value::Number(i)=self.evaluate(&arguments[0]) else { panic!("access() expects a numeric index"); };
-                if i<0 { panic!("array index out of bounds"); }
-                values.get(i as usize).cloned().unwrap_or_else(|| panic!("array index out of bounds"))
+                if arguments.len() != 1 {
+                    panic!("access() expects one index");
+                }
+                let Value::Number(i) = self.evaluate(&arguments[0]) else {
+                    panic!("access() expects a numeric index");
+                };
+                if i < 0 {
+                    panic!("array index out of bounds");
+                }
+                values
+                    .get(i as usize)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("array index out of bounds"))
             }
             "modify" => {
-                if arguments.len()!=2 { panic!("modify() expects index and value"); }
-                let Value::Number(i)=self.evaluate(&arguments[0]) else { panic!("modify() expects a numeric index"); };
-                let value=self.evaluate(&arguments[1]);
-                if i<0 { panic!("array index out of bounds"); }
-                match object { Expression::Identifier{name,..} => match self.environment.get_mut(name) { Some(Value::Array(items)) => { let slot=items.get_mut(i as usize).unwrap_or_else(|| panic!("array index out of bounds")); *slot=value; Value::None }, _=>panic!("modify() requires an array variable") }, _=>panic!("modify() requires an array variable") }
+                if arguments.len() != 2 {
+                    panic!("modify() expects index and value");
+                }
+                let Value::Number(i) = self.evaluate(&arguments[0]) else {
+                    panic!("modify() expects a numeric index");
+                };
+                let value = self.evaluate(&arguments[1]);
+                if i < 0 {
+                    panic!("array index out of bounds");
+                }
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => {
+                            let slot = items
+                                .get_mut(i as usize)
+                                .unwrap_or_else(|| panic!("array index out of bounds"));
+                            *slot = value;
+                            Value::None
+                        }
+                        _ => panic!("modify() requires an array variable"),
+                    },
+                    _ => panic!("modify() requires an array variable"),
+                }
             }
-            "get_length" | "length" => { if !arguments.is_empty(){panic!("{}() expects no arguments",method)}; Value::Number(values.len() as i64) }
-            "clear" => { if !arguments.is_empty(){panic!("clear() expects no arguments")}; match object { Expression::Identifier{name,..} => { if let Some(Value::Array(items))=self.environment.get_mut(name){items.clear();Value::None}else{panic!("clear() requires an array variable")}}, _=>panic!("clear() requires an array variable") } }
-            "insert_at_index" => { if arguments.len()!=2{panic!("insert_at_index() expects index and value")}; let Value::Number(i)=self.evaluate(&arguments[0]) else {panic!("index must be num")}; let value=self.evaluate(&arguments[1]); if i<0{panic!("index out of bounds")}; match object {Expression::Identifier{name,..}=>match self.environment.get_mut(name){Some(Value::Array(items))=>{if i as usize>items.len(){panic!("index out of bounds")};items.insert(i as usize,value);Value::None},_=>panic!("insert_at_index() requires array")},_=>panic!("insert_at_index() requires array")}}
-            "remove_at_index" => { if arguments.len()!=1{panic!("remove_at_index() expects index")}; let Value::Number(i)=self.evaluate(&arguments[0]) else {panic!("index must be num")}; if i<0{panic!("index out of bounds")}; match object {Expression::Identifier{name,..}=>match self.environment.get_mut(name){Some(Value::Array(items))=>items.remove(i as usize),_=>panic!("remove_at_index() requires array")},_=>panic!("remove_at_index() requires array")}}
-            "contains" => { if arguments.len()!=1{panic!("contains() expects one argument")}; let v=self.evaluate(&arguments[0]); Value::Boolean(values.iter().any(|x|x==&v)) }
-            "sort" => { if !arguments.is_empty(){panic!("sort() expects no arguments")}; match object {Expression::Identifier{name,..}=>{if let Some(Value::Array(items))=self.environment.get_mut(name){items.sort_by(|a,b|a.to_string().cmp(&b.to_string()));Value::None}else{panic!("sort() requires array")}},_=>panic!("sort() requires array")}}
-            "reverse" => { if !arguments.is_empty(){panic!("reverse() expects no arguments")}; match object {Expression::Identifier{name,..}=>{if let Some(Value::Array(items))=self.environment.get_mut(name){items.reverse();Value::None}else{panic!("reverse() requires array")}},_=>panic!("reverse() requires array")}}
+            "get_length" | "length" => {
+                if !arguments.is_empty() {
+                    panic!("{}() expects no arguments", method)
+                };
+                Value::Number(values.len() as i64)
+            }
+            "clear" => {
+                if !arguments.is_empty() {
+                    panic!("clear() expects no arguments")
+                };
+                match object {
+                    Expression::Identifier { name, .. } => {
+                        if let Some(Value::Array(items)) = self.environment.get_mut(name) {
+                            items.clear();
+                            Value::None
+                        } else {
+                            panic!("clear() requires an array variable")
+                        }
+                    }
+                    _ => panic!("clear() requires an array variable"),
+                }
+            }
+            "insert_at_index" => {
+                if arguments.len() != 2 {
+                    panic!("insert_at_index() expects index and value")
+                };
+                let Value::Number(i) = self.evaluate(&arguments[0]) else {
+                    panic!("index must be num")
+                };
+                let value = self.evaluate(&arguments[1]);
+                if i < 0 {
+                    panic!("index out of bounds")
+                };
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => {
+                            if i as usize > items.len() {
+                                panic!("index out of bounds")
+                            };
+                            items.insert(i as usize, value);
+                            Value::None
+                        }
+                        _ => panic!("insert_at_index() requires array"),
+                    },
+                    _ => panic!("insert_at_index() requires array"),
+                }
+            }
+            "remove_at_index" => {
+                if arguments.len() != 1 {
+                    panic!("remove_at_index() expects index")
+                };
+                let Value::Number(i) = self.evaluate(&arguments[0]) else {
+                    panic!("index must be num")
+                };
+                if i < 0 {
+                    panic!("index out of bounds")
+                };
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => items.remove(i as usize),
+                        _ => panic!("remove_at_index() requires array"),
+                    },
+                    _ => panic!("remove_at_index() requires array"),
+                }
+            }
+            "contains" => {
+                if arguments.len() != 1 {
+                    panic!("contains() expects one argument")
+                };
+                let v = self.evaluate(&arguments[0]);
+                Value::Boolean(values.iter().any(|x| x == &v))
+            }
+            "sort" => {
+                if !arguments.is_empty() {
+                    panic!("sort() expects no arguments")
+                };
+                match object {
+                    Expression::Identifier { name, .. } => {
+                        if let Some(Value::Array(items)) = self.environment.get_mut(name) {
+                            items.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+                            Value::None
+                        } else {
+                            panic!("sort() requires array")
+                        }
+                    }
+                    _ => panic!("sort() requires array"),
+                }
+            }
+            "reverse" => {
+                if !arguments.is_empty() {
+                    panic!("reverse() expects no arguments")
+                };
+                match object {
+                    Expression::Identifier { name, .. } => {
+                        if let Some(Value::Array(items)) = self.environment.get_mut(name) {
+                            items.reverse();
+                            Value::None
+                        } else {
+                            panic!("reverse() requires array")
+                        }
+                    }
+                    _ => panic!("reverse() requires array"),
+                }
+            }
             "iterate" => Value::Iterator(values),
             "map" | "filter" | "enumerate" | "collect" | "find" | "any" | "all" | "fold" => {
                 self.evaluate_iterator_method(values, method, arguments)
@@ -1598,58 +2193,306 @@ Expression::Call {
     }
 
     fn callback_name(arguments: &[Expression], index: usize) -> String {
-        match arguments.get(index) { Some(Expression::Identifier{name,..}) => name.clone(), _ => panic!("callback must be a function name") }
+        match arguments.get(index) {
+            Some(Expression::Identifier { name, .. }) => name.clone(),
+            _ => panic!("callback must be a function name"),
+        }
     }
 
-    fn evaluate_iterator_method(&mut self, values: Vec<Value>, method: &str, arguments: &[Expression]) -> Value {
+    fn evaluate_iterator_method(
+        &mut self,
+        values: Vec<Value>,
+        method: &str,
+        arguments: &[Expression],
+    ) -> Value {
         match method {
-            "map" => { if arguments.len()!=1{panic!("map() expects one callback")}; let name=Self::callback_name(arguments,0); let f=self.functions.get(&name).cloned().unwrap_or_else(||panic!("Unknown callback '{}'",name)); Value::Iterator(values.into_iter().map(|v|self.invoke_function(&name,&f,vec![v])).collect()) }
-            "filter" => { if arguments.len()!=1{panic!("filter() expects one callback")}; let name=Self::callback_name(arguments,0); let f=self.functions.get(&name).cloned().unwrap_or_else(||panic!("Unknown callback '{}'",name)); Value::Iterator(values.into_iter().filter(|v|matches!(self.invoke_function(&name,&f,vec![v.clone()]),Value::Boolean(true))).collect()) }
-            "enumerate" => Value::Iterator(values.into_iter().enumerate().map(|(i,v)|Value::Array(vec![Value::Number(i as i64),v])).collect()),
+            "map" => {
+                if arguments.len() != 1 {
+                    panic!("map() expects one callback")
+                };
+                let name = Self::callback_name(arguments, 0);
+                let f = self
+                    .functions
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("Unknown callback '{}'", name));
+                Value::Iterator(
+                    values
+                        .into_iter()
+                        .map(|v| self.invoke_function(&name, &f, vec![v]))
+                        .collect(),
+                )
+            }
+            "filter" => {
+                if arguments.len() != 1 {
+                    panic!("filter() expects one callback")
+                };
+                let name = Self::callback_name(arguments, 0);
+                let f = self
+                    .functions
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("Unknown callback '{}'", name));
+                Value::Iterator(
+                    values
+                        .into_iter()
+                        .filter(|v| {
+                            matches!(
+                                self.invoke_function(&name, &f, vec![v.clone()]),
+                                Value::Boolean(true)
+                            )
+                        })
+                        .collect(),
+                )
+            }
+            "enumerate" => Value::Iterator(
+                values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| Value::Array(vec![Value::Number(i as i64), v]))
+                    .collect(),
+            ),
             "collect" => Value::Array(values),
-            "find" => { if arguments.len()!=1{panic!("find() expects one callback")}; let name=Self::callback_name(arguments,0); let f=self.functions.get(&name).cloned().unwrap_or_else(||panic!("Unknown callback '{}'",name)); Value::Option(values.into_iter().find(|v|matches!(self.invoke_function(&name,&f,vec![v.clone()]),Value::Boolean(true))).map(Box::new)) }
-            "any" | "all" => { if arguments.len()!=1{panic!("{}() expects one callback",method)}; let name=Self::callback_name(arguments,0); let f=self.functions.get(&name).cloned().unwrap_or_else(||panic!("Unknown callback '{}'",name)); let mut iter=values.into_iter().map(|v|matches!(self.invoke_function(&name,&f,vec![v]),Value::Boolean(true))); Value::Boolean(if method=="any"{iter.any(|x|x)}else{iter.all(|x|x)}) }
-            "fold" => { if arguments.len()!=2{panic!("fold() expects initial value and callback")}; let mut acc=self.evaluate(&arguments[0]); let name=Self::callback_name(arguments,1); let f=self.functions.get(&name).cloned().unwrap_or_else(||panic!("Unknown callback '{}'",name)); for v in values { acc=self.invoke_function(&name,&f,vec![acc,v]); } acc }
-            _ => panic!("Unknown iterator method '{}'",method),
+            "find" => {
+                if arguments.len() != 1 {
+                    panic!("find() expects one callback")
+                };
+                let name = Self::callback_name(arguments, 0);
+                let f = self
+                    .functions
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("Unknown callback '{}'", name));
+                Value::Option(
+                    values
+                        .into_iter()
+                        .find(|v| {
+                            matches!(
+                                self.invoke_function(&name, &f, vec![v.clone()]),
+                                Value::Boolean(true)
+                            )
+                        })
+                        .map(Box::new),
+                )
+            }
+            "any" | "all" => {
+                if arguments.len() != 1 {
+                    panic!("{}() expects one callback", method)
+                };
+                let name = Self::callback_name(arguments, 0);
+                let f = self
+                    .functions
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("Unknown callback '{}'", name));
+                let mut iter = values.into_iter().map(|v| {
+                    matches!(
+                        self.invoke_function(&name, &f, vec![v]),
+                        Value::Boolean(true)
+                    )
+                });
+                Value::Boolean(if method == "any" {
+                    iter.any(|x| x)
+                } else {
+                    iter.all(|x| x)
+                })
+            }
+            "fold" => {
+                if arguments.len() != 2 {
+                    panic!("fold() expects initial value and callback")
+                };
+                let mut acc = self.evaluate(&arguments[0]);
+                let name = Self::callback_name(arguments, 1);
+                let f = self
+                    .functions
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("Unknown callback '{}'", name));
+                for v in values {
+                    acc = self.invoke_function(&name, &f, vec![acc, v]);
+                }
+                acc
+            }
+            _ => panic!("Unknown iterator method '{}'", method),
         }
     }
 
-    fn evaluate_hashmap_method(&mut self, object: &Expression, mut entries: Vec<(Value,Value)>, method: &str, arguments: &[Expression]) -> Value {
+    fn evaluate_hashmap_method(
+        &mut self,
+        object: &Expression,
+        mut entries: Vec<(Value, Value)>,
+        method: &str,
+        arguments: &[Expression],
+    ) -> Value {
         match method {
-            "insert" => { if arguments.len()!=2{panic!("insert() expects key and value")}; let k=self.evaluate(&arguments[0]); let v=self.evaluate(&arguments[1]); if let Some((_,old))=entries.iter_mut().find(|(key,_)|key==&k){*old=v.clone();}else{entries.push((k,v));} self.replace_hashmap(object,entries); Value::None }
-            "get" => { if arguments.len()!=1{panic!("get() expects key")}; let k=self.evaluate(&arguments[0]); Value::Option(entries.iter().find(|(key,_)|key==&k).map(|(_,v)|Box::new(v.clone()))) }
-            "remove" => { if arguments.len()!=1{panic!("remove() expects key")}; let k=self.evaluate(&arguments[0]); let pos=entries.iter().position(|(key,_)|key==&k); let out=pos.map(|i|entries.remove(i).1); self.replace_hashmap(object,entries); out.map_or(Value::Option(None),|v|Value::Option(Some(Box::new(v)))) }
-            "contains_key" => { if arguments.len()!=1{panic!("contains_key() expects key")}; let k=self.evaluate(&arguments[0]); Value::Boolean(entries.iter().any(|(key,_)|key==&k)) }
+            "insert" => {
+                if arguments.len() != 2 {
+                    panic!("insert() expects key and value")
+                };
+                let k = self.evaluate(&arguments[0]);
+                let v = self.evaluate(&arguments[1]);
+                if let Some((_, old)) = entries.iter_mut().find(|(key, _)| key == &k) {
+                    *old = v.clone();
+                } else {
+                    entries.push((k, v));
+                }
+                self.replace_hashmap(object, entries);
+                Value::None
+            }
+            "get" => {
+                if arguments.len() != 1 {
+                    panic!("get() expects key")
+                };
+                let k = self.evaluate(&arguments[0]);
+                Value::Option(
+                    entries
+                        .iter()
+                        .find(|(key, _)| key == &k)
+                        .map(|(_, v)| Box::new(v.clone())),
+                )
+            }
+            "remove" => {
+                if arguments.len() != 1 {
+                    panic!("remove() expects key")
+                };
+                let k = self.evaluate(&arguments[0]);
+                let pos = entries.iter().position(|(key, _)| key == &k);
+                let out = pos.map(|i| entries.remove(i).1);
+                self.replace_hashmap(object, entries);
+                out.map_or(Value::Option(None), |v| Value::Option(Some(Box::new(v))))
+            }
+            "contains_key" => {
+                if arguments.len() != 1 {
+                    panic!("contains_key() expects key")
+                };
+                let k = self.evaluate(&arguments[0]);
+                Value::Boolean(entries.iter().any(|(key, _)| key == &k))
+            }
             "get_length" | "length" => Value::Number(entries.len() as i64),
-            "clear" => { self.replace_hashmap(object,Vec::new()); Value::None }
-            "keys" => Value::Array(entries.into_iter().map(|(k,_)|k).collect()),
-            "values" => Value::Array(entries.into_iter().map(|(_,v)|v).collect()),
-            "iterate" => Value::Iterator(entries.into_iter().map(|(k,v)|Value::Array(vec![k,v])).collect()),
-            _ => panic!("Unknown hash map method '{}'",method),
+            "clear" => {
+                self.replace_hashmap(object, Vec::new());
+                Value::None
+            }
+            "keys" => Value::Array(entries.into_iter().map(|(k, _)| k).collect()),
+            "values" => Value::Array(entries.into_iter().map(|(_, v)| v).collect()),
+            "iterate" => Value::Iterator(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| Value::Array(vec![k, v]))
+                    .collect(),
+            ),
+            _ => panic!("Unknown hash map method '{}'", method),
         }
     }
 
-    fn replace_hashmap(&mut self, object: &Expression, entries: Vec<(Value,Value)>) {
-        match object { Expression::Identifier{name,..} => { match self.environment.get_mut(name) { Some(slot) => *slot=Value::HashMap(entries), None=>panic!("Unknown hash map variable '{}'",name) } }, _=>panic!("hash map mutation requires a variable") }
+    fn replace_hashmap(&mut self, object: &Expression, entries: Vec<(Value, Value)>) {
+        match object {
+            Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                Some(slot) => *slot = Value::HashMap(entries),
+                None => panic!("Unknown hash map variable '{}'", name),
+            },
+            _ => panic!("hash map mutation requires a variable"),
+        }
     }
 
-    fn evaluate_string_method(&mut self, text: String, method: &str, arguments: &[Expression]) -> Value {
+    fn evaluate_string_method(
+        &mut self,
+        text: String,
+        method: &str,
+        arguments: &[Expression],
+    ) -> Value {
         match method {
             "create" => Value::String(text),
-            "concatenate" => { if arguments.len()!=1{panic!("concatenate() expects one argument")}; let v=self.evaluate(&arguments[0]); let Value::String(v)=v else{panic!("concatenate() expects string")}; Value::String(text+&v) }
-            "substring" => { if arguments.len()!=2{panic!("substring() expects start and end")}; let Value::Number(a)=self.evaluate(&arguments[0]) else{panic!("start must be num")}; let Value::Number(b)=self.evaluate(&arguments[1]) else{panic!("end must be num")}; if a<0||b<a{panic!("invalid substring range")}; Value::String(text.chars().skip(a as usize).take((b-a) as usize).collect()) }
-            "find" => { if arguments.len()!=1{panic!("find() expects one string")}; let Value::String(q)=self.evaluate(&arguments[0]) else{panic!("find() expects string")}; Value::Option(text.find(&q).map(|i|Box::new(Value::Number(i as i64)))) }
-            "replace" => { if arguments.len()!=2{panic!("replace() expects two strings")}; let Value::String(a)=self.evaluate(&arguments[0]) else{panic!("replace() expects strings")}; let Value::String(b)=self.evaluate(&arguments[1]) else{panic!("replace() expects strings")}; Value::String(text.replace(&a,&b)) }
-            "split" => { if arguments.len()!=1{panic!("split() expects separator")}; let Value::String(sep)=self.evaluate(&arguments[0]) else{panic!("split() expects string")}; Value::Array(text.split(&sep).map(|s|Value::String(s.to_string())).collect()) }
+            "concatenate" => {
+                if arguments.len() != 1 {
+                    panic!("concatenate() expects one argument")
+                };
+                let v = self.evaluate(&arguments[0]);
+                let Value::String(v) = v else {
+                    panic!("concatenate() expects string")
+                };
+                Value::String(text + &v)
+            }
+            "substring" => {
+                if arguments.len() != 2 {
+                    panic!("substring() expects start and end")
+                };
+                let Value::Number(a) = self.evaluate(&arguments[0]) else {
+                    panic!("start must be num")
+                };
+                let Value::Number(b) = self.evaluate(&arguments[1]) else {
+                    panic!("end must be num")
+                };
+                if a < 0 || b < a {
+                    panic!("invalid substring range")
+                };
+                Value::String(
+                    text.chars()
+                        .skip(a as usize)
+                        .take((b - a) as usize)
+                        .collect(),
+                )
+            }
+            "find" => {
+                if arguments.len() != 1 {
+                    panic!("find() expects one string")
+                };
+                let Value::String(q) = self.evaluate(&arguments[0]) else {
+                    panic!("find() expects string")
+                };
+                Value::Option(text.find(&q).map(|i| Box::new(Value::Number(i as i64))))
+            }
+            "replace" => {
+                if arguments.len() != 2 {
+                    panic!("replace() expects two strings")
+                };
+                let Value::String(a) = self.evaluate(&arguments[0]) else {
+                    panic!("replace() expects strings")
+                };
+                let Value::String(b) = self.evaluate(&arguments[1]) else {
+                    panic!("replace() expects strings")
+                };
+                Value::String(text.replace(&a, &b))
+            }
+            "split" => {
+                if arguments.len() != 1 {
+                    panic!("split() expects separator")
+                };
+                let Value::String(sep) = self.evaluate(&arguments[0]) else {
+                    panic!("split() expects string")
+                };
+                Value::Array(
+                    text.split(&sep)
+                        .map(|s| Value::String(s.to_string()))
+                        .collect(),
+                )
+            }
             "trim" => Value::String(text.trim().to_string()),
             "to_uppercase" => Value::String(text.to_uppercase()),
             "to_lowercase" => Value::String(text.to_lowercase()),
-            "starts_with" => { let Value::String(q)=self.evaluate(&arguments[0]) else{panic!("starts_with() expects string")}; Value::Boolean(text.starts_with(&q)) }
-            "ends_with" => { let Value::String(q)=self.evaluate(&arguments[0]) else{panic!("ends_with() expects string")}; Value::Boolean(text.ends_with(&q)) }
-            "contains" => { let Value::String(q)=self.evaluate(&arguments[0]) else{panic!("contains() expects string")}; Value::Boolean(text.contains(&q)) }
+            "starts_with" => {
+                let Value::String(q) = self.evaluate(&arguments[0]) else {
+                    panic!("starts_with() expects string")
+                };
+                Value::Boolean(text.starts_with(&q))
+            }
+            "ends_with" => {
+                let Value::String(q) = self.evaluate(&arguments[0]) else {
+                    panic!("ends_with() expects string")
+                };
+                Value::Boolean(text.ends_with(&q))
+            }
+            "contains" => {
+                let Value::String(q) = self.evaluate(&arguments[0]) else {
+                    panic!("contains() expects string")
+                };
+                Value::Boolean(text.contains(&q))
+            }
             "length" | "get_length" => Value::Number(text.chars().count() as i64),
-            "iterate" => Value::Iterator(text.chars().map(|c|Value::String(c.to_string())).collect()),
-            _ => panic!("Unknown string method '{}'",method),
+            "iterate" => {
+                Value::Iterator(text.chars().map(|c| Value::String(c.to_string())).collect())
+            }
+            _ => panic!("Unknown string method '{}'", method),
         }
     }
 
@@ -1809,4 +2652,256 @@ Expression::Call {
             }
         }
     }
+}
+
+static RNG_STATE: AtomicU64 = AtomicU64::new(0x9E3779B97F4A7C15);
+fn next_random_u64() -> u64 {
+    let mut x = RNG_STATE.load(Ordering::Relaxed);
+    if x == 0 {
+        x = 1;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    RNG_STATE.store(x, Ordering::Relaxed);
+    x
+}
+fn random_float() -> f64 {
+    (next_random_u64() as f64) / (u64::MAX as f64)
+}
+fn random_int(a: i64, b: i64) -> i64 {
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    if lo == hi {
+        return lo;
+    }
+    lo + (next_random_u64() % ((hi - lo + 1) as u64)) as i64
+}
+fn format_utc_date(secs: i64) -> String {
+    let days = secs.div_euclid(86400);
+    let rem = secs.rem_euclid(86400);
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = if z >= 0 {
+        z / 146097
+    } else {
+        (z - 146096) / 146097
+    };
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    (y + if m <= 2 { 1 } else { 0 }, m, d)
+}
+fn serialize_value(v: &Value) -> String {
+    match v {
+        Value::Number(n) => n.to_string(),
+
+        Value::Float(x) => x.to_string(),
+
+        Value::Boolean(b) => b.to_string(),
+
+        Value::String(s) => {
+            format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        }
+
+        Value::Array(a) => {
+            format!(
+                "[{}]",
+                a.iter().map(serialize_value).collect::<Vec<_>>().join(",")
+            )
+        }
+
+        Value::HashMap(h) => {
+            format!(
+                "{{{}}}",
+                h.iter()
+                    .map(|(k, v)| { format!("{}:{}", serialize_value(k), serialize_value(v)) })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+
+        Value::Struct { name, fields } => {
+            format!(
+                "{{\"__type\":\"{}\",{}}}",
+                name,
+                fields
+                    .iter()
+                    .map(|(k, v)| { format!("\"{}\":{}", k, serialize_value(v)) })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+
+        Value::Enum {
+            enum_name,
+            variant,
+            values,
+        } => {
+            format!(
+                "{{\"__enum\":\"{}\",\"variant\":\"{}\",\"values\":[{}]}}",
+                enum_name,
+                variant,
+                values
+                    .iter()
+                    .map(serialize_value)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+
+        Value::Option(Some(x)) => {
+            format!("{{\"Some\":{}}}", serialize_value(x))
+        }
+
+        Value::Option(None) => "null".into(),
+
+        Value::Task(x) => serialize_value(x),
+
+        Value::File(_) | Value::TcpStream(_) | Value::Iterator(_) | Value::None => v.to_string(),
+    }
+}
+fn parse_serialized(s: &str) -> Option<Value> {
+    let s = s.trim();
+    if s == "null" {
+        return Some(Value::Option(None));
+    }
+    if s == "true" {
+        return Some(Value::Boolean(true));
+    }
+    if s == "false" {
+        return Some(Value::Boolean(false));
+    }
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(Value::Number(n));
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        if s.contains('.') {
+            return Some(Value::Float(f));
+        }
+    }
+    if s.starts_with('"') && s.ends_with('"') {
+        return Some(Value::String(
+            s[1..s.len() - 1]
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\"),
+        ));
+    }
+    if s.starts_with('[') && s.ends_with(']') {
+        let inner = &s[1..s.len() - 1];
+        if inner.trim().is_empty() {
+            return Some(Value::Array(Vec::new()));
+        }
+        let parts = split_serialized(inner);
+        let mut vals = Vec::new();
+        for p in parts {
+            vals.push(parse_serialized(&p)?);
+        }
+        return Some(Value::Array(vals));
+    }
+    None
+}
+fn split_serialized(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut esc = false;
+    for (i, c) in s.char_indices() {
+        if quoted {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                quoted = false;
+            }
+        } else {
+            match c {
+                '"' => quoted = true,
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    out.push(s[start..i].trim().to_string());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    out.push(s[start..].trim().to_string());
+    out
+}
+fn hex_decode(s: &str) -> String {
+    let bytes: Vec<u8> = (0..s.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+fn base64_encode(data: &[u8]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < data.len() {
+        let a = data[i];
+        let b = if i + 1 < data.len() { data[i + 1] } else { 0 };
+        let c = if i + 2 < data.len() { data[i + 2] } else { 0 };
+        out.push(B64[(a >> 2) as usize] as char);
+        out.push(B64[((a & 3) << 4 | b >> 4) as usize] as char);
+        out.push(if i + 1 < data.len() {
+            B64[((b & 15) << 2 | c >> 6) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if i + 2 < data.len() {
+            B64[(c & 63) as usize] as char
+        } else {
+            '='
+        });
+        i += 3;
+    }
+    out
+}
+fn base64_decode(s: &str) -> String {
+    let mut vals = Vec::new();
+    for ch in s.bytes() {
+        if ch == b'=' {
+            break;
+        }
+        if let Some(i) = B64.iter().position(|&x| x == ch) {
+            vals.push(i as u8);
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < vals.len() {
+        let a = vals[i];
+        let b = vals[i + 1];
+        out.push((a << 2) | (b >> 4));
+        if i + 2 < vals.len() {
+            let c = vals[i + 2];
+            out.push((b << 4) | (c >> 2));
+            if i + 3 < vals.len() {
+                let d = vals[i + 3];
+                out.push((c << 6) | d);
+            }
+        }
+        i += 4;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

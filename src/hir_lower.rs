@@ -1,8 +1,8 @@
 // contents of hir_lower
 
-use crate::span::Span;
 use crate::ast::*;
 use crate::hir::*;
+use crate::span::Span;
 
 pub struct HirLowerer;
 
@@ -11,10 +11,7 @@ impl HirLowerer {
         Self
     }
 
-    pub fn lower_program(
-        &mut self,
-        program: &Program,
-    ) -> Result<HirProgram, String> {
+    pub fn lower_program(&mut self, program: &Program) -> Result<HirProgram, String> {
         let mut statements = Vec::new();
 
         for statement in &program.statements {
@@ -27,17 +24,14 @@ impl HirLowerer {
         })
     }
 
-    fn lower_statement(
-        &mut self,
-        statement: &Statement,
-    ) -> Result<HirStatement, String> {
+    fn lower_statement(&mut self, statement: &Statement) -> Result<HirStatement, String> {
         match statement {
-            Statement::Import { .. } => Ok(HirStatement::Expression { expression: HirExpression::Number(0), span: Span::new(0,0) }),
+            Statement::Import { .. } => Ok(HirStatement::Expression {
+                expression: HirExpression::Number(0),
+                span: Span::new(0, 0),
+            }),
 
-            Statement::Expression {
-                expression,
-                span,
-            } => Ok(HirStatement::Expression {
+            Statement::Expression { expression, span } => Ok(HirStatement::Expression {
                 expression: self.lower_expression(expression)?,
                 span: *span,
             }),
@@ -52,28 +46,19 @@ impl HirLowerer {
                 span: *span,
             }),
 
-            Statement::Return { value, span } => {
-                Ok(HirStatement::Return {
-                    value: match value {
-                        Some(value) => Some(self.lower_expression(value)?),
-                        None => None,
-                    },
-                    span: *span,
-                })
-            }
+            Statement::Return { value, span } => Ok(HirStatement::Return {
+                value: match value {
+                    Some(value) => Some(self.lower_expression(value)?),
+                    None => None,
+                },
+                span: *span,
+            }),
 
-            Statement::Break { span } => {
-                Ok(HirStatement::Break { span: *span })
-            }
+            Statement::Break { span } => Ok(HirStatement::Break { span: *span }),
 
-            Statement::Continue { span } => {
-                Ok(HirStatement::Continue { span: *span })
-            }
+            Statement::Continue { span } => Ok(HirStatement::Continue { span: *span }),
 
-            Statement::VariableDeclarations {
-                declarations,
-                span,
-            } => {
+            Statement::VariableDeclarations { declarations, span } => {
                 // Initially we can lower multiple declarations
                 // into separate HIR statements.
                 //
@@ -81,8 +66,7 @@ impl HirLowerer {
 
                 if declarations.len() != 1 {
                     return Err(
-                        "Multiple variable declarations are not yet supported by HIR"
-                            .to_string()
+                        "Multiple variable declarations are not yet supported by HIR".to_string(),
                     );
                 }
 
@@ -93,7 +77,12 @@ impl HirLowerer {
                     declared_type: declaration.declared_type.clone(),
                     value: match &declaration.value {
                         Some(value) => self.lower_expression(value)?,
-                        None => return Err(format!("variable '{}' has no initializer; HIR requires a value", declaration.name)),
+                        None => {
+                            return Err(format!(
+                                "variable '{}' has no initializer; HIR requires a value",
+                                declaration.name
+                            ))
+                        }
                     },
                     span: *span,
                 })
@@ -117,17 +106,15 @@ impl HirLowerer {
                 body,
                 else_body,
                 span,
-            } => {
-                Ok(HirStatement::If {
-                    condition: self.lower_expression(condition)?,
-                    body: self.lower_statements(body)?,
-                    else_body: match else_body {
-                        Some(body) => Some(self.lower_statements(body)?),
-                        None => None,
-                    },
-                    span: *span,
-                })
-            }
+            } => Ok(HirStatement::If {
+                condition: self.lower_expression(condition)?,
+                body: self.lower_statements(body)?,
+                else_body: match else_body {
+                    Some(body) => Some(self.lower_statements(body)?),
+                    None => None,
+                },
+                span: *span,
+            }),
 
             Statement::While {
                 condition,
@@ -153,10 +140,7 @@ impl HirLowerer {
                 span: *span,
             }),
 
-            Statement::Defer {
-                expression,
-                span,
-            } => Ok(HirStatement::Defer {
+            Statement::Defer { expression, span } => Ok(HirStatement::Defer {
                 expression: self.lower_expression(expression)?,
                 span: *span,
             }),
@@ -168,49 +152,31 @@ impl HirLowerer {
         }
     }
 
-    fn lower_statements(
-        &mut self,
-        statements: &[Statement],
-    ) -> Result<Vec<HirStatement>, String> {
+    fn lower_statements(&mut self, statements: &[Statement]) -> Result<Vec<HirStatement>, String> {
         statements
             .iter()
             .map(|statement| self.lower_statement(statement))
             .collect()
     }
 
-    fn lower_expression(
-        &mut self,
-        expression: &Expression,
-    ) -> Result<HirExpression, String> {
+    fn lower_expression(&mut self, expression: &Expression) -> Result<HirExpression, String> {
         match expression {
-            Expression::Number { value, .. } => {
-                Ok(HirExpression::Number(*value))
-            }
+            Expression::Number { value, .. } => Ok(HirExpression::Number(*value)),
 
-            Expression::Float { value, .. } => {
-                Ok(HirExpression::Float(*value))
-            }
+            Expression::Float { value, .. } => Ok(HirExpression::Float(*value)),
 
-            Expression::Boolean { value, .. } => {
-                Ok(HirExpression::Boolean(*value))
-            }
+            Expression::Boolean { value, .. } => Ok(HirExpression::Boolean(*value)),
 
-            Expression::String { value, .. } => {
-                Ok(HirExpression::String(value.clone()))
-            }
+            Expression::String { value, .. } => Ok(HirExpression::String(value.clone())),
 
-            Expression::Identifier { name, .. } => {
-                Ok(HirExpression::Identifier(name.clone()))
-            }
+            Expression::Identifier { name, .. } => Ok(HirExpression::Identifier(name.clone())),
 
-            Expression::Array { elements, .. } => {
-                Ok(HirExpression::Array(
-                    elements
-                        .iter()
-                        .map(|e| self.lower_expression(e))
-                        .collect::<Result<_, _>>()?,
-                ))
-            }
+            Expression::Array { elements, .. } => Ok(HirExpression::Array(
+                elements
+                    .iter()
+                    .map(|e| self.lower_expression(e))
+                    .collect::<Result<_, _>>()?,
+            )),
 
             Expression::Await { .. } => {
                 // HIR does not yet model an async state machine. Keep this as an
@@ -219,9 +185,7 @@ impl HirLowerer {
             }
 
             Expression::Call {
-                name,
-                arguments,
-                ..
+                name, arguments, ..
             } => Ok(HirExpression::Call {
                 name: name.clone(),
                 arguments: arguments
@@ -230,22 +194,15 @@ impl HirLowerer {
                     .collect::<Result<_, _>>()?,
             }),
 
-            Expression::StructConstructor {
-                name,
-                fields,
-                ..
-            } => Ok(HirExpression::StructConstructor {
-                name: name.clone(),
-                fields: fields
-                    .iter()
-                    .map(|(name, value)| {
-                        Ok((
-                            name.clone(),
-                            self.lower_expression(value)?,
-                        ))
-                    })
-                    .collect::<Result<_, String>>()?,
-            }),
+            Expression::StructConstructor { name, fields, .. } => {
+                Ok(HirExpression::StructConstructor {
+                    name: name.clone(),
+                    fields: fields
+                        .iter()
+                        .map(|(name, value)| Ok((name.clone(), self.lower_expression(value)?)))
+                        .collect::<Result<_, String>>()?,
+                })
+            }
 
             Expression::EnumConstructor {
                 enum_name,
@@ -272,7 +229,9 @@ impl HirLowerer {
                 right: Box::new(self.lower_expression(right)?),
             }),
 
-            Expression::Conversion { .. } => Err("conversions are not yet lowered to HIR".to_string()),
+            Expression::Conversion { .. } => {
+                Err("conversions are not yet lowered to HIR".to_string())
+            }
 
             Expression::Unary {
                 operator,
@@ -280,25 +239,15 @@ impl HirLowerer {
                 ..
             } => Ok(HirExpression::Unary {
                 operator: self.lower_unary_operator(*operator),
-                expression: Box::new(
-                    self.lower_expression(expression)?
-                ),
+                expression: Box::new(self.lower_expression(expression)?),
             }),
 
-            Expression::Index {
-                array,
-                index,
-                ..
-            } => Ok(HirExpression::Index {
+            Expression::Index { array, index, .. } => Ok(HirExpression::Index {
                 array: Box::new(self.lower_expression(array)?),
                 index: Box::new(self.lower_expression(index)?),
             }),
 
-            Expression::Property {
-                object,
-                name,
-                ..
-            } => Ok(HirExpression::Property {
+            Expression::Property { object, name, .. } => Ok(HirExpression::Property {
                 object: Box::new(self.lower_expression(object)?),
                 name: name.clone(),
             }),
@@ -336,10 +285,7 @@ impl HirLowerer {
         }
     }
 
-    fn lower_unary_operator(
-        &self,
-        op: UnaryOperator,
-    ) -> HirUnaryOperator {
+    fn lower_unary_operator(&self, op: UnaryOperator) -> HirUnaryOperator {
         match op {
             UnaryOperator::Negate => HirUnaryOperator::Negate,
             UnaryOperator::Not => HirUnaryOperator::Not,
