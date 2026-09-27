@@ -253,7 +253,7 @@ impl LLVMBackend {
             Statement::Defer { .. } => return Err(self.unsupported("defer requires cleanup CFG lowering")),
             Statement::ForEach { .. } => return Err(self.unsupported("for-each requires collection runtime lowering")),
             Statement::Match { .. } => return Err(self.unsupported("match requires pattern CFG lowering")),
-            Statement::Struct { .. } | Statement::Enum { .. } | Statement::Trait { .. } | Statement::Impl { .. } | Statement::Main { .. } | Statement::Function { .. } => {}
+            Statement::Struct { .. } | Statement::Enum { .. } | Statement::Trait { .. } | Statement::Impl { .. } | Statement::Main { .. } | Statement::Function { .. } | Statement::Import { .. } => {}
         }
         Ok(())
     }

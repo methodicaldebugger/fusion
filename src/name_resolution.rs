@@ -170,7 +170,7 @@ impl Resolver {
             Statement::Return { value: None, .. } |
             Statement::Break { .. } | Statement::Continue { .. } |
             Statement::Struct { .. } | Statement::Enum { .. } |
-            Statement::Trait { .. } | Statement::Impl { .. } => {}
+            Statement::Trait { .. } | Statement::Impl { .. } | Statement::Import { .. } => {}
         }
         Ok(())
     }

@@ -123,6 +123,11 @@ pub enum Statement {
         span: Span,
     },
 
+    Import {
+        path: String,
+        span: Span,
+    },
+
     Trait {
         name: String,
         methods: Vec<TraitMethod>,
@@ -330,6 +335,7 @@ impl Statement {
             | Statement::Struct { span, .. }
             | Statement::Enum { span, .. }
             | Statement::Main { span, .. }
+            | Statement::Import { span, .. }
             | Statement::Trait { span, .. }
             | Statement::Impl { span, .. }
             | Statement::Match { span, .. }

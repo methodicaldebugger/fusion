@@ -1,34 +1,4 @@
 /*
-There are many operations that are not yet implemented, but should be immediately:
-- reading input with input()
-- type_conversion(operations), the kind rust has:
-as       explicit conversion
-from     user-defined conversion
-try      fallible conversion
-
-We still need to implement the following features in the language:
-- Generics(partially implemented)
-- Defer + file I/O
-- Traits + impl
-- Enums
-- Modules
-- option/result
-
-Even more features that are not yet implemented, but should be before self-hosting:
-- growable arrays(+operations):
-create, add, remove_last, access, modify, get_length, iterate, clear, insert_at_index, remove_at_index.
-- hash map(+operations):
-create, insert, get, remove, contains_key, iterate, clear, iterate, keys, values.
-- iterators(+operations):
-map, filter, enumerate, collect, find, any, all, fold.
-- string operations(+operations):
-create, concatenate, substring, find, replace, split, trim, to_uppercase, to_lowercase, starts_with, ends_with, contains, length, iterate.
-
-make the standard library prelude-like, so users don't have to write:
-import growabble array
-import hashmap
-import iterator
-
 These will be a part of the standard library(these are not planned to be implemented yet):
 - async/await
 - Filesystem
@@ -1566,6 +1536,191 @@ main:
     fn invalid_conversion_arity_is_rejected() {
         parse_should_fail(r#"main:
     x = num::from(1, 2)
+"#);
+    }
+
+
+    // =========================================================================
+    // Generics, traits, enums, modules, collections, iterators, and strings
+    // =========================================================================
+
+    #[test]
+    fn generic_function_can_be_called_with_explicit_type_argument() {
+        assert_eq!(run_program(r#"fn identity<T>(T value) -> T:
+    return value
+
+main:
+    x = identity<num>(42)
+    print(x)
+"#), vec!["42"]);
+    }
+
+    #[test]
+    fn trait_impl_methods_can_be_called_through_the_receiver() {
+        assert_eq!(run_program(r#"struct Person:
+    name: string
+
+trait Greeter:
+    fn greet(person: Person) -> string
+
+impl Greeter for Person:
+    fn greet(person: Person) -> string:
+        return "hello " + person.name
+
+main:
+    p = Person(name: "Fusion")
+    print(p.greet())
+"#), vec!["hello Fusion"]);
+    }
+
+    #[test]
+    fn enum_pattern_matching_works() {
+        assert_eq!(run_program(r#"enum State:
+    Ready
+    Failed(string)
+
+main:
+    state = State::Failed("broken")
+    match state:
+        State::Ready => print("ready")
+        State::Failed(message) => print(message)
+"#), vec!["broken"]);
+    }
+
+    #[test]
+    fn import_module_syntax_is_accepted() {
+        let program = compile_test_program(r#"import std.io
+
+main:
+    print("module syntax")
+"#);
+        assert!(program.statements.iter().any(|s| matches!(s, ast::Statement::Import { path, .. } if path == "std.io")));
+    }
+
+    #[test]
+    fn growable_array_operations_work() {
+        assert_eq!(run_program(r#"main:
+    numbers = [1, 2, 3]
+    numbers.add(4)
+    numbers.insert_at_index(1, 9)
+    numbers.modify(0, 7)
+    print(numbers.access(0))
+    print(numbers.get_length())
+    print(numbers.remove_at_index(1))
+    print(numbers.remove_last())
+    numbers.clear()
+    print(numbers.get_length())
+"#), vec!["7", "5", "9", "4", "0"]);
+    }
+
+    #[test]
+    fn array_iteration_and_iterator_operations_work() {
+        assert_eq!(run_program(r#"fn double(x: num) -> num:
+    return x * 2
+
+fn even(x: num) -> bool:
+    return x == 2
+
+fn add(acc: num, x: num) -> num:
+    return acc + x
+
+main:
+    numbers = [1, 2, 3]
+    doubled = numbers.iterate().map(double).collect()
+    print(doubled)
+    filtered = numbers.iterate().filter(even).collect()
+    print(filtered)
+    found = numbers.iterate().find(even)
+    print(found)
+    print(numbers.iterate().any(even))
+    print(numbers.iterate().all(even))
+    total = numbers.iterate().fold(0, add)
+    print(total)
+"#), vec!["[2, 4, 6]", "[2]", "Some(2)", "true", "false", "6"]);
+    }
+
+    #[test]
+    fn hash_map_operations_work() {
+        assert_eq!(run_program(r#"main:
+    m = hashmap()
+    m.insert("one", 1)
+    m.insert("two", 2)
+    print(m.contains_key("one"))
+    print(m.get("two"))
+    print(m.keys())
+    print(m.values())
+    print(m.remove("one"))
+    m.clear()
+    print(m.get_length())
+"#), vec!["true", "Some(2)", "[one, two]", "[1, 2]", "Some(1)", "0"]);
+    }
+
+    #[test]
+    fn string_operations_work() {
+        assert_eq!(run_program(r#"main:
+    text = "  Hello Fusion  "
+    print(text.trim())
+    print(text.to_uppercase())
+    print(text.to_lowercase())
+    print(text.substring(2, 7))
+    print(text.find("Fusion"))
+    print(text.replace("Fusion", "World"))
+    print(text.split(" "))
+    print(text.starts_with("  He"))
+    print(text.ends_with("  "))
+    print(text.contains("Fusion"))
+    print(text.length())
+"#), vec!["Hello Fusion", "  HELLO FUSION  ", "  hello fusion  ", "Hello", "Some(8)", "  Hello World  ", "[, , Hello, Fusion, , ]", "true", "true", "true", "16"]);
+    }
+
+    #[test]
+    fn invalid_generic_arity_is_rejected() {
+        type_check_should_fail(r#"fn identity<T>(T value) -> T:
+    return value
+
+main:
+    x = identity(42)
+"#);
+    }
+
+    #[test]
+    fn invalid_array_operation_types_are_rejected() {
+        type_check_should_fail(r#"main:
+    numbers = [1, 2, 3]
+    numbers.access("wrong")
+"#);
+    }
+
+    #[test]
+    fn invalid_hash_map_key_type_is_rejected() {
+        type_check_should_fail(r#"main:
+    HashMap<string, num> m = hashmap()
+    m.insert(1, "number key")
+"#);
+    }
+
+    #[test]
+    fn invalid_string_operation_types_are_rejected() {
+        type_check_should_fail(r#"main:
+    text = "hello"
+    text.concatenate(42)
+"#);
+    }
+
+    #[test]
+    fn incomplete_trait_impl_is_rejected() {
+        type_check_should_fail(r#"struct Person:
+    name: string
+
+trait Greeter:
+    fn greet(person: Person) -> string
+
+impl Greeter for Person:
+    fn other(person: Person) -> string:
+        return "wrong"
+
+main:
+    print("x")
 "#);
     }
 

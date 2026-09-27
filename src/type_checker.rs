@@ -25,6 +25,8 @@ pub struct TypeEnvironment {
     pub functions: HashMap<String, FunctionType>,
     pub structs: HashMap<String, StructDefinition>,
     pub enums: HashMap<String, EnumDefinition>,
+    pub methods: HashMap<(String, String), FunctionType>,
+    pub traits: HashMap<String, Vec<TraitMethod>>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +70,9 @@ impl TypeChecker {
                 generic_parameters: Vec::new(),
             },
         );
+        functions.insert("array".to_string(), FunctionType { parameters: vec![], return_type: Type::Array(Box::new(Type::Unknown)), generic_parameters: Vec::new() });
+        functions.insert("hashmap".to_string(), FunctionType { parameters: vec![], return_type: Type::HashMap(Box::new(Type::Unknown), Box::new(Type::Unknown)), generic_parameters: Vec::new() });
+        functions.insert("iterator".to_string(), FunctionType { parameters: vec![Type::Array(Box::new(Type::Unknown))], return_type: Type::Iterator(Box::new(Type::Unknown)), generic_parameters: Vec::new() });
 
         Self {
             environment: TypeEnvironment {
@@ -75,6 +80,8 @@ impl TypeChecker {
                 functions,
                 structs: HashMap::new(),
                 enums: HashMap::new(),
+                methods: HashMap::new(),
+                traits: HashMap::new(),
             },
             current_function: None,
             loop_depth: 0,
@@ -197,6 +204,42 @@ impl TypeChecker {
 
             "unknown" => Ok(Type::Unknown),
 
+            _ if name.ends_with("[]") => {
+                let inner = &name[..name.len()-2];
+                Ok(Type::Array(Box::new(self.convert_type(inner, span)?)))
+            }
+
+            _ if name.starts_with("Array<") && name.ends_with('>') => {
+                let inner = &name[6..name.len()-1];
+                Ok(Type::Array(Box::new(self.convert_type(inner, span)?)))
+            }
+
+            _ if name.starts_with("Iterator<") && name.ends_with('>') => {
+                let inner = &name[9..name.len()-1];
+                Ok(Type::Iterator(Box::new(self.convert_type(inner, span)?)))
+            }
+
+            _ if name.starts_with("HashMap<") && name.ends_with('>') => {
+                let parts = Self::split_generic_arguments(&name[8..name.len()-1]);
+                if parts.len() != 2 {
+                    return Err(FusionError::Syntax { message: "HashMap requires two type arguments".into(), span });
+                }
+                Ok(Type::HashMap(Box::new(self.convert_type(parts[0], span)?), Box::new(self.convert_type(parts[1], span)?)))
+            }
+
+            _ if name.starts_with("Option<") && name.ends_with('>') => {
+                let inner = &name[7..name.len()-1];
+                Ok(Type::Option(Box::new(self.convert_type(inner, span)?)))
+            }
+
+            _ if name.starts_with("Result<") && name.ends_with('>') => {
+                let parts = Self::split_generic_arguments(&name[7..name.len()-1]);
+                if parts.len() != 2 {
+                    return Err(FusionError::Syntax { message: "Result requires two type arguments".into(), span });
+                }
+                Ok(Type::Result(Box::new(self.convert_type(parts[0], span)?), Box::new(self.convert_type(parts[1], span)?)))
+            }
+
             _ if self.environment.structs.contains_key(name) => {
                 Ok(Type::Struct(name.to_string()))
             }
@@ -267,6 +310,23 @@ impl TypeChecker {
             return Ok(Type::Iterator(Box::new(
                 self.convert_type_with_generics(inner, generic_parameters, span)?,
             )));
+        }
+
+        if name.starts_with("Array<") && name.ends_with('>') {
+            let inner = &name[6..name.len() - 1];
+            return Ok(Type::Array(Box::new(self.convert_type_with_generics(inner, generic_parameters, span)?)));
+        }
+
+        if name.starts_with("HashMap<") && name.ends_with('>') {
+            let inner = &name[8..name.len() - 1];
+            let parts = Self::split_generic_arguments(inner);
+            if parts.len() != 2 {
+                return Err(FusionError::Syntax { message: "HashMap requires two type arguments".into(), span });
+            }
+            return Ok(Type::HashMap(
+                Box::new(self.convert_type_with_generics(parts[0], generic_parameters, span)?),
+                Box::new(self.convert_type_with_generics(parts[1], generic_parameters, span)?),
+            ));
         }
 
         if name.starts_with("Task<") && name.ends_with('>') {
@@ -661,12 +721,34 @@ impl TypeChecker {
                         }
                     })?;
 
+                // Patterns may be written as `State::Ready(...)`. The AST keeps
+                // the qualified spelling so the interpreter can compare it to
+                // the runtime enum value, while the enum definition stores only
+                // the variant name (`Ready`).
+                let (qualified_enum, variant_name) = match name.split_once("::") {
+                    Some((qualified_enum, variant_name)) =>
+                        (Some(qualified_enum), variant_name),
+                    None => (None, name.as_str()),
+                };
+
+                if let Some(qualified_enum) = qualified_enum {
+                    if qualified_enum != enum_name {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Pattern enum '{}' does not match expected enum '{}'",
+                                qualified_enum, enum_name
+                            ),
+                            span: pattern.span,
+                        });
+                    }
+                }
+
                 let variant =
-                    definition.variants.get(name).ok_or_else(|| {
+                    definition.variants.get(variant_name).ok_or_else(|| {
                         FusionError::Syntax {
                             message: format!(
                                 "Enum '{}' has no variant '{}'",
-                                enum_name, name
+                                enum_name, variant_name
                             ),
                             span: pattern.span,
                         }
@@ -676,7 +758,7 @@ impl TypeChecker {
                     return Err(FusionError::Syntax {
                         message: format!(
                             "Variant '{}' expects {} bindings, found {}",
-                            name,
+                            variant_name,
                             variant.fields.len(),
                             names.len()
                         ),
@@ -1096,249 +1178,100 @@ impl TypeChecker {
         span: Span,
     ) -> Result<Type, FusionError> {
         let object_type = self.infer_expression(object)?;
-
         if !generic_arguments.is_empty() {
-            return Err(FusionError::Syntax {
-                message: format!(
-                    "Method '{}' does not currently support explicit generic arguments",
-                    method
-                ),
-                span,
-            });
+            return Err(FusionError::Syntax { message: format!("Method '{}' does not currently support explicit generic arguments", method), span });
         }
+        let check_callback = |checker: &mut Self, expr: &Expression| -> Result<(), FusionError> {
+            match expr {
+                Expression::Identifier { name, .. } if checker.environment.functions.contains_key(name) => Ok(()),
+                _ => Err(FusionError::Syntax { message: "expected a function name as callback".into(), span: expr.span() }),
+            }
+        };
 
         match object_type {
             Type::File => match method {
-                "read" => {
-                    if !arguments.is_empty() { return Err(FusionError::Syntax { message: "read expects no arguments".into(), span }); }
-                    Ok(Type::String)
-                }
-                "write" => {
-                    if arguments.len() != 1 { return Err(FusionError::Syntax { message: "write expects one argument".into(), span }); }
-                    let t = self.infer_expression(&arguments[0])?;
-                    if !self.types_compatible(&Type::String, &t) { return Err(self.type_mismatch("string", t.name(), arguments[0].span())); }
-                    Ok(Type::Void)
-                }
-                "close" => {
-                    if !arguments.is_empty() { return Err(FusionError::Syntax { message: "close expects no arguments".into(), span }); }
-                    Ok(Type::Void)
-                }
-                _ => Err(FusionError::Syntax { message: format!("Unknown File method '{}'", method), span }),
+                "read" => { if !arguments.is_empty(){return Err(FusionError::Syntax{message:"read expects no arguments".into(),span})}; Ok(Type::String) }
+                "write" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"write expects one argument".into(),span})}; let t=self.infer_expression(&arguments[0])?; if !self.types_compatible(&Type::String,&t){return Err(self.type_mismatch("string",t.name(),arguments[0].span()))}; Ok(Type::Void) }
+                "close" => { if !arguments.is_empty(){return Err(FusionError::Syntax{message:"close expects no arguments".into(),span})}; Ok(Type::Void) }
+                _ => Err(FusionError::Syntax{message:format!("Unknown File method '{}'",method),span})
             },
-
-            Type::Array(inner) => {
-                match method {
-                    "push" => {
-                        if arguments.len() != 1 {
-                            return Err(FusionError::Syntax {
-                                message: "push expects one argument".to_string(),
-                                span,
-                            });
-                        }
-
-                        let argument_type =
-                            self.infer_expression(&arguments[0])?;
-
-                        if !self.types_compatible(
-                            &inner,
-                            &argument_type,
-                        ) {
-                            return Err(self.type_mismatch(
-                                inner.name(),
-                                argument_type.name(),
-                                arguments[0].span(),
-                            ));
-                        }
-
-                        Ok(Type::Void)
-                    }
-
-                    "pop" => {
-                        if !arguments.is_empty() {
-                            return Err(FusionError::Syntax {
-                                message: "pop expects no arguments".to_string(),
-                                span,
-                            });
-                        }
-
-                        Ok(Type::Option(inner))
-                    }
-
-                    "clear" => {
-                        if !arguments.is_empty() {
-                            return Err(FusionError::Syntax {
-                                message: "clear expects no arguments".to_string(),
-                                span,
-                            });
-                        }
-
-                        Ok(Type::Void)
-                    }
-
-                    "length" => {
-                        if !arguments.is_empty() {
-                            return Err(FusionError::Syntax {
-                                message: "length expects no arguments".to_string(),
-                                span,
-                            });
-                        }
-
-                        Ok(Type::Num)
-                    }
-
-                    "contains" => {
-                        if arguments.len() != 1 {
-                            return Err(FusionError::Syntax {
-                                message: "contains expects one argument".to_string(),
-                                span,
-                            });
-                        }
-
-                        let argument_type =
-                            self.infer_expression(&arguments[0])?;
-
-                        if !self.types_compatible(
-                            &inner,
-                            &argument_type,
-                        ) {
-                            return Err(self.type_mismatch(
-                                inner.name(),
-                                argument_type.name(),
-                                arguments[0].span(),
-                            ));
-                        }
-
-                        Ok(Type::Bool)
-                    }
-
-                    "sort" | "reverse" => {
-                        if !arguments.is_empty() {
-                            return Err(FusionError::Syntax {
-                                message: format!(
-                                    "{} expects no arguments",
-                                    method
-                                ),
-                                span,
-                            });
-                        }
-
-                        Ok(Type::Void)
-                    }
-
-                    "find" => Ok(Type::Option(inner)),
-
-                    "any" | "all" => Ok(Type::Bool),
-
-                    "count" => Ok(Type::Num),
-
-                    "take" | "skip" => {
-                        if arguments.len() != 1 {
-                            return Err(FusionError::Syntax {
-                                message: format!(
-                                    "{} expects one argument",
-                                    method
-                                ),
-                                span,
-                            });
-                        }
-
-                        let amount_type =
-                            self.infer_expression(&arguments[0])?;
-
-                        if !matches!(
-                            amount_type,
-                            Type::Num | Type::Unknown
-                        ) {
-                            return Err(self.type_mismatch(
-                                "num",
-                                amount_type.name(),
-                                arguments[0].span(),
-                            ));
-                        }
-
-                        Ok(Type::Array(inner))
-                    }
-
-                    "map" | "filter" | "reduce" | "fold" | "collect"
-                    | "zip" | "flatten" => {
-                        // The AST currently has no lambda/closure expression,
-                        // so these operations cannot be fully type-checked yet.
-                        //
-                        // Keep them represented in the type system without
-                        // pretending we know the callback's type.
-                        for argument in arguments {
-                            let _ = self.infer_expression(argument)?;
-                        }
-
-                        Ok(Type::Unknown)
-                    }
-
-                    _ => Err(FusionError::Syntax {
-                        message: format!(
-                            "Unknown array method '{}'",
-                            method
-                        ),
-                        span,
-                    }),
-                }
-            }
-
-            Type::Iterator(inner) => match method {
-                "take" | "skip" => {
-                    if arguments.len() != 1 {
-                        return Err(FusionError::Syntax {
-                            message: format!(
-                                "{} expects one argument",
-                                method
-                            ),
-                            span,
-                        });
-                    }
-
-                    let amount_type =
-                        self.infer_expression(&arguments[0])?;
-
-                    if !matches!(
-                        amount_type,
-                        Type::Num | Type::Unknown
-                    ) {
-                        return Err(self.type_mismatch(
-                            "num",
-                            amount_type.name(),
-                            arguments[0].span(),
-                        ));
-                    }
-
-                    Ok(Type::Iterator(inner))
-                }
-
-                "count" => Ok(Type::Num),
-
-                "find" => Ok(Type::Option(inner)),
-
-                "any" | "all" => Ok(Type::Bool),
-
+            Type::Array(inner) => match method {
+                "add"|"push" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:format!("{} expects one argument",method),span})}; let t=self.infer_expression(&arguments[0])?; if !self.types_compatible(&inner,&t){return Err(self.type_mismatch(inner.name(),t.name(),arguments[0].span()))}; Ok(Type::Void) }
+                "remove_last"|"pop" => { if !arguments.is_empty(){return Err(FusionError::Syntax{message:format!("{} expects no arguments",method),span})}; Ok(Type::Option(inner)) }
+                "access" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"access expects an index".into(),span})}; let t=self.infer_expression(&arguments[0])?; if !matches!(t,Type::Num|Type::Unknown){return Err(self.type_mismatch("num",t.name(),arguments[0].span()))}; Ok(*inner) }
+                "modify" => { if arguments.len()!=2{return Err(FusionError::Syntax{message:"modify expects index and value".into(),span})}; let i=self.infer_expression(&arguments[0])?; if !matches!(i,Type::Num|Type::Unknown){return Err(self.type_mismatch("num",i.name(),arguments[0].span()))}; let v=self.infer_expression(&arguments[1])?; if !self.types_compatible(&inner,&v){return Err(self.type_mismatch(inner.name(),v.name(),arguments[1].span()))}; Ok(Type::Void) }
+                "get_length"|"length" => Ok(Type::Num),
+                "clear"|"sort"|"reverse" => { if !arguments.is_empty(){return Err(FusionError::Syntax{message:format!("{} expects no arguments",method),span})}; Ok(Type::Void) }
+                "insert_at_index" => { if arguments.len()!=2{return Err(FusionError::Syntax{message:"insert_at_index expects index and value".into(),span})}; let i=self.infer_expression(&arguments[0])?; let v=self.infer_expression(&arguments[1])?; if !matches!(i,Type::Num|Type::Unknown){return Err(self.type_mismatch("num",i.name(),arguments[0].span()))}; if !self.types_compatible(&inner,&v){return Err(self.type_mismatch(inner.name(),v.name(),arguments[1].span()))}; Ok(Type::Void) }
+                "remove_at_index" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"remove_at_index expects index".into(),span})}; Ok(*inner) }
+                "contains" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"contains expects one argument".into(),span})}; let t=self.infer_expression(&arguments[0])?; if !self.types_compatible(&inner,&t){return Err(self.type_mismatch(inner.name(),t.name(),arguments[0].span()))}; Ok(Type::Bool) }
+                "iterate" => Ok(Type::Iterator(inner)),
+                "map" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"map expects callback".into(),span})}; check_callback(self,&arguments[0])?; Ok(Type::Iterator(Box::new(Type::Unknown))) }
+                "filter" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"filter expects callback".into(),span})}; check_callback(self,&arguments[0])?; Ok(Type::Iterator(inner)) }
+                "enumerate" => Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown))))),
                 "collect" => Ok(Type::Array(inner)),
-
-                _ => Err(FusionError::Syntax {
-                    message: format!(
-                        "Unknown iterator method '{}'",
-                        method
-                    ),
-                    span,
-                }),
+                "find" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"find expects callback".into(),span})}; check_callback(self,&arguments[0])?; Ok(Type::Option(inner)) }
+                "any"|"all" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:format!("{} expects callback",method),span})}; check_callback(self,&arguments[0])?; Ok(Type::Bool) }
+                "fold" => { if arguments.len()!=2{return Err(FusionError::Syntax{message:"fold expects initial value and callback".into(),span})}; let _=self.infer_expression(&arguments[0])?; check_callback(self,&arguments[1])?; Ok(Type::Unknown) }
+                _ => Err(FusionError::Syntax{message:format!("Unknown array method '{}'",method),span})
             },
-
+            Type::Iterator(inner) => match method {
+                "map" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"map expects callback".into(),span})}; check_callback(self,&arguments[0])?; Ok(Type::Iterator(Box::new(Type::Unknown))) }
+                "filter" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"filter expects callback".into(),span})}; check_callback(self,&arguments[0])?; Ok(Type::Iterator(inner)) }
+                "enumerate" => Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown))))),
+                "collect" => Ok(Type::Array(inner)),
+                "find" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:"find expects callback".into(),span})}; check_callback(self,&arguments[0])?; Ok(Type::Option(inner)) }
+                "any"|"all" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:format!("{} expects callback",method),span})}; check_callback(self,&arguments[0])?; Ok(Type::Bool) }
+                "fold" => { if arguments.len()!=2{return Err(FusionError::Syntax{message:"fold expects initial value and callback".into(),span})}; let _=self.infer_expression(&arguments[0])?; check_callback(self,&arguments[1])?; Ok(Type::Unknown) }
+                _ => Err(FusionError::Syntax{message:format!("Unknown iterator method '{}'",method),span})
+            },
+            Type::HashMap(key, value) => match method {
+                "insert" => { if arguments.len()!=2{return Err(FusionError::Syntax{message:"insert expects key and value".into(),span})}; let k=self.infer_expression(&arguments[0])?; let v=self.infer_expression(&arguments[1])?; if !self.types_compatible(&key,&k){return Err(self.type_mismatch(key.name(),k.name(),arguments[0].span()))}; if !self.types_compatible(&value,&v){return Err(self.type_mismatch(value.name(),v.name(),arguments[1].span()))}; Ok(Type::Void) }
+                "get"|"remove" => { if arguments.len()!=1{return Err(FusionError::Syntax{message:format!("{} expects key",method),span})}; let k=self.infer_expression(&arguments[0])?; if !self.types_compatible(&key,&k){return Err(self.type_mismatch(key.name(),k.name(),arguments[0].span()))}; Ok(Type::Option(value)) }
+                "contains_key" => Ok(Type::Bool),
+                "clear" => Ok(Type::Void),
+                "keys" => Ok(Type::Array(key)),
+                "values" => Ok(Type::Array(value)),
+                "iterate" => Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown))))),
+                "get_length"|"length" => Ok(Type::Num),
+                _ => Err(FusionError::Syntax{message:format!("Unknown hash map method '{}'",method),span})
+            },
+            Type::String => match method {
+                "create" => Ok(Type::String),
+                "concatenate"|"replace" => { for a in arguments { let t=self.infer_expression(a)?; if !matches!(t,Type::String|Type::Unknown){return Err(self.type_mismatch("string",t.name(),a.span()))} } ; Ok(Type::String) }
+                "substring" => Ok(Type::String),
+                "find" => Ok(Type::Option(Box::new(Type::Num))),
+                "split" => Ok(Type::Array(Box::new(Type::String))),
+                "trim"|"to_uppercase"|"to_lowercase" => Ok(Type::String),
+                "starts_with"|"ends_with"|"contains" => Ok(Type::Bool),
+                "length" => Ok(Type::Num),
+                "iterate" => Ok(Type::Iterator(Box::new(Type::String))),
+                _ => Err(FusionError::Syntax{message:format!("Unknown string method '{}'",method),span})
+            },
+            Type::Struct(type_name) => {
+                let signature = self.environment.methods.get(&(type_name.clone(), method.to_string())).cloned()
+                    .ok_or_else(|| FusionError::Syntax { message: format!("Unknown method '{}' for type '{}'", method, type_name), span })?;
+                if signature.parameters.len() != arguments.len() + 1 {
+                    return Err(FusionError::Syntax { message: format!("Method '{}.{}' expects {} explicit arguments", type_name, method, signature.parameters.len().saturating_sub(1)), span });
+                }
+                let receiver_type = Type::Struct(type_name.clone());
+                if let Some(first) = signature.parameters.first() {
+                    let first_type = first.clone();
+                    let _ = receiver_type;
+                    if !self.types_compatible(&first_type, &Type::Struct(type_name.clone())) && !matches!(first_type, Type::Unknown | Type::Generic(_)) {
+                        return Err(self.type_mismatch(first_type.name(), type_name, span));
+                    }
+                }
+                for (param, arg) in signature.parameters.iter().skip(1).zip(arguments) {
+                    let found = self.infer_expression(arg)?;
+                    if !self.types_compatible(&param, &found) {
+                        return Err(self.type_mismatch(param.name(), found.name(), arg.span()));
+                    }
+                }
+                Ok(signature.return_type)
+            }
             Type::Unknown => Ok(Type::Unknown),
-
-            other => Err(FusionError::Syntax {
-                message: format!(
-                    "Type '{}' has no method '{}'",
-                    other.name(),
-                    method
-                ),
-                span,
-            }),
+            other => Err(FusionError::Syntax{message:format!("Type '{}' has no method '{}'",other.name(),method),span}),
         }
     }
 
@@ -1911,6 +1844,7 @@ impl TypeChecker {
                     Type::Array(inner) => *inner,
 
                     Type::Iterator(inner) => *inner,
+                    Type::HashMap(key, value) => Type::Array(Box::new(Type::Unknown)),
 
                     Type::Unknown => Type::Unknown,
 
@@ -1981,6 +1915,8 @@ impl TypeChecker {
                 self.infer_expression(expression)?;
                 Ok(())
             }
+
+            Statement::Import { .. } => Ok(()),
 
             Statement::Call { expression, .. } => {
                 self.infer_expression(expression)?;
@@ -2089,18 +2025,23 @@ impl TypeChecker {
                 }
 
                 PatternKind::Variant { name, .. } => {
-                    if !seen_patterns.insert(name.clone()) {
-                        return Err(FusionError::Syntax {
-                            message: format!(
-                                "Duplicate match pattern '{}'",
-                                name
-                            ),
-                            span: arm.pattern.span,
-                        });
-                    }
+    let variant_name = match name.split_once("::") {
+        Some((_, variant_name)) => variant_name,
+        None => name.as_str(),
+    };
 
-                    covered_variants.insert(name.clone());
-                }
+    if !seen_patterns.insert(variant_name.to_string()) {
+        return Err(FusionError::Syntax {
+            message: format!(
+                "Duplicate match pattern '{}'",
+                name
+            ),
+            span: arm.pattern.span,
+        });
+    }
+
+    covered_variants.insert(variant_name.to_string());
+}
 
                 PatternKind::Boolean(value) => {
                     let key = value.to_string();
@@ -2478,13 +2419,19 @@ impl TypeChecker {
         }
 
         if let Some(trait_name) = trait_name {
-            if !self.environment.functions.contains_key(trait_name)
-                && !self.environment.structs.contains_key(trait_name)
-                && !self.environment.enums.contains_key(trait_name)
-            {
-                // Traits are not stored as a separate environment entry
-                // in the current TypeEnvironment, so trait existence is
-                // validated during the main AST pass.
+            if !self.environment.traits.contains_key(trait_name) {
+                return Err(FusionError::Syntax { message: format!("Unknown trait '{}'", trait_name), span });
+            }
+        }
+
+        if let Some(trait_name) = trait_name {
+            if let Some(required) = self.environment.traits.get(trait_name).cloned() {
+                for required_method in required {
+                    let found = methods.iter().find(|m| matches!(m, Statement::Function { name, .. } if name == &required_method.name));
+                    if found.is_none() {
+                        return Err(FusionError::Syntax { message: format!("Impl of trait '{}' for '{}' is missing method '{}'", trait_name, type_name, required_method.name), span });
+                    }
+                }
             }
         }
 
@@ -2499,6 +2446,19 @@ impl TypeChecker {
                     is_async,
                     span,
                 } => {
+                    let parameter_types = parameters.iter().map(|p| match &p.type_name {
+                        Some(t) => self.convert_type_with_generics(t, generic_parameters, p.span),
+                        None => Ok(Type::Unknown),
+                    }).collect::<Result<Vec<_>, _>>()?;
+                    let ret = match return_type {
+                        Some(t) => self.convert_type_with_generics(t, generic_parameters, *span)?,
+                        None => Type::Void,
+                    };
+                    self.environment.methods.insert((type_name.to_string(), name.clone()), FunctionType {
+                        parameters: parameter_types,
+                        return_type: if *is_async { Type::Task(Box::new(ret)) } else { ret },
+                        generic_parameters: generic_parameters.clone(),
+                    });
                     self.check_function_body(
                         name,
                         generic_parameters,
@@ -2687,6 +2647,17 @@ impl TypeChecker {
             }
         }
 
+        // Register trait declarations before validating impl blocks.
+        for statement in &program.statements {
+            if let Statement::Trait { name, methods, span } = statement {
+                if self.environment.traits.contains_key(name) {
+                    return Err(FusionError::Syntax { message: format!("Duplicate trait '{}'", name), span: *span });
+                }
+                for method in methods { self.validate_trait_method(method, &[])?; }
+                self.environment.traits.insert(name.clone(), methods.clone());
+            }
+        }
+
         // Pass 5: register function signatures.
         for statement in &program.statements {
             if let Statement::Function {
@@ -2838,7 +2809,8 @@ impl TypeChecker {
                 }
 
                 Statement::Struct { .. }
-                | Statement::Enum { .. } => {}
+                | Statement::Enum { .. }
+                | Statement::Import { .. } => {}
 
                 Statement::Main { body, .. } => {
                     self.push_scope();

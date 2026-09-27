@@ -11,6 +11,8 @@ pub enum Value {
     String(String),
     Boolean(bool),
     Array(Vec<Value>),
+    HashMap(Vec<(Value, Value)>),
+    Iterator(Vec<Value>),
 
     Struct {
         name: String,
@@ -52,6 +54,24 @@ impl std::fmt::Display for Value {
                     write!(f, "{}", value)?;
                 }
 
+                write!(f, "]")
+            }
+
+            Value::HashMap(entries) => {
+                write!(f, "{{")?;
+                for (i, (key, value)) in entries.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}: {}", key, value)?;
+                }
+                write!(f, "}}")
+            }
+
+            Value::Iterator(values) => {
+                write!(f, "Iterator[")?;
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", value)?;
+                }
                 write!(f, "]")
             }
 
@@ -114,6 +134,8 @@ impl PartialEq for Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::HashMap(a), Value::HashMap(b)) => a == b,
+            (Value::Iterator(a), Value::Iterator(b)) => a == b,
             (Value::Struct { name: an, fields: af }, Value::Struct { name: bn, fields: bf }) => an == bn && af == bf,
             (Value::Enum { enum_name: ae, variant: av, values: ax }, Value::Enum { enum_name: be, variant: bv, values: bx }) => ae == be && av == bv && ax == bx,
             (Value::Option(a), Value::Option(b)) => a == b,

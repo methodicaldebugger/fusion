@@ -188,35 +188,39 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_type(&mut self) -> Result<String, ParseError> {
-        match self.current() {
-            Token::NumType => {
-                self.advance();
-                Ok("num".to_string())
-            }
+        let base = match self.current() {
+            Token::NumType => { self.advance(); "num".to_string() }
+            Token::FloatType => { self.advance(); "float".to_string() }
+            Token::BoolType => { self.advance(); "bool".to_string() }
+            Token::StringType => { self.advance(); "string".to_string() }
+            Token::Identifier(name) => { let name = name.clone(); self.advance(); name }
+            _ => return self.error("Expected type"),
+        };
 
-            Token::FloatType => {
-                self.advance();
-                Ok("float".to_string())
+        // Fusion supports both `T[]` and explicit generic collection/result
+        // spellings.  Keep the parsed representation as a string because the
+        // existing type checker owns the semantic Type representation.
+        if self.consume(&Token::LeftBracket) {
+            if !self.consume(&Token::RightBracket) {
+                return self.error("Expected ']' after array type");
             }
-
-            Token::BoolType => {
-                self.advance();
-                Ok("bool".to_string())
-            }
-
-            Token::StringType => {
-                self.advance();
-                Ok("string".to_string())
-            }
-
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                Ok(name)
-            }
-
-            _ => self.error("Expected type"),
+            return Ok(format!("{}[]", base));
         }
+
+        if self.consume(&Token::Less) {
+            let mut args = Vec::new();
+            loop {
+                args.push(self.parse_type()?);
+                if self.consume(&Token::Comma) { continue; }
+                break;
+            }
+            if !self.consume(&Token::Greater) {
+                return self.error("Expected '>' after generic type arguments");
+            }
+            return Ok(format!("{}<{}>", base, args.join(", ")));
+        }
+
+        Ok(base)
     }
 
     // ------------------------------------------------------------
@@ -314,7 +318,9 @@ impl Parser {
 
             Token::Impl => Ok(Some(self.parse_impl()?)),
 
-            Token::Import | Token::From | Token::Async | Token::Await => self.error(format!(
+            Token::Import => Ok(Some(self.parse_import()?)),
+
+            Token::From | Token::Async | Token::Await => self.error(format!(
                 "Token {:?} is recognized by the lexer but is not yet supported by the AST",
                 self.current()
             )),
@@ -433,7 +439,28 @@ impl Parser {
             }
 
             Token::Identifier(_) => {
-                matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_)))
+                if matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_))) {
+                    return true;
+                }
+                if self.peek_at(self.position + 1) == Some(&Token::Less) {
+                    let mut i = self.position + 2;
+                    let mut depth = 1usize;
+                    while let Some(token) = self.peek_at(i) {
+                        match token {
+                            Token::Less => depth += 1,
+                            Token::Greater => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return matches!(self.peek_at(i + 1), Some(Token::Identifier(_)));
+                                }
+                            }
+                            Token::Eof | Token::NewLine | Token::RightBrace => break,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+                false
             }
 
             _ => false,
@@ -608,6 +635,23 @@ impl Parser {
             expression,
             span: self.span_from(start),
         })
+    }
+
+    fn parse_import(&mut self) -> Result<Statement, ParseError> {
+        let start = self.current_span().start;
+        self.advance();
+        let mut parts = Vec::new();
+        match self.current() {
+            Token::Identifier(name) => { parts.push(name.clone()); self.advance(); }
+            _ => return self.error("Expected module name after 'import'"),
+        }
+        while self.consume(&Token::Dot) {
+            match self.current() {
+                Token::Identifier(name) => { parts.push(name.clone()); self.advance(); }
+                _ => return self.error("Expected module name after '.'"),
+            }
+        }
+        Ok(Statement::Import { path: parts.join("."), span: self.span_from(start) })
     }
 
     // ------------------------------------------------------------

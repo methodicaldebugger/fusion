@@ -1,5 +1,6 @@
 // contents of hir_lower
 
+use crate::span::Span;
 use crate::ast::*;
 use crate::hir::*;
 
@@ -31,6 +32,8 @@ impl HirLowerer {
         statement: &Statement,
     ) -> Result<HirStatement, String> {
         match statement {
+            Statement::Import { .. } => Ok(HirStatement::Expression { expression: HirExpression::Number(0), span: Span::new(0,0) }),
+
             Statement::Expression {
                 expression,
                 span,
