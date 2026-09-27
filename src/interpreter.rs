@@ -538,12 +538,24 @@ impl Interpreter {
                 return Value::TcpStream(Rc::new(RefCell::new(Some(stream))));
             }
             "serialize" => {
-                if arguments.len() != 1 {
-                    panic!("serialize() expects one value");
-                }
-                return Value::String(serialize_value(&self.evaluate(&arguments[0])));
-            }
-            "format" => {
+    if arguments.len() != 1 {
+        panic!("serialize() expects one value");
+    }
+    return Value::String(serialize_value(&self.evaluate(&arguments[0])));
+}
+"deserialize" => {
+    if arguments.len() != 1 {
+        panic!("deserialize() expects one string");
+    }
+
+    let Value::String(serialized) = self.evaluate(&arguments[0]) else {
+        panic!("deserialize() expects string");
+    };
+
+    return parse_serialized(&serialized)
+        .unwrap_or_else(|| panic!("deserialize() could not parse serialized value"));
+}
+"format" => {
                 if arguments.len() != 2 {
                     panic!("format() expects template and values array");
                 }
@@ -672,15 +684,24 @@ impl Interpreter {
                 panic!("continue escaped function '{}'", name);
             }
         };
-        self.exit_scope();
+                self.exit_scope();
         self.loop_depth = previous_loop_depth;
+
+        // The declared return type of an async function is its
+        // source-level result type (e.g. `num`), while the runtime
+        // value returned by calling it is `Task<num>`.
         self.check_return_type(
             name,
             &function.return_type,
             &returned_value,
             &function.generic_parameters,
         );
-        returned_value
+
+        if function.is_async {
+            Value::Task(Box::new(returned_value))
+        } else {
+            returned_value
+        }
     }
 
     // =========================================================================
@@ -2719,11 +2740,14 @@ fn serialize_value(v: &Value) -> String {
         }
 
         Value::Array(a) => {
-            format!(
-                "[{}]",
-                a.iter().map(serialize_value).collect::<Vec<_>>().join(",")
-            )
-        }
+    format!(
+        "[{}]",
+        a.iter()
+            .map(serialize_value)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
 
         Value::HashMap(h) => {
             format!(
@@ -2748,21 +2772,21 @@ fn serialize_value(v: &Value) -> String {
         }
 
         Value::Enum {
-            enum_name,
-            variant,
-            values,
-        } => {
-            format!(
-                "{{\"__enum\":\"{}\",\"variant\":\"{}\",\"values\":[{}]}}",
-                enum_name,
-                variant,
-                values
-                    .iter()
-                    .map(serialize_value)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        }
+    enum_name,
+    variant,
+    values,
+} => {
+    format!(
+        "{{\"__enum\":\"{}\",\"variant\":\"{}\",\"values\":[{}]}}",
+        enum_name,
+        variant,
+        values
+            .iter()
+            .map(serialize_value)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
 
         Value::Option(Some(x)) => {
             format!("{{\"Some\":{}}}", serialize_value(x))
