@@ -178,7 +178,7 @@ impl Resolver {
     fn resolve_expression(&mut self, expr: &Expression) -> Result<(), FusionError> {
         match expr {
             Expression::Identifier { name, span } => {
-                if self.lookup(name).is_none() && name != "print" {
+                if self.lookup(name).is_none() && name != "print" && name != "input" && name != "open" {
                     return Err(FusionError::UnknownVariable { name: name.clone(), span: *span });
                 }
             }
@@ -194,6 +194,7 @@ impl Resolver {
             Expression::EnumConstructor { arguments, .. } => for e in arguments { self.resolve_expression(e)?; },
             Expression::Binary { left, right, .. } => { self.resolve_expression(left)?; self.resolve_expression(right)?; }
             Expression::Unary { expression, .. } => self.resolve_expression(expression)?,
+            Expression::Conversion { expression, .. } => self.resolve_expression(expression)?,
             Expression::Number { .. } | Expression::Float { .. } |
             Expression::Boolean { .. } | Expression::String { .. } => {}
         }

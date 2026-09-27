@@ -1,7 +1,10 @@
 //contents of value.rs
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::fs::File as StdFile;
+use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Number(i64),
     Float(f64),
@@ -19,6 +22,10 @@ pub enum Value {
         variant: String,
         values: Vec<Value>,
     },
+
+    Option(Option<Box<Value>>),
+
+    File(Rc<RefCell<Option<StdFile>>>),
 
     None,
 }
@@ -89,7 +96,30 @@ impl std::fmt::Display for Value {
                 Ok(())
             }
 
+            Value::Option(Some(value)) => write!(f, "Some({})", value),
+            Value::Option(None) => write!(f, "None"),
+
+            Value::File(_) => write!(f, "<file>"),
+
             Value::None => write!(f, "none"),
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Struct { name: an, fields: af }, Value::Struct { name: bn, fields: bf }) => an == bn && af == bf,
+            (Value::Enum { enum_name: ae, variant: av, values: ax }, Value::Enum { enum_name: be, variant: bv, values: bx }) => ae == be && av == bv && ax == bx,
+            (Value::Option(a), Value::Option(b)) => a == b,
+            (Value::None, Value::None) => true,
+            (Value::File(a), Value::File(b)) => Rc::ptr_eq(a, b),
+            _ => false,
         }
     }
 }

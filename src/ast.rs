@@ -288,6 +288,13 @@ pub enum Expression {
         expression: Box<Expression>,
         span: Span,
     },
+
+    Conversion {
+        kind: ConversionKind,
+        expression: Box<Expression>,
+        target_type: String,
+        span: Span,
+    },
 }
 
 impl Expression {
@@ -307,7 +314,8 @@ impl Expression {
             | Expression::StructConstructor { span, .. }
             | Expression::EnumConstructor { span, .. }
             | Expression::Binary { span, .. }
-            | Expression::Unary { span, .. } => *span,
+            | Expression::Unary { span, .. }
+            | Expression::Conversion { span, .. } => *span,
         }
     }
 }
@@ -343,6 +351,13 @@ impl Pattern {
     pub fn span(&self) -> Span {
         self.span
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionKind {
+    As,
+    From,
+    Try,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,32 +1,49 @@
 /*
-We still need to implement the following features:
-- Generics
-- Defer + I/O
-- Traits + impl
-- Enums
-- better Error handling
-- Modules
-- option/result
-- async/await
-
-There are many operations that are not yet implemented, including:
-- type_conversion(operations):
+There are many operations that are not yet implemented, but should be immediately:
+- reading input with input()
+- type_conversion(operations), the kind rust has:
 as       explicit conversion
 from     user-defined conversion
 try      fallible conversion
 
-- growable arrays(operations):
+We still need to implement the following features in the language:
+- Generics(partially implemented)
+- Defer + file I/O
+- Traits + impl
+- Enums
+- Modules
+- option/result
+
+Even more features that are not yet implemented, but should be before self-hosting:
+- growable arrays(+operations):
 create, add, remove_last, access, modify, get_length, iterate, clear, insert_at_index, remove_at_index.
-- hash map(operations):
+- hash map(+operations):
 create, insert, get, remove, contains_key, iterate, clear, iterate, keys, values.
-- iterators(operations):
+- iterators(+operations):
 map, filter, enumerate, collect, find, any, all, fold.
+- string operations(+operations):
+create, concatenate, substring, find, replace, split, trim, to_uppercase, to_lowercase, starts_with, ends_with, contains, length, iterate.
 
 make the standard library prelude-like, so users don't have to write:
-import array
+import growabble array
 import hashmap
 import iterator
 
+These will be a part of the standard library(these are not planned to be implemented yet):
+- async/await
+- Filesystem
+- Command-line arguments
+- Process/system functionality
+- Time and dates
+- Randomness
+- networking, 
+- serialisation,
+- formating,
+- encoding,
+- logging, 
+
+
+whenever new implementations are made, tests need to be generated(valid and invalid).
 chatgpt don't delete these comments, thx
 */
 pub mod ast;
@@ -1468,5 +1485,89 @@ fn double(x):
             vec!["42"]
         );
     }
+    #[test]
+    fn input_builtin_is_a_string_expression() {
+        let program = compile_test_program(r#"main:
+    value = input()
+    print(value)
+"#);
+        assert!(matches!(program.statements[0], ast::Statement::Main { .. }));
+    }
+
+    #[test]
+    fn explicit_as_conversion_works() {
+        assert_eq!(
+            run_program(r#"main:
+    x = 42 as float
+    print(x)
+"#),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn from_conversion_uses_user_defined_converter() {
+        assert_eq!(
+            run_program(r#"fn from_num(value) -> num:
+    return value + 10
+
+main:
+    x = num::from(32)
+    print(x)
+"#),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn try_conversion_returns_option() {
+        assert_eq!(
+            run_program(r#"main:
+    x = num::try("42")
+    print(x)
+    y = num::try("not-a-number")
+    print(y)
+"#),
+            vec!["Some(42)", "None"]
+        );
+    }
+
+    #[test]
+    fn defer_closes_file_and_file_io_works() {
+        let path = std::env::temp_dir().join(format!("fusion_test_{}.txt", std::process::id()));
+        let path_string = path.to_string_lossy().replace('\\', "\\\\");
+        let source = format!(r#"main:
+    file = open("{}")
+    defer file.close()
+    file.write("hello fusion")
+"#, path_string);
+        run_program(&source);
+        let contents = std::fs::read_to_string(&path).expect("Fusion should create and write the file");
+        assert_eq!(contents, "hello fusion");
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn invalid_conversion_is_rejected() {
+        type_check_should_fail(r#"main:
+    x = true as float
+"#);
+    }
+
+    #[test]
+    fn invalid_file_method_arguments_are_rejected() {
+        type_check_should_fail(r#"main:
+    file = open("test.txt")
+    file.write(42)
+"#);
+    }
+
+    #[test]
+    fn invalid_conversion_arity_is_rejected() {
+        parse_should_fail(r#"main:
+    x = num::from(1, 2)
+"#);
+    }
+
 }
 

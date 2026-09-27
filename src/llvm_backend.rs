@@ -358,6 +358,7 @@ impl LLVMBackend {
                 }.map_err(|e| self.unsupported(e.to_string()))?;
                 Ok(t)
             }
+            Expression::Conversion { .. } => return Err(self.unsupported("type conversions are not yet lowered by the LLVM backend")),
             Expression::Unary { operator, expression, .. } => {
                 let x = self.emit_expr(expression, out)?; let ty = self.expr_type(expression); let t = self.temp();
                 match (operator, ty) {
@@ -422,6 +423,7 @@ impl LLVMBackend {
                 Operator::Equal | Operator::NotEqual | Operator::Less | Operator::LessEqual | Operator::Greater | Operator::GreaterEqual | Operator::And | Operator::Or => LlType::I1,
                 _ => self.expr_type(left),
             },
+            Expression::Conversion { target_type, .. } => self.llvm_type_name(target_type),
             Expression::Unary { operator, expression, .. } => match operator { UnaryOperator::Not => LlType::I1, _ => self.expr_type(expression) },
             Expression::Identifier { name, .. } => self.locals.get(name).map(|x| x.0).unwrap_or(LlType::I64),
             Expression::Call { name, .. } => self.functions.get(name).map(|s| s.ret).unwrap_or(LlType::I64),

@@ -269,6 +269,8 @@ impl HirLowerer {
                 right: Box::new(self.lower_expression(right)?),
             }),
 
+            Expression::Conversion { .. } => Err("conversions are not yet lowered to HIR".to_string()),
+
             Expression::Unary {
                 operator,
                 expression,

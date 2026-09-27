@@ -2061,6 +2061,22 @@ impl Parser {
             };
         }
 
+        // Explicit conversion has lower precedence than arithmetic but higher
+        // precedence than comparisons: `x + 1 as float` converts the complete
+        // arithmetic expression.
+        if self.current() == &Token::As {
+            let start = left.span().start;
+            self.advance();
+            let target_type = self.parse_type()?;
+            let end = self.previous_span().end;
+            left = Expression::Conversion {
+                kind: ConversionKind::As,
+                expression: Box::new(left),
+                target_type,
+                span: Span::new(start, end),
+            };
+        }
+
         Ok(left)
     }
 
@@ -2111,6 +2127,25 @@ impl Parser {
 
                 if self.current() == &Token::DoubleColon {
                     self.advance();
+
+                    if matches!(self.current(), Token::From | Token::Try) {
+                        let kind = match self.current() {
+                            Token::From => ConversionKind::From,
+                            Token::Try => ConversionKind::Try,
+                            _ => unreachable!(),
+                        };
+                        self.advance();
+                        let arguments = self.parse_arguments()?;
+                        if arguments.len() != 1 {
+                            return self.error("conversion requires exactly one argument");
+                        }
+                        return Ok(Expression::Conversion {
+                            kind,
+                            expression: Box::new(arguments.into_iter().next().unwrap()),
+                            target_type: name,
+                            span: self.span_from(start),
+                        });
+                    }
 
                     let variant = match self.current() {
                         Token::Identifier(variant) => {
@@ -2164,6 +2199,38 @@ impl Parser {
                             span: self.span_from(start),
                         }
                     }
+                }
+            }
+
+            Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
+                let start = self.current_span().start;
+                let target_type = match self.current() {
+                    Token::NumType => "num",
+                    Token::FloatType => "float",
+                    Token::BoolType => "bool",
+                    Token::StringType => "string",
+                    _ => unreachable!(),
+                }.to_string();
+                self.advance();
+                if self.current() != &Token::DoubleColon {
+                    return self.error("primitive type name is only valid here as a conversion target");
+                }
+                self.advance();
+                let kind = match self.current() {
+                    Token::From => ConversionKind::From,
+                    Token::Try => ConversionKind::Try,
+                    _ => return self.error("expected 'from' or 'try' after conversion target"),
+                };
+                self.advance();
+                let arguments = self.parse_arguments()?;
+                if arguments.len() != 1 {
+                    return self.error("conversion requires exactly one argument");
+                }
+                Expression::Conversion {
+                    kind,
+                    expression: Box::new(arguments.into_iter().next().unwrap()),
+                    target_type,
+                    span: self.span_from(start),
                 }
             }
 

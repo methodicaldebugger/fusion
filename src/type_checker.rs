@@ -45,6 +45,22 @@ impl TypeChecker {
         let mut functions = HashMap::new();
 
         functions.insert(
+            "input".to_string(),
+            FunctionType {
+                parameters: Vec::new(),
+                return_type: Type::String,
+                generic_parameters: Vec::new(),
+            },
+        );
+        functions.insert(
+            "open".to_string(),
+            FunctionType {
+                parameters: vec![Type::String],
+                return_type: Type::File,
+                generic_parameters: Vec::new(),
+            },
+        );
+        functions.insert(
             "print".to_string(),
             FunctionType {
                 parameters: vec![Type::Unknown],
@@ -827,6 +843,51 @@ impl TypeChecker {
                 }
             }
 
+            Expression::Conversion {
+                kind,
+                expression,
+                target_type,
+                span,
+            } => {
+                let source = self.infer_expression(expression)?;
+                let target = self.convert_type(target_type, *span)?;
+                let primitive_conversion = match (&source, &target) {
+                    (Type::Num, Type::Float) | (Type::Float, Type::Num)
+                    | (Type::Num, Type::String) | (Type::Float, Type::String)
+                    | (Type::Bool, Type::String) | (Type::String, Type::Num)
+                    | (Type::String, Type::Float) | (Type::String, Type::Bool)
+                    | (Type::Bool, Type::Num) | (Type::Num, Type::Bool)
+                    | (Type::Float, Type::Bool)
+                    | (Type::Num, Type::Num) | (Type::Float, Type::Float)
+                    | (Type::Bool, Type::Bool) | (Type::String, Type::String) => true,
+                    (Type::Unknown, Type::Num | Type::Float | Type::Bool | Type::String) => true,
+                    _ => false,
+                };
+
+                match kind {
+                    ConversionKind::As => {
+                        if primitive_conversion { Ok(target) }
+                        else { Err(FusionError::TypeMismatch { expected: target.name(), found: source.name(), span: *span }) }
+                    }
+                    ConversionKind::From => {
+                        let function_name = format!("from_{}", target.name());
+                        if self.environment.functions.contains_key(&function_name) || primitive_conversion {
+                            Ok(target)
+                        } else {
+                            Err(FusionError::Syntax { message: format!("no conversion from {} to {}", source.name(), target.name()), span: *span })
+                        }
+                    }
+                    ConversionKind::Try => {
+                        let function_name = format!("try_{}", target.name());
+                        if primitive_conversion || self.environment.functions.contains_key(&function_name) {
+                            Ok(Type::Option(Box::new(target)))
+                        } else {
+                            Err(FusionError::TypeMismatch { expected: target.name(), found: source.name(), span: *span })
+                        }
+                    }
+                }
+            }
+
             Expression::Binary {
                 left,
                 operator,
@@ -1047,6 +1108,24 @@ impl TypeChecker {
         }
 
         match object_type {
+            Type::File => match method {
+                "read" => {
+                    if !arguments.is_empty() { return Err(FusionError::Syntax { message: "read expects no arguments".into(), span }); }
+                    Ok(Type::String)
+                }
+                "write" => {
+                    if arguments.len() != 1 { return Err(FusionError::Syntax { message: "write expects one argument".into(), span }); }
+                    let t = self.infer_expression(&arguments[0])?;
+                    if !self.types_compatible(&Type::String, &t) { return Err(self.type_mismatch("string", t.name(), arguments[0].span())); }
+                    Ok(Type::Void)
+                }
+                "close" => {
+                    if !arguments.is_empty() { return Err(FusionError::Syntax { message: "close expects no arguments".into(), span }); }
+                    Ok(Type::Void)
+                }
+                _ => Err(FusionError::Syntax { message: format!("Unknown File method '{}'", method), span }),
+            },
+
             Type::Array(inner) => {
                 match method {
                     "push" => {

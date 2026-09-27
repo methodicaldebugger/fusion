@@ -1,5 +1,9 @@
 //contents of interpreter.rs
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::fs::OpenOptions;
+use std::io::{self, Read, Seek, Write};
+use std::rc::Rc;
 
 use crate::ast::*;
 use crate::environment::Environment;
@@ -68,6 +72,15 @@ impl Interpreter {
             "float" => matches!(value, Value::Float(_)),
             "bool" => matches!(value, Value::Boolean(_)),
             "string" => matches!(value, Value::String(_)),
+            "File" => matches!(value, Value::File(_)),
+            other if other.starts_with("Option<") && other.ends_with('>') => {
+                let inner = &other[7..other.len()-1];
+                match value {
+                    Value::Option(Some(v)) => self.value_matches_type(v, inner),
+                    Value::Option(None) => true,
+                    _ => false,
+                }
+            }
 
             struct_name => match value {
                 Value::Struct { name, .. } => name == struct_name,
@@ -230,6 +243,7 @@ impl Interpreter {
             "float" => matches!(value, Value::Float(_)),
             "string" => matches!(value, Value::String(_)),
             "bool" => matches!(value, Value::Boolean(_)),
+            "File" => matches!(value, Value::File(_)),
 
             struct_name => match value {
                 Value::Struct { name, .. } => name == struct_name,
@@ -256,6 +270,20 @@ impl Interpreter {
         // ---------------------------------------------------------------------
 
         match name {
+            "input" => {
+                if !arguments.is_empty() { panic!("input() expects no arguments"); }
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).expect("failed to read input");
+                return Value::String(input.trim_end_matches(&['\r', '\n'][..]).to_string());
+            }
+            "open" => {
+                if arguments.len() != 1 { panic!("open() expects one path argument"); }
+                let path = self.evaluate(&arguments[0]);
+                let Value::String(path) = path else { panic!("open() expects a string path"); };
+                let file = OpenOptions::new().read(true).write(true).create(true).open(&path)
+                    .unwrap_or_else(|e| panic!("cannot open '{}': {}", path, e));
+                return Value::File(Rc::new(RefCell::new(Some(file))));
+            }
             "print" => {
                 for argument in arguments {
                     let value = self.evaluate(argument);
@@ -1345,6 +1373,14 @@ Expression::Call {
             }
 
             // -----------------------------------------------------------------
+            // Type conversion
+            // -----------------------------------------------------------------
+            Expression::Conversion { kind, expression, target_type, .. } => {
+                let value = self.evaluate(expression);
+                self.convert_value(value, kind, target_type)
+            }
+
+            // -----------------------------------------------------------------
             // Binary expression
             // -----------------------------------------------------------------
             Expression::Binary {
@@ -1403,6 +1439,12 @@ Expression::Call {
             Type::Float => matches!(value, Value::Float(_)),
             Type::Bool => matches!(value, Value::Boolean(_)),
             Type::String => matches!(value, Value::String(_)),
+            Type::File => matches!(value, Value::File(_)),
+            Type::Option(inner) => match value {
+                Value::Option(Some(v)) => self.value_matches_type_value(v, inner),
+                Value::Option(None) => true,
+                _ => false,
+            },
 
             Type::Struct(expected_name) => {
                 matches!(
@@ -1420,6 +1462,54 @@ Expression::Call {
     // Method calls
     // =========================================================================
 
+    fn convert_value(&mut self, value: Value, kind: &ConversionKind, target: &str) -> Value {
+        let explicit = |value: Value, target: &str| -> Result<Value, String> {
+            match (value, target) {
+                (Value::Number(v), "float") => Ok(Value::Float(v as f64)),
+                (Value::Float(v), "num") => Ok(Value::Number(v as i64)),
+                (Value::Number(v), "string") => Ok(Value::String(v.to_string())),
+                (Value::Float(v), "string") => Ok(Value::String(v.to_string())),
+                (Value::Boolean(v), "string") => Ok(Value::String(v.to_string())),
+                (Value::String(v), "num") => v.parse::<i64>().map(Value::Number).map_err(|e| e.to_string()),
+                (Value::String(v), "float") => v.parse::<f64>().map(Value::Float).map_err(|e| e.to_string()),
+                (Value::String(v), "bool") => match v.as_str() { "true" => Ok(Value::Boolean(true)), "false" => Ok(Value::Boolean(false)), _ => Err("expected 'true' or 'false'".into()) },
+                (Value::Boolean(v), "num") => Ok(Value::Number(if v { 1 } else { 0 })),
+                (Value::Number(v), "bool") => Ok(Value::Boolean(v != 0)),
+                (Value::Float(v), "bool") => Ok(Value::Boolean(v != 0.0)),
+                (v, t) if self.value_matches_type(&v, t) => Ok(v),
+                (_, t) => Err(format!("cannot convert to {}", t)),
+            }
+        };
+        match kind {
+            ConversionKind::As => explicit(value, target).unwrap_or_else(|e| panic!("invalid 'as' conversion: {}", e)),
+            ConversionKind::Try => {
+                let function = format!("try_{}", target);
+                if self.functions.contains_key(&function) {
+                    let saved = value.clone();
+                    self.environment.push_scope();
+                    self.environment.declare("__conversion_value".into(), saved, true);
+                    let result = self.call_function(&function, &[Expression::Identifier { name: "__conversion_value".into(), span: crate::span::Span::point(0) }], &[]);
+                    self.environment.pop_scope();
+                    result
+                } else {
+                    Value::Option(explicit(value, target).ok().map(Box::new))
+                }
+            }
+            ConversionKind::From => {
+                let function = format!("from_{}", target);
+                if self.functions.contains_key(&function) {
+                    let saved = value.clone();
+                    self.environment.push_scope();
+                    self.environment.declare("__conversion_value".into(), saved, true);
+                    let result = self.call_function(&function, &[Expression::Identifier { name: "__conversion_value".into(), span: crate::span::Span::point(0) }], &[]);
+                    self.environment.pop_scope();
+                    return result;
+                }
+                explicit(value, target).unwrap_or_else(|e| panic!("invalid 'from' conversion: {}", e))
+            }
+        }
+    }
+
     fn evaluate_method_call(
         &mut self,
         object: &Expression,
@@ -1427,6 +1517,45 @@ Expression::Call {
         arguments: &[Expression],
     ) -> Value {
         match method {
+            "read" => {
+                if !arguments.is_empty() { panic!("read() expects no arguments"); }
+                let handle = self.evaluate(object);
+                match handle {
+                    Value::File(file) => {
+                        let mut borrowed = file.borrow_mut();
+                        let Some(f) = borrowed.as_mut() else { panic!("file is closed"); };
+                        f.seek(std::io::SeekFrom::Start(0)).expect("failed to seek file");
+                        let mut text = String::new();
+                        f.read_to_string(&mut text).expect("failed to read file");
+                        Value::String(text)
+                    }
+                    _ => panic!("read() requires a File"),
+                }
+            }
+            "write" => {
+                if arguments.len() != 1 { panic!("write() expects one argument"); }
+                let text = self.evaluate(&arguments[0]);
+                let Value::String(text) = text else { panic!("write() expects a string"); };
+                let handle = self.evaluate(object);
+                match handle {
+                    Value::File(file) => {
+                        let mut borrowed = file.borrow_mut();
+                        let Some(f) = borrowed.as_mut() else { panic!("file is closed"); };
+                        f.write_all(text.as_bytes()).expect("failed to write file");
+                        f.flush().expect("failed to flush file");
+                        Value::None
+                    }
+                    _ => panic!("write() requires a File"),
+                }
+            }
+            "close" => {
+                if !arguments.is_empty() { panic!("close() expects no arguments"); }
+                let handle = self.evaluate(object);
+                match handle {
+                    Value::File(file) => { file.borrow_mut().take(); Value::None }
+                    _ => panic!("close() requires a File"),
+                }
+            }
             // -----------------------------------------------------------------
             // Array.push(value)
             // -----------------------------------------------------------------

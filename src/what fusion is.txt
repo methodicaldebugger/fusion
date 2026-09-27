@@ -13,8 +13,11 @@ This allows the user to build: CLI applications, backend services, developer too
 scientific computing, games and graphics, cloud applications, distributed systems.
 
 The user could use the package manager(or manualy) download and install plugins. There are 2 types of plugins.
-The first type makes fusion more pleasant to use: cloud builds, UI framework, repl + jupyter, AOT + JIT, SQLite support, actors system.
+The first type makes fusion more pleasant to use: cloud builds(this one is massive, as fusion could provide appropriate environments for each foreign source file and allow fusion with the help of the server, to build/execute almost every programing language on the planet. The software of the planet),
+UI framework, repl + jupyter, AOT + JIT, SQLite support, actors system.
+
 The second type extends fusions reach into existing ecosystems. Ideally fusion would embeed foreign source code(in foreign files), that way it does not need to be rewritten. The user doesn't install foreign languages or rewrite files, just installs a plugin and copy-pastes existing foreign files.   
+
 C plugin could compile C source code, provide little overhead, this way C files do not have to be revritten into fusion. The same goes for other plugins C++, rust, nim, zig, swift, golang, dart, C#, java, Kotlin/native and so on. Foreign code must live inside explicit foreign-language boundaries(foreign files).
 
 When you install fusion(vanilla/basic), you get something like this:
@@ -66,6 +69,14 @@ Level 3 — Embedded runtime. More overhead, but potentially extremely useful.
 Level 4 — RPC/process bridge. The foreign library runs independently. This can be surprisingly powerful because the boundary is clean.
 Level 5 — WebAssembly. This could provide a very portable integration mechanism.
 
+"Foundry"(fusion's package manager) package manager/toolchain orchestrates the layers; individual plugins implement the actual integration mechanism.
+Foundry is simmilar to cargo, it answers questions like: How do I build, test, run, document, package, publish, and reproduce this entire project?
+
+
+
+
+
+
 A possible compiler feature, fusion could even suggest it.
 
 Example:
@@ -84,6 +95,9 @@ Options:
 [Parallelize]
 
 That is futuristic!
+
+THIS IS A COMPILER/IDE CAPABILITY
+That's the compiler + profiler + IDE intelligence layer.
 
 
 
@@ -173,6 +187,8 @@ async/await
 
 Build a standard library, a package manager, .
 Fusion -> Fusion IR -> LLVM -> Machine code. LLVM is an existing compiler infrastructure used by many languages. Building your own optimizer and code generator from scratch would multiply the amount of work.
+make the IR a very deliberate boundary. foreign ecosystem becomes much easier to reason about if Fusion has a stable internal representation.
+The foreign language doesn't necessarily need to become Fusion IR. It only needs to produce something that Fusion's linker/toolchain can consume.
 
 Fusion will NOT have:
 a generic <loop{}> like rust has, fusion will only have <for 0..10:> + <while x>0;> + iterators like in rust
@@ -199,6 +215,7 @@ boolean operators <&&>, <||>, <!>, <and>, <or>, <not>
 
 We only have a growable array!! Instead of: an array, vector, list, linked list, slice, dynamic array. 
 A Fusion programmer doesn't need to learn five different collection types just to store a sequence of things.
+Fusion has a small, deliberately chosen collection model(growable arrays + hash maps).
 
 num[] numbers = [1, 2, 3]
 string[] names = [
@@ -246,6 +263,7 @@ fn damage(a: ref Enemy):
 
 The memory model: GC + deterministic resource cleanup via defer. GC manages memory. defer manages resources.
 Option + Result + GC is an interesting combination.
+Don't make defer secretly depend on garbage collection.
 
 
 
@@ -285,5 +303,7 @@ make the standard library prelude-like, so users don't have to write:
 import array
 import hashmap
 import iterator
+
+When someone installs fusion vanilla/basic, they get Fusion the language + compiler/interpreter + stdlib, foundry the package/dependency/project manager, toolchain: orchestrates compilers, linkers, runtimes, SDKs, build environments.
 
 Link to repository(that truncates, because it is too large): https://github.com/methodicaldebugger/fusion.git
