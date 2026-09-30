@@ -1,0 +1,13 @@
+[package]
+name = "foundry"
+version = "0.1.0"
+edition = "2021"
+description = "Fusion package, project, build, and toolchain manager"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "foundry"
+path = "src/main.rs"

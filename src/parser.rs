@@ -434,39 +434,66 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn looks_like_typed_declaration(&self) -> bool {
-        match self.current() {
-            Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
-                matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_)))
+    match self.current() {
+        Token::NumType
+        | Token::FloatType
+        | Token::BoolType
+        | Token::StringType => {
+            let mut position = self.position + 1;
+
+            // Primitive array type: `num[] x`
+            if self.peek_at(position) == Some(&Token::LeftBracket) {
+                if self.peek_at(position + 1) != Some(&Token::RightBracket) {
+                    return false;
+                }
+
+                position += 2;
             }
 
-            Token::Identifier(_) => {
-                if matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_))) {
-                    return true;
-                }
-                if self.peek_at(self.position + 1) == Some(&Token::Less) {
-                    let mut i = self.position + 2;
-                    let mut depth = 1usize;
-                    while let Some(token) = self.peek_at(i) {
-                        match token {
-                            Token::Less => depth += 1,
-                            Token::Greater => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    return matches!(self.peek_at(i + 1), Some(Token::Identifier(_)));
-                                }
-                            }
-                            Token::Eof | Token::NewLine | Token::RightBrace => break,
-                            _ => {}
-                        }
-                        i += 1;
-                    }
-                }
-                false
-            }
-
-            _ => false,
+            matches!(self.peek_at(position), Some(Token::Identifier(_)))
         }
+
+        Token::Identifier(_) => {
+            if matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_))) {
+                return true;
+            }
+
+            if self.peek_at(self.position + 1) == Some(&Token::Less) {
+                let mut i = self.position + 2;
+                let mut depth = 1usize;
+
+                while let Some(token) = self.peek_at(i) {
+                    match token {
+                        Token::Less => depth += 1,
+
+                        Token::Greater => {
+                            depth -= 1;
+
+                            if depth == 0 {
+                                return matches!(
+                                    self.peek_at(i + 1),
+                                    Some(Token::Identifier(_))
+                                );
+                            }
+                        }
+
+                        Token::Eof
+                        | Token::NewLine
+                        | Token::RightBrace => break,
+
+                        _ => {}
+                    }
+
+                    i += 1;
+                }
+            }
+
+            false
+        }
+
+        _ => false,
     }
+}
 
     fn parse_identifier_or_declaration(&mut self) -> Result<Statement, ParseError> {
         if self.looks_like_typed_declaration() {

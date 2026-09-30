@@ -1,0 +1,6 @@
+[package]
+name = "fusion-interop-model"
+version = "0.1.0"
+edition = "2021"
+description = "Stable interoperability model for connecting Fusion to foreign ecosystems"
+license = "MIT"

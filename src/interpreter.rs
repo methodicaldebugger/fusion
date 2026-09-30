@@ -89,40 +89,70 @@ impl Interpreter {
     }
 
     fn value_matches_type(&self, value: &Value, expected: &str) -> bool {
-        match expected {
-            "num" => matches!(value, Value::Number(_)),
-            "float" => matches!(value, Value::Float(_)),
-            "bool" => matches!(value, Value::Boolean(_)),
-            "string" => matches!(value, Value::String(_)),
-            "File" => matches!(value, Value::File(_)),
-            "TcpStream" => matches!(value, Value::TcpStream(_)),
-            other if other.starts_with("Array<") && other.ends_with('>') => {
-                matches!(value, Value::Array(_))
-            }
-            other if other.starts_with("Iterator<") && other.ends_with('>') => {
-                matches!(value, Value::Iterator(_))
-            }
-            other if other.starts_with("HashMap<") && other.ends_with('>') => {
-                matches!(value, Value::HashMap(_))
-            }
-            other if other.starts_with("Task<") && other.ends_with('>') => {
-                matches!(value, Value::Task(_))
-            }
-            other if other.starts_with("Option<") && other.ends_with('>') => {
-                let inner = &other[7..other.len() - 1];
-                match value {
-                    Value::Option(Some(v)) => self.value_matches_type(v, inner),
-                    Value::Option(None) => true,
-                    _ => false,
-                }
-            }
+    match expected {
+        "num" => matches!(value, Value::Number(_)),
+        "float" => matches!(value, Value::Float(_)),
+        "bool" => matches!(value, Value::Boolean(_)),
+        "string" => matches!(value, Value::String(_)),
+        "File" => matches!(value, Value::File(_)),
+        "TcpStream" => matches!(value, Value::TcpStream(_)),
 
-            struct_name => match value {
-                Value::Struct { name, .. } => name == struct_name,
+        // T[] syntax
+        other if other.ends_with("[]") => {
+            let inner = &other[..other.len() - 2];
+
+            match value {
+                Value::Array(elements) => {
+                    elements
+                        .iter()
+                        .all(|element| self.value_matches_type(element, inner))
+                }
                 _ => false,
-            },
+            }
         }
+
+        // Array<T> syntax
+        other if other.starts_with("Array<") && other.ends_with('>') => {
+            let inner = &other[6..other.len() - 1];
+
+            match value {
+                Value::Array(elements) => {
+                    elements
+                        .iter()
+                        .all(|element| self.value_matches_type(element, inner))
+                }
+                _ => false,
+            }
+        }
+
+        other if other.starts_with("Iterator<") && other.ends_with('>') => {
+            matches!(value, Value::Iterator(_))
+        }
+
+        other if other.starts_with("HashMap<") && other.ends_with('>') => {
+            matches!(value, Value::HashMap(_))
+        }
+
+        other if other.starts_with("Task<") && other.ends_with('>') => {
+            matches!(value, Value::Task(_))
+        }
+
+        other if other.starts_with("Option<") && other.ends_with('>') => {
+            let inner = &other[7..other.len() - 1];
+
+            match value {
+                Value::Option(Some(v)) => self.value_matches_type(v, inner),
+                Value::Option(None) => true,
+                _ => false,
+            }
+        }
+
+        struct_name => match value {
+            Value::Struct { name, .. } => name == struct_name,
+            _ => false,
+        },
     }
+}
 
     fn check_value_type(&self, context: &str, expected: Option<&String>, value: &Value) {
         let Some(expected) = expected else {

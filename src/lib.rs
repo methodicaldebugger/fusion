@@ -1,21 +1,3 @@
-/*
-These will be a part of the standard library(these are not planned to be implemented yet):
-- async/await
-- Filesystem
-- Command-line arguments
-- Process/system functionality
-- Time and dates
-- Randomness
-- networking,
-- serialisation,
-- formating,
-- encoding,
-- logging,
-
-
-whenever new implementations are made, tests need to be generated(valid and invalid).
-chatgpt don't delete these comments, thx
-*/
 pub mod ast;
 pub mod codegen;
 pub mod environment;
@@ -1961,4 +1943,357 @@ main:
 "#,
         );
     }
+    // =========================================================================
+    // Async/await edge cases
+    // =========================================================================
+
+    #[test]
+    fn async_function_accepts_parameters_and_await_returns_the_declared_type() {
+        assert_eq!(
+            run(
+                r#"async fn add(a: num, b: num) -> num:
+    return a + b
+
+main:
+    result = await add(20, 22)
+    print(result)
+"#,
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn nested_async_calls_propagate_task_results() {
+        assert_eq!(
+            run(
+                r#"async fn inner() -> num:
+    return 20
+
+async fn outer() -> num:
+    value = await inner()
+    return value + 22
+
+main:
+    print(await outer())
+"#,
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn async_functions_can_return_different_result_types() {
+        assert_eq!(
+            run(
+                r#"async fn number() -> num:
+    return 42
+
+async fn message() -> string:
+    return "fusion"
+
+main:
+    print(await number())
+    print(await message())
+"#,
+            ),
+            vec!["42", "fusion"]
+        );
+    }
+
+    #[test]
+    fn multiple_awaits_in_one_function_are_evaluated_in_order() {
+        assert_eq!(
+            run(
+                r#"async fn value(x: num) -> num:
+    return x
+
+main:
+    first = await value(10)
+    second = await value(32)
+    print(first + second)
+"#,
+            ),
+            vec!["42"]
+        );
+    }
+
+    #[test]
+    fn await_works_inside_conditionals_and_loops() {
+        assert_eq!(
+            run(
+                r#"async fn value(x: num) -> num:
+    return x
+
+main:
+    total = 0
+    i = 0
+
+    while i < 3:
+        if i == 1:
+            total = total + await value(20)
+        else:
+            total = total + await value(1)
+        i = i + 1
+
+    print(total)
+"#,
+            ),
+            vec!["22"]
+        );
+    }
+
+    #[test]
+    fn await_on_non_task_is_rejected_as_a_task_type_error() {
+        let error = compile_source(
+            r#"main:
+    value = await 42
+"#,
+        )
+        .expect_err("awaiting a non-task must fail");
+
+        assert!(
+            error.contains("Task<T>") && error.contains("num"),
+            "expected Task<T>/num type error, got: {}",
+            error
+        );
+    }
+
+    // =========================================================================
+    // Function semantics
+    // =========================================================================
+
+    #[test]
+    fn recursive_functions_can_call_themselves() {
+        assert_eq!(
+            run(
+                r#"fn factorial(n: num) -> num:
+    if n <= 1:
+        return 1
+    else:
+        return n * factorial(n - 1)
+
+main:
+    print(factorial(5))
+"#,
+            ),
+            vec!["120"]
+        );
+    }
+
+    #[test]
+    fn generic_functions_preserve_the_instantiated_runtime_value() {
+        assert_eq!(
+            run(
+                r#"fn identity<T>(value: T) -> T:
+    return value
+
+main:
+    print(identity<num>(42))
+    print(identity<string>("fusion"))
+    print(identity<bool>(true))
+"#,
+            ),
+            vec!["42", "fusion", "true"]
+        );
+    }
+
+    #[test]
+    fn explicit_return_paths_are_checked_and_execute_correctly() {
+        assert_eq!(
+            run(
+                r#"fn choose(flag: bool) -> num:
+    if flag:
+        return 10
+    else:
+        return 32
+
+main:
+    print(choose(true))
+    print(choose(false))
+"#,
+            ),
+            vec!["10", "32"]
+        );
+    }
+
+    #[test]
+    fn missing_return_path_is_rejected() {
+        let error = compile_source(
+            r#"fn choose(flag: bool) -> num:
+    if flag:
+        return 42
+
+main:
+    print(choose(true))
+"#,
+        )
+        .expect_err("a value-returning function needs a return on every path");
+
+        assert!(
+            error.contains("must return a value") || error.contains("may reach the end"),
+            "expected a return-path error, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn nested_scopes_can_shadow_outer_variables_without_changing_outer_scope() {
+        assert_eq!(
+            run(
+                r#"main:
+    value = 10
+
+    if true:
+        num value = 32
+        print(value)
+
+    print(value)
+"#,
+            ),
+            vec!["32", "10"]
+        );
+    }
+
+    #[test]
+    fn function_arguments_are_evaluated_left_to_right() {
+        assert_eq!(
+            run(
+                r#"fn mark(value: num) -> num:
+    print(value)
+    return value
+
+fn add(a: num, b: num) -> num:
+    return a + b
+
+main:
+    print(add(mark(10), mark(32)))
+"#,
+            ),
+            vec!["10", "32", "42"]
+        );
+    }
+
+    // =========================================================================
+    // Type-system/runtime agreement
+    // =========================================================================
+
+    #[test]
+    fn primitive_runtime_values_match_their_static_types() {
+        assert_eq!(
+            run(
+                r#"main:
+    num n = 42
+    float f = 3.5
+    bool b = true
+    string s = "fusion"
+    print(n)
+    print(f)
+    print(b)
+    print(s)
+"#,
+            ),
+            vec!["42", "3.5", "true", "fusion"]
+        );
+    }
+
+    #[test]
+    fn collection_runtime_values_match_their_static_types() {
+        assert_eq!(
+            run(
+                r#"main:
+    num[] numbers = [1, 2, 3]
+    HashMap<string, num> scores = hashmap()
+    scores.insert("answer", 42)
+
+    print(numbers)
+    print(scores.get("answer"))
+"#,
+            ),
+            vec!["[1, 2, 3]", "Some(42)"]
+        );
+    }
+
+    #[test]
+    fn option_iterator_struct_enum_and_task_runtime_values_are_represented_correctly() {
+        assert_eq!(
+            run(
+                r#"struct Person:
+    name: string
+
+enum State:
+    Ready
+    Failed(string)
+
+async fn answer() -> num:
+    return 42
+
+main:
+    option = num::try("42")
+    numbers = [1, 2, 3]
+    person = Person(name: "Fusion")
+    state = State::Failed("broken")
+    task = answer()
+
+    print(option)
+    print(numbers.iterate())
+    print(person)
+    print(state)
+    print(task)
+    print(await task)
+"#,
+            ),
+            vec![
+                "Some(42)",
+                "Iterator[1, 2, 3]",
+                "Person { name: Fusion }",
+                "State::Failed(broken)",
+                "Task(42)",
+                "42",
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_programs_fail_at_the_type_boundary_for_wrong_value_types() {
+        let cases = [
+            (
+                "wrong numeric argument",
+                r#"fn takes_num(value: num) -> num:
+    return value
+
+main:
+    print(takes_num("not a number"))
+"#,
+                "num",
+            ),
+            (
+                "wrong array element",
+                r#"main:
+    num[] values = [1, "two"]
+"#,
+                "num",
+            ),
+            (
+                "wrong boolean condition",
+                r#"main:
+    if 1:
+        print("bad")
+"#,
+                "bool",
+            ),
+        ];
+
+        for (name, source, expected) in cases {
+            let error = compile_source(source)
+                .expect_err("program should be rejected");
+            assert!(
+                error.contains(expected),
+                "{} produced an unrelated error: {}",
+                name,
+                error
+            );
+        }
+    }
+
 }

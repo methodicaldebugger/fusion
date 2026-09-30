@@ -1,0 +1,9 @@
+[package]
+name = "toolchain-orchestrator"
+version = "0.1.0"
+edition = "2021"
+description = "Toolchain discovery and foreign build orchestration for Fusion"
+license = "MIT"
+
+[dependencies]
+fusion-interop-model = { path = "../fusion-interop-model" }

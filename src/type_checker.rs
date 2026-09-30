@@ -2526,14 +2526,17 @@ impl TypeChecker {
                 .clone();
 
             if context.declared_return_type.is_some()
-                && context.declared_return_type != Some(Type::Void)
-                && !context.has_return
-            {
-                return Err(FusionError::Syntax {
-                    message: format!("Function '{}' must return a value", name),
-                    span,
-                });
-            }
+    && context.declared_return_type != Some(Type::Void)
+    && !self.block_returns(body)
+{
+    return Err(FusionError::Syntax {
+        message: format!(
+            "Function '{}' may reach the end without returning a value",
+            name
+        ),
+        span,
+    });
+}
 
             if context.declared_return_type.is_none()
                 && context.has_return

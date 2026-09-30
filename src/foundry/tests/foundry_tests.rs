@@ -1,0 +1,2 @@
+use std::{fs,time::{SystemTime,UNIX_EPOCH}};
+#[test]fn creates_project_layout(){let n=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("foundry-{n}"));fs::create_dir_all(&root).unwrap();fs::write(root.join("fusion.toml"),foundry::manifest_template("demo")).unwrap();let p=foundry::load_project(&root).unwrap();foundry::ensure_layout(&p).unwrap();assert!(root.join("src/main.fusion").is_file());assert!(root.join("tests").is_dir());assert!(root.join("foreign").is_dir());let _=fs::remove_dir_all(root);}
