@@ -1,3 +1,11 @@
+/* Foundry - Fusion project/package/toolchain manager
+
+The package manager for Fusion projects. It provides commands to create, build, run, and manage Fusion packages and their dependencies.
+It is responsible managing dependency resolution, building Fusion programs, running and testing them, compatibility checks, publishing and more.
+It resolves version, dependencies and compatibility issues for plugins.
+*/
+
+
 use std::{env,fs,path::PathBuf,process::ExitCode};
 fn usage(){println!("Foundry 0.1.0 - Fusion project/package/toolchain manager\n\nCommands:\n  foundry new <name>\n  foundry init\n  foundry build [--release]\n  foundry run [-- <args...>]\n  foundry check\n  foundry test\n  foundry fetch [--offline]\n  foundry tree\n  foundry metadata\n  foundry clean\n  foundry version\n\nSet FUSION_COMPILER to select the Fusion executable.")}
 fn cwd()->Result<PathBuf,String>{env::current_dir().map_err(|e|e.to_string())}

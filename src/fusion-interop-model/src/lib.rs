@@ -4,6 +4,10 @@
 //! the Fusion/foreign boundary. It deliberately contains no compiler process
 //! management. Foundry resolves *what* a project needs; the toolchain
 //! orchestrator decides *how/with which tools* to build it.
+//! 
+//! /*
+//! There are 5 layers of interoperability
+//! */
 
 use std::fmt;
 use std::path::PathBuf;

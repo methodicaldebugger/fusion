@@ -117,3 +117,30 @@ You don't have to write Fusion to use Fusion.
 
 You could use Fusion as the build/run/debug environment for an existing C project, an existing C# project, or eventually a project containing many languages.
 You could have a .fusion file, use foreign source through fusion(main.c->fusion->C integration) or a mixed project with a .fusion and a .c file.
+
+
+
+
+
+Fusion Basic/vanilla has:
+
+
+Fusion Programming Language
+Syntax, parser, type checker, interpreter/compiler, runtime and standard library
+
+5 Layers of Interoperability
+Integration with other languages, runtimes, libraries and native code
+
+DEVELOPMENT TOOLING
+
+Foundry
+Package manager for dependencies, plugins, builds, tests, compatibility and publishing.
+
+Toolchain Orchestrator
+Coordinates tools, workflows, execution, task scheduling and results.
+
+Static Analyser
+Detects code issues, inefficient patterns and potential performance bottlenecks.
+
+Documentation
+Language reference, tutorials, standard library guides and tooling documentation.
