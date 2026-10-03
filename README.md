@@ -1,3 +1,6 @@
+Learn more on my website: https://fusion.ifree.page
+Link to repository: https://github.com/methodicaldebugger/fusion.git
+
 Fusion
 
 Build bridges between communities.
@@ -126,10 +129,6 @@ License
 Fusion is released under the MIT License.
 See LICENSE for the complete license text.
 Third-party dependencies and integrations may have their own licenses and terms.
-
-
-Learn more on my website:
-https://fusion.ifree.page
 
 
 Acknowledgements

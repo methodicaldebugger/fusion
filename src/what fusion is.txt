@@ -25,7 +25,7 @@ Fusion installation
 │
 ├── fusion compiler/interpreter
 ├── fusion toolchain
-├── fusion package manager
+├── fusion package manager(foundry)
 └── plugin manager
        │
        ├── C plugin
@@ -430,3 +430,7 @@ Different ecosystems remain excellent at different things. Fusion provides a com
 One language for the application.
 One toolchain for the project.
 Many ecosystems underneath.
+
+
+Learn more on my website: https://fusion.ifree.page
+Link to repository(it truncates, because it's too large): https://github.com/methodicaldebugger/fusion.git
