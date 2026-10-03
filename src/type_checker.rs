@@ -263,55 +263,52 @@ impl TypeChecker {
     // ---------------------------------------------------------------------
 
     fn types_compatible(&self, expected: &Type, found: &Type) -> bool {
-    if expected == found {
-        return true;
+        if expected == found {
+            return true;
+        }
+
+        match (expected, found) {
+            // Unknown can stand for any concrete type.
+            (Type::Unknown, _) | (_, Type::Unknown) => true,
+
+            // Array element types must be compatible.
+            (Type::Array(expected_inner), Type::Array(found_inner)) => {
+                self.types_compatible(expected_inner, found_inner)
+            }
+
+            // Iterator element types must be compatible.
+            (Type::Iterator(expected_inner), Type::Iterator(found_inner)) => {
+                self.types_compatible(expected_inner, found_inner)
+            }
+
+            // Hash map key/value types must both be compatible.
+            (
+                Type::HashMap(expected_key, expected_value),
+                Type::HashMap(found_key, found_value),
+            ) => {
+                self.types_compatible(expected_key, found_key)
+                    && self.types_compatible(expected_value, found_value)
+            }
+
+            // Option element types must be compatible.
+            (Type::Option(expected_inner), Type::Option(found_inner)) => {
+                self.types_compatible(expected_inner, found_inner)
+            }
+
+            // Result<T, E>.
+            (Type::Result(expected_ok, expected_err), Type::Result(found_ok, found_err)) => {
+                self.types_compatible(expected_ok, found_ok)
+                    && self.types_compatible(expected_err, found_err)
+            }
+
+            // Task<T>.
+            (Type::Task(expected_inner), Type::Task(found_inner)) => {
+                self.types_compatible(expected_inner, found_inner)
+            }
+
+            _ => false,
+        }
     }
-
-    match (expected, found) {
-        // Unknown can stand for any concrete type.
-        (Type::Unknown, _) | (_, Type::Unknown) => true,
-
-        // Array element types must be compatible.
-        (Type::Array(expected_inner), Type::Array(found_inner)) => {
-            self.types_compatible(expected_inner, found_inner)
-        }
-
-        // Iterator element types must be compatible.
-        (Type::Iterator(expected_inner), Type::Iterator(found_inner)) => {
-            self.types_compatible(expected_inner, found_inner)
-        }
-
-        // Hash map key/value types must both be compatible.
-        (
-            Type::HashMap(expected_key, expected_value),
-            Type::HashMap(found_key, found_value),
-        ) => {
-            self.types_compatible(expected_key, found_key)
-                && self.types_compatible(expected_value, found_value)
-        }
-
-        // Option element types must be compatible.
-        (Type::Option(expected_inner), Type::Option(found_inner)) => {
-            self.types_compatible(expected_inner, found_inner)
-        }
-
-        // Result<T, E>.
-        (
-            Type::Result(expected_ok, expected_err),
-            Type::Result(found_ok, found_err),
-        ) => {
-            self.types_compatible(expected_ok, found_ok)
-                && self.types_compatible(expected_err, found_err)
-        }
-
-        // Task<T>.
-        (Type::Task(expected_inner), Type::Task(found_inner)) => {
-            self.types_compatible(expected_inner, found_inner)
-        }
-
-        _ => false,
-    }
-}
 
     fn numeric_type(&self, ty: &Type) -> bool {
         matches!(ty, Type::Num | Type::Float | Type::Unknown)
@@ -1361,7 +1358,11 @@ impl TypeChecker {
                     };
                     let t = self.infer_expression(&arguments[0])?;
                     if !self.types_compatible(&inner, &t) {
-                        return Err(self.type_mismatch(inner.name(), t.name(), arguments[0].span()));
+                        return Err(self.type_mismatch(
+                            inner.name(),
+                            t.name(),
+                            arguments[0].span(),
+                        ));
                     };
                     Ok(Type::Void)
                 }
@@ -1400,7 +1401,11 @@ impl TypeChecker {
                     };
                     let v = self.infer_expression(&arguments[1])?;
                     if !self.types_compatible(&inner, &v) {
-                        return Err(self.type_mismatch(inner.name(), v.name(), arguments[1].span()));
+                        return Err(self.type_mismatch(
+                            inner.name(),
+                            v.name(),
+                            arguments[1].span(),
+                        ));
                     };
                     Ok(Type::Void)
                 }
@@ -1427,7 +1432,11 @@ impl TypeChecker {
                         return Err(self.type_mismatch("num", i.name(), arguments[0].span()));
                     };
                     if !self.types_compatible(&inner, &v) {
-                        return Err(self.type_mismatch(inner.name(), v.name(), arguments[1].span()));
+                        return Err(self.type_mismatch(
+                            inner.name(),
+                            v.name(),
+                            arguments[1].span(),
+                        ));
                     };
                     Ok(Type::Void)
                 }
@@ -1449,7 +1458,11 @@ impl TypeChecker {
                     };
                     let t = self.infer_expression(&arguments[0])?;
                     if !self.types_compatible(&inner, &t) {
-                        return Err(self.type_mismatch(inner.name(), t.name(), arguments[0].span()));
+                        return Err(self.type_mismatch(
+                            inner.name(),
+                            t.name(),
+                            arguments[0].span(),
+                        ));
                     };
                     Ok(Type::Bool)
                 }
@@ -1589,7 +1602,11 @@ impl TypeChecker {
                         return Err(self.type_mismatch(key.name(), k.name(), arguments[0].span()));
                     };
                     if !self.types_compatible(&value, &v) {
-                        return Err(self.type_mismatch(value.name(), v.name(), arguments[1].span()));
+                        return Err(self.type_mismatch(
+                            value.name(),
+                            v.name(),
+                            arguments[1].span(),
+                        ));
                     };
                     Ok(Type::Void)
                 }
@@ -2526,17 +2543,17 @@ impl TypeChecker {
                 .clone();
 
             if context.declared_return_type.is_some()
-    && context.declared_return_type != Some(Type::Void)
-    && !self.block_returns(body)
-{
-    return Err(FusionError::Syntax {
-        message: format!(
-            "Function '{}' may reach the end without returning a value",
-            name
-        ),
-        span,
-    });
-}
+                && context.declared_return_type != Some(Type::Void)
+                && !self.block_returns(body)
+            {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Function '{}' may reach the end without returning a value",
+                        name
+                    ),
+                    span,
+                });
+            }
 
             if context.declared_return_type.is_none()
                 && context.has_return

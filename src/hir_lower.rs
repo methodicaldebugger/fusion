@@ -81,7 +81,7 @@ impl HirLowerer {
                             return Err(format!(
                                 "variable '{}' has no initializer; HIR requires a value",
                                 declaration.name
-                            ))
+                            ));
                         }
                     },
                     span: *span,

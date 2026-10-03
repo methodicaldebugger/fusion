@@ -89,70 +89,66 @@ impl Interpreter {
     }
 
     fn value_matches_type(&self, value: &Value, expected: &str) -> bool {
-    match expected {
-        "num" => matches!(value, Value::Number(_)),
-        "float" => matches!(value, Value::Float(_)),
-        "bool" => matches!(value, Value::Boolean(_)),
-        "string" => matches!(value, Value::String(_)),
-        "File" => matches!(value, Value::File(_)),
-        "TcpStream" => matches!(value, Value::TcpStream(_)),
+        match expected {
+            "num" => matches!(value, Value::Number(_)),
+            "float" => matches!(value, Value::Float(_)),
+            "bool" => matches!(value, Value::Boolean(_)),
+            "string" => matches!(value, Value::String(_)),
+            "File" => matches!(value, Value::File(_)),
+            "TcpStream" => matches!(value, Value::TcpStream(_)),
 
-        // T[] syntax
-        other if other.ends_with("[]") => {
-            let inner = &other[..other.len() - 2];
+            // T[] syntax
+            other if other.ends_with("[]") => {
+                let inner = &other[..other.len() - 2];
 
-            match value {
-                Value::Array(elements) => {
-                    elements
+                match value {
+                    Value::Array(elements) => elements
                         .iter()
-                        .all(|element| self.value_matches_type(element, inner))
+                        .all(|element| self.value_matches_type(element, inner)),
+                    _ => false,
                 }
-                _ => false,
             }
-        }
 
-        // Array<T> syntax
-        other if other.starts_with("Array<") && other.ends_with('>') => {
-            let inner = &other[6..other.len() - 1];
+            // Array<T> syntax
+            other if other.starts_with("Array<") && other.ends_with('>') => {
+                let inner = &other[6..other.len() - 1];
 
-            match value {
-                Value::Array(elements) => {
-                    elements
+                match value {
+                    Value::Array(elements) => elements
                         .iter()
-                        .all(|element| self.value_matches_type(element, inner))
+                        .all(|element| self.value_matches_type(element, inner)),
+                    _ => false,
                 }
-                _ => false,
             }
-        }
 
-        other if other.starts_with("Iterator<") && other.ends_with('>') => {
-            matches!(value, Value::Iterator(_))
-        }
-
-        other if other.starts_with("HashMap<") && other.ends_with('>') => {
-            matches!(value, Value::HashMap(_))
-        }
-
-        other if other.starts_with("Task<") && other.ends_with('>') => {
-            matches!(value, Value::Task(_))
-        }
-
-        other if other.starts_with("Option<") && other.ends_with('>') => {
-            let inner = &other[7..other.len() - 1];
-
-            match value {
-                Value::Option(Some(v)) => self.value_matches_type(v, inner),
-                Value::Option(None) => true,
-                _ => false,
+            other if other.starts_with("Iterator<") && other.ends_with('>') => {
+                matches!(value, Value::Iterator(_))
             }
-        }
 
-        struct_name => match value {
-            Value::Struct { name, .. } => name == struct_name,
-            _ => false,
-        },
+            other if other.starts_with("HashMap<") && other.ends_with('>') => {
+                matches!(value, Value::HashMap(_))
+            }
+
+            other if other.starts_with("Task<") && other.ends_with('>') => {
+                matches!(value, Value::Task(_))
+            }
+
+            other if other.starts_with("Option<") && other.ends_with('>') => {
+                let inner = &other[7..other.len() - 1];
+
+                match value {
+                    Value::Option(Some(v)) => self.value_matches_type(v, inner),
+                    Value::Option(None) => true,
+                    _ => false,
+                }
+            }
+
+            struct_name => match value {
+                Value::Struct { name, .. } => name == struct_name,
+                _ => false,
+            },
+        }
     }
-}
 
     fn check_value_type(&self, context: &str, expected: Option<&String>, value: &Value) {
         let Some(expected) = expected else {
@@ -568,24 +564,24 @@ impl Interpreter {
                 return Value::TcpStream(Rc::new(RefCell::new(Some(stream))));
             }
             "serialize" => {
-    if arguments.len() != 1 {
-        panic!("serialize() expects one value");
-    }
-    return Value::String(serialize_value(&self.evaluate(&arguments[0])));
-}
-"deserialize" => {
-    if arguments.len() != 1 {
-        panic!("deserialize() expects one string");
-    }
+                if arguments.len() != 1 {
+                    panic!("serialize() expects one value");
+                }
+                return Value::String(serialize_value(&self.evaluate(&arguments[0])));
+            }
+            "deserialize" => {
+                if arguments.len() != 1 {
+                    panic!("deserialize() expects one string");
+                }
 
-    let Value::String(serialized) = self.evaluate(&arguments[0]) else {
-        panic!("deserialize() expects string");
-    };
+                let Value::String(serialized) = self.evaluate(&arguments[0]) else {
+                    panic!("deserialize() expects string");
+                };
 
-    return parse_serialized(&serialized)
-        .unwrap_or_else(|| panic!("deserialize() could not parse serialized value"));
-}
-"format" => {
+                return parse_serialized(&serialized)
+                    .unwrap_or_else(|| panic!("deserialize() could not parse serialized value"));
+            }
+            "format" => {
                 if arguments.len() != 2 {
                     panic!("format() expects template and values array");
                 }
@@ -714,7 +710,7 @@ impl Interpreter {
                 panic!("continue escaped function '{}'", name);
             }
         };
-                self.exit_scope();
+        self.exit_scope();
         self.loop_depth = previous_loop_depth;
 
         // The declared return type of an async function is its
@@ -2770,14 +2766,11 @@ fn serialize_value(v: &Value) -> String {
         }
 
         Value::Array(a) => {
-    format!(
-        "[{}]",
-        a.iter()
-            .map(serialize_value)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
+            format!(
+                "[{}]",
+                a.iter().map(serialize_value).collect::<Vec<_>>().join(", ")
+            )
+        }
 
         Value::HashMap(h) => {
             format!(
@@ -2802,21 +2795,21 @@ fn serialize_value(v: &Value) -> String {
         }
 
         Value::Enum {
-    enum_name,
-    variant,
-    values,
-} => {
-    format!(
-        "{{\"__enum\":\"{}\",\"variant\":\"{}\",\"values\":[{}]}}",
-        enum_name,
-        variant,
-        values
-            .iter()
-            .map(serialize_value)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
+            enum_name,
+            variant,
+            values,
+        } => {
+            format!(
+                "{{\"__enum\":\"{}\",\"variant\":\"{}\",\"values\":[{}]}}",
+                enum_name,
+                variant,
+                values
+                    .iter()
+                    .map(serialize_value)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
 
         Value::Option(Some(x)) => {
             format!("{{\"Some\":{}}}", serialize_value(x))

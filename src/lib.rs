@@ -998,9 +998,11 @@ main {
         let mut lexer = Lexer::new(source, BlockMode::Unknown);
         let tokens = lexer.tokenize().expect("should lex");
 
-        assert!(!tokens
-            .iter()
-            .any(|token| matches!(token.node, Token::Indent | Token::Dedent)));
+        assert!(
+            !tokens
+                .iter()
+                .any(|token| matches!(token.node, Token::Indent | Token::Dedent))
+        );
     }
 
     #[test]
@@ -1613,10 +1615,12 @@ main:
     print("module syntax")
 "#,
         );
-        assert!(program
-            .statements
-            .iter()
-            .any(|s| matches!(s, ast::Statement::Import { path, .. } if path == "std.io")));
+        assert!(
+            program
+                .statements
+                .iter()
+                .any(|s| matches!(s, ast::Statement::Import { path, .. } if path == "std.io"))
+        );
     }
 
     #[test]
@@ -1950,15 +1954,13 @@ main:
     #[test]
     fn async_function_accepts_parameters_and_await_returns_the_declared_type() {
         assert_eq!(
-            run(
-                r#"async fn add(a: num, b: num) -> num:
+            run(r#"async fn add(a: num, b: num) -> num:
     return a + b
 
 main:
     result = await add(20, 22)
     print(result)
-"#,
-            ),
+"#,),
             vec!["42"]
         );
     }
@@ -1966,8 +1968,7 @@ main:
     #[test]
     fn nested_async_calls_propagate_task_results() {
         assert_eq!(
-            run(
-                r#"async fn inner() -> num:
+            run(r#"async fn inner() -> num:
     return 20
 
 async fn outer() -> num:
@@ -1976,8 +1977,7 @@ async fn outer() -> num:
 
 main:
     print(await outer())
-"#,
-            ),
+"#,),
             vec!["42"]
         );
     }
@@ -1985,8 +1985,7 @@ main:
     #[test]
     fn async_functions_can_return_different_result_types() {
         assert_eq!(
-            run(
-                r#"async fn number() -> num:
+            run(r#"async fn number() -> num:
     return 42
 
 async fn message() -> string:
@@ -1995,8 +1994,7 @@ async fn message() -> string:
 main:
     print(await number())
     print(await message())
-"#,
-            ),
+"#,),
             vec!["42", "fusion"]
         );
     }
@@ -2004,16 +2002,14 @@ main:
     #[test]
     fn multiple_awaits_in_one_function_are_evaluated_in_order() {
         assert_eq!(
-            run(
-                r#"async fn value(x: num) -> num:
+            run(r#"async fn value(x: num) -> num:
     return x
 
 main:
     first = await value(10)
     second = await value(32)
     print(first + second)
-"#,
-            ),
+"#,),
             vec!["42"]
         );
     }
@@ -2021,8 +2017,7 @@ main:
     #[test]
     fn await_works_inside_conditionals_and_loops() {
         assert_eq!(
-            run(
-                r#"async fn value(x: num) -> num:
+            run(r#"async fn value(x: num) -> num:
     return x
 
 main:
@@ -2037,8 +2032,7 @@ main:
         i = i + 1
 
     print(total)
-"#,
-            ),
+"#,),
             vec!["22"]
         );
     }
@@ -2066,8 +2060,7 @@ main:
     #[test]
     fn recursive_functions_can_call_themselves() {
         assert_eq!(
-            run(
-                r#"fn factorial(n: num) -> num:
+            run(r#"fn factorial(n: num) -> num:
     if n <= 1:
         return 1
     else:
@@ -2075,8 +2068,7 @@ main:
 
 main:
     print(factorial(5))
-"#,
-            ),
+"#,),
             vec!["120"]
         );
     }
@@ -2084,16 +2076,14 @@ main:
     #[test]
     fn generic_functions_preserve_the_instantiated_runtime_value() {
         assert_eq!(
-            run(
-                r#"fn identity<T>(value: T) -> T:
+            run(r#"fn identity<T>(value: T) -> T:
     return value
 
 main:
     print(identity<num>(42))
     print(identity<string>("fusion"))
     print(identity<bool>(true))
-"#,
-            ),
+"#,),
             vec!["42", "fusion", "true"]
         );
     }
@@ -2101,8 +2091,7 @@ main:
     #[test]
     fn explicit_return_paths_are_checked_and_execute_correctly() {
         assert_eq!(
-            run(
-                r#"fn choose(flag: bool) -> num:
+            run(r#"fn choose(flag: bool) -> num:
     if flag:
         return 10
     else:
@@ -2111,8 +2100,7 @@ main:
 main:
     print(choose(true))
     print(choose(false))
-"#,
-            ),
+"#,),
             vec!["10", "32"]
         );
     }
@@ -2140,8 +2128,7 @@ main:
     #[test]
     fn nested_scopes_can_shadow_outer_variables_without_changing_outer_scope() {
         assert_eq!(
-            run(
-                r#"main:
+            run(r#"main:
     value = 10
 
     if true:
@@ -2149,8 +2136,7 @@ main:
         print(value)
 
     print(value)
-"#,
-            ),
+"#,),
             vec!["32", "10"]
         );
     }
@@ -2158,8 +2144,7 @@ main:
     #[test]
     fn function_arguments_are_evaluated_left_to_right() {
         assert_eq!(
-            run(
-                r#"fn mark(value: num) -> num:
+            run(r#"fn mark(value: num) -> num:
     print(value)
     return value
 
@@ -2168,8 +2153,7 @@ fn add(a: num, b: num) -> num:
 
 main:
     print(add(mark(10), mark(32)))
-"#,
-            ),
+"#,),
             vec!["10", "32", "42"]
         );
     }
@@ -2181,8 +2165,7 @@ main:
     #[test]
     fn primitive_runtime_values_match_their_static_types() {
         assert_eq!(
-            run(
-                r#"main:
+            run(r#"main:
     num n = 42
     float f = 3.5
     bool b = true
@@ -2191,8 +2174,7 @@ main:
     print(f)
     print(b)
     print(s)
-"#,
-            ),
+"#,),
             vec!["42", "3.5", "true", "fusion"]
         );
     }
@@ -2200,16 +2182,14 @@ main:
     #[test]
     fn collection_runtime_values_match_their_static_types() {
         assert_eq!(
-            run(
-                r#"main:
+            run(r#"main:
     num[] numbers = [1, 2, 3]
     HashMap<string, num> scores = hashmap()
     scores.insert("answer", 42)
 
     print(numbers)
     print(scores.get("answer"))
-"#,
-            ),
+"#,),
             vec!["[1, 2, 3]", "Some(42)"]
         );
     }
@@ -2217,8 +2197,7 @@ main:
     #[test]
     fn option_iterator_struct_enum_and_task_runtime_values_are_represented_correctly() {
         assert_eq!(
-            run(
-                r#"struct Person:
+            run(r#"struct Person:
     name: string
 
 enum State:
@@ -2241,8 +2220,7 @@ main:
     print(state)
     print(task)
     print(await task)
-"#,
-            ),
+"#,),
             vec![
                 "Some(42)",
                 "Iterator[1, 2, 3]",
@@ -2285,8 +2263,7 @@ main:
         ];
 
         for (name, source, expected) in cases {
-            let error = compile_source(source)
-                .expect_err("program should be rejected");
+            let error = compile_source(source).expect_err("program should be rejected");
             assert!(
                 error.contains(expected),
                 "{} produced an unrelated error: {}",
@@ -2295,5 +2272,4 @@ main:
             );
         }
     }
-
 }

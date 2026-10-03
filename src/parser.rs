@@ -189,11 +189,27 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<String, ParseError> {
         let base = match self.current() {
-            Token::NumType => { self.advance(); "num".to_string() }
-            Token::FloatType => { self.advance(); "float".to_string() }
-            Token::BoolType => { self.advance(); "bool".to_string() }
-            Token::StringType => { self.advance(); "string".to_string() }
-            Token::Identifier(name) => { let name = name.clone(); self.advance(); name }
+            Token::NumType => {
+                self.advance();
+                "num".to_string()
+            }
+            Token::FloatType => {
+                self.advance();
+                "float".to_string()
+            }
+            Token::BoolType => {
+                self.advance();
+                "bool".to_string()
+            }
+            Token::StringType => {
+                self.advance();
+                "string".to_string()
+            }
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
             _ => return self.error("Expected type"),
         };
 
@@ -211,7 +227,9 @@ impl Parser {
             let mut args = Vec::new();
             loop {
                 args.push(self.parse_type()?);
-                if self.consume(&Token::Comma) { continue; }
+                if self.consume(&Token::Comma) {
+                    continue;
+                }
                 break;
             }
             if !self.consume(&Token::Greater) {
@@ -246,7 +264,7 @@ impl Parser {
                     return self.error("Nested function definitions are not allowed");
                 }
                 Ok(Some(self.parse_function()?))
-            },
+            }
 
             Token::Struct => Ok(Some(self.parse_struct()?)),
 
@@ -434,66 +452,61 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn looks_like_typed_declaration(&self) -> bool {
-    match self.current() {
-        Token::NumType
-        | Token::FloatType
-        | Token::BoolType
-        | Token::StringType => {
-            let mut position = self.position + 1;
+        match self.current() {
+            Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
+                let mut position = self.position + 1;
 
-            // Primitive array type: `num[] x`
-            if self.peek_at(position) == Some(&Token::LeftBracket) {
-                if self.peek_at(position + 1) != Some(&Token::RightBracket) {
-                    return false;
-                }
-
-                position += 2;
-            }
-
-            matches!(self.peek_at(position), Some(Token::Identifier(_)))
-        }
-
-        Token::Identifier(_) => {
-            if matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_))) {
-                return true;
-            }
-
-            if self.peek_at(self.position + 1) == Some(&Token::Less) {
-                let mut i = self.position + 2;
-                let mut depth = 1usize;
-
-                while let Some(token) = self.peek_at(i) {
-                    match token {
-                        Token::Less => depth += 1,
-
-                        Token::Greater => {
-                            depth -= 1;
-
-                            if depth == 0 {
-                                return matches!(
-                                    self.peek_at(i + 1),
-                                    Some(Token::Identifier(_))
-                                );
-                            }
-                        }
-
-                        Token::Eof
-                        | Token::NewLine
-                        | Token::RightBrace => break,
-
-                        _ => {}
+                // Primitive array type: `num[] x`
+                if self.peek_at(position) == Some(&Token::LeftBracket) {
+                    if self.peek_at(position + 1) != Some(&Token::RightBracket) {
+                        return false;
                     }
 
-                    i += 1;
+                    position += 2;
                 }
+
+                matches!(self.peek_at(position), Some(Token::Identifier(_)))
             }
 
-            false
-        }
+            Token::Identifier(_) => {
+                if matches!(self.peek_at(self.position + 1), Some(Token::Identifier(_))) {
+                    return true;
+                }
 
-        _ => false,
+                if self.peek_at(self.position + 1) == Some(&Token::Less) {
+                    let mut i = self.position + 2;
+                    let mut depth = 1usize;
+
+                    while let Some(token) = self.peek_at(i) {
+                        match token {
+                            Token::Less => depth += 1,
+
+                            Token::Greater => {
+                                depth -= 1;
+
+                                if depth == 0 {
+                                    return matches!(
+                                        self.peek_at(i + 1),
+                                        Some(Token::Identifier(_))
+                                    );
+                                }
+                            }
+
+                            Token::Eof | Token::NewLine | Token::RightBrace => break,
+
+                            _ => {}
+                        }
+
+                        i += 1;
+                    }
+                }
+
+                false
+            }
+
+            _ => false,
+        }
     }
-}
 
     fn parse_identifier_or_declaration(&mut self) -> Result<Statement, ParseError> {
         if self.looks_like_typed_declaration() {
@@ -670,16 +683,25 @@ impl Parser {
         self.advance();
         let mut parts = Vec::new();
         match self.current() {
-            Token::Identifier(name) => { parts.push(name.clone()); self.advance(); }
+            Token::Identifier(name) => {
+                parts.push(name.clone());
+                self.advance();
+            }
             _ => return self.error("Expected module name after 'import'"),
         }
         while self.consume(&Token::Dot) {
             match self.current() {
-                Token::Identifier(name) => { parts.push(name.clone()); self.advance(); }
+                Token::Identifier(name) => {
+                    parts.push(name.clone());
+                    self.advance();
+                }
                 _ => return self.error("Expected module name after '.'"),
             }
         }
-        Ok(Statement::Import { path: parts.join("."), span: self.span_from(start) })
+        Ok(Statement::Import {
+            path: parts.join("."),
+            span: self.span_from(start),
+        })
     }
 
     // ------------------------------------------------------------
@@ -1239,7 +1261,11 @@ impl Parser {
         let pattern = self.parse_pattern()?;
 
         let has_arrow = self.consume(&Token::FatArrow);
-        let has_colon = if !has_arrow { self.consume(&Token::Colon) } else { false };
+        let has_colon = if !has_arrow {
+            self.consume(&Token::Colon)
+        } else {
+            false
+        };
 
         if !has_arrow && !has_colon {
             return self.error("Expected '=>' or ':' after match pattern");
@@ -1400,54 +1426,54 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_async_function(&mut self) -> Result<Statement, ParseError> {
-    let start = self.current_span().start;
+        let start = self.current_span().start;
 
-    self.advance(); // consume `async`
+        self.advance(); // consume `async`
 
-    if !self.consume(&Token::Fn) {
-        return self.error("Expected 'fn' after 'async'");
+        if !self.consume(&Token::Fn) {
+            return self.error("Expected 'fn' after 'async'");
+        }
+
+        let statement = self.parse_function_after_fn(start)?;
+
+        match statement {
+            Statement::Function {
+                name,
+                generic_parameters,
+                parameters,
+                return_type,
+                body,
+                span,
+                ..
+            } => Ok(Statement::Function {
+                name,
+                generic_parameters,
+                parameters,
+                return_type,
+                body,
+                is_async: true,
+                span: Span::new(start, span.end),
+            }),
+
+            _ => unreachable!(),
+        }
     }
-
-    let statement = self.parse_function_after_fn(start)?;
-
-    match statement {
-        Statement::Function {
-            name,
-            generic_parameters,
-            parameters,
-            return_type,
-            body,
-            span,
-            ..
-        } => Ok(Statement::Function {
-            name,
-            generic_parameters,
-            parameters,
-            return_type,
-            body,
-            is_async: true,
-            span: Span::new(start, span.end),
-        }),
-
-        _ => unreachable!(),
-    }
-}
 
     fn parse_function(&mut self) -> Result<Statement, ParseError> {
-    let start = self.current_span().start;
-    self.advance(); // consume `fn`
+        let start = self.current_span().start;
+        self.advance(); // consume `fn`
 
-    self.parse_function_after_fn(start)
-}
-fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseError> {
-    let name = match self.current() {
-        Token::Identifier(name) => {
-            let name = name.clone();
-            self.advance();
-            name
-        }
-        _ => return self.error("Expected function name after 'fn'"),
-    };
+        self.parse_function_after_fn(start)
+    }
+    fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseError> {
+        let name = match self.current() {
+            Token::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+            _ => return self.error("Expected function name after 'fn'"),
+        };
 
         let mut generic_parameters = Vec::new();
 
@@ -1478,7 +1504,7 @@ fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseEr
             return self.error("Expected '(' after function name");
         }
 
-                let mut parameters = Vec::new();
+        let mut parameters = Vec::new();
 
         while self.current() != &Token::RightParen && self.current() != &Token::Eof {
             let parameter_start = self.current_span().start;
@@ -1493,7 +1519,9 @@ fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseEr
                     if self.consume(&Token::Colon) {
                         let type_name = self.parse_type()?;
                         (first, Some(type_name))
-                    } else if generic_parameters.iter().any(|parameter| parameter == &first)
+                    } else if generic_parameters
+                        .iter()
+                        .any(|parameter| parameter == &first)
                         && matches!(self.current(), Token::Identifier(_))
                     {
                         // Generic type-first syntax: `T value`.
@@ -1519,10 +1547,7 @@ fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseEr
                 }
 
                 // Optional `type name` syntax.
-                Token::NumType
-                | Token::FloatType
-                | Token::BoolType
-                | Token::StringType => {
+                Token::NumType | Token::FloatType | Token::BoolType | Token::StringType => {
                     let type_name = self.parse_type()?;
 
                     let parameter_name = match self.current() {
@@ -1943,7 +1968,10 @@ fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseEr
 
     fn looks_like_named_struct_constructor(&self) -> bool {
         matches!(
-            (self.peek_at(self.position + 1), self.peek_at(self.position + 2)),
+            (
+                self.peek_at(self.position + 1),
+                self.peek_at(self.position + 2)
+            ),
             (Some(Token::Identifier(_)), Some(Token::Colon))
         )
     }
@@ -2221,7 +2249,10 @@ fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseEr
                 self.advance();
                 let expression = self.parse_unary()?;
                 let end = expression.span().end;
-                Ok(Expression::Await { expression: Box::new(expression), span: Span::new(start, end) })
+                Ok(Expression::Await {
+                    expression: Box::new(expression),
+                    span: Span::new(start, end),
+                })
             }
 
             _ => self.parse_primary(),
@@ -2324,10 +2355,12 @@ fn parse_function_after_fn(&mut self, start: usize) -> Result<Statement, ParseEr
                     Token::BoolType => "bool",
                     Token::StringType => "string",
                     _ => unreachable!(),
-                }.to_string();
+                }
+                .to_string();
                 self.advance();
                 if self.current() != &Token::DoubleColon {
-                    return self.error("primitive type name is only valid here as a conversion target");
+                    return self
+                        .error("primitive type name is only valid here as a conversion target");
                 }
                 self.advance();
                 let kind = match self.current() {

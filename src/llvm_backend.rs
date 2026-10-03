@@ -406,13 +406,13 @@ impl LLVMBackend {
                 "break/continue need loop CFG lowering; use interpreter until CFG backend lands",
             )),
             Statement::Defer { .. } => {
-                return Err(self.unsupported("defer requires cleanup CFG lowering"))
+                return Err(self.unsupported("defer requires cleanup CFG lowering"));
             }
             Statement::ForEach { .. } => {
-                return Err(self.unsupported("for-each requires collection runtime lowering"))
+                return Err(self.unsupported("for-each requires collection runtime lowering"));
             }
             Statement::Match { .. } => {
-                return Err(self.unsupported("match requires pattern CFG lowering"))
+                return Err(self.unsupported("match requires pattern CFG lowering"));
             }
             Statement::Struct { .. }
             | Statement::Enum { .. }
@@ -626,7 +626,7 @@ impl LLVMBackend {
             Expression::Conversion { .. } => {
                 return Err(
                     self.unsupported("type conversions are not yet lowered by the LLVM backend")
-                )
+                );
             }
             Expression::Unary {
                 operator,
