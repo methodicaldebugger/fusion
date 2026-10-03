@@ -81,19 +81,12 @@ Supplies dependency resolution, build tooling, test execution, compatibility man
 Example of the message Fusion could generate
 
 Performance opportunity detected
-
 Your image_processing() function accounts for 38% of the application's measured execution time and performs frequent memory allocations.
-
 Suggested option: Consider implementing this module in Rust through Fusion's interoperability system.
-
 Potential benefit: Lower allocation overhead and improved execution speed, subject to benchmarking.
-
 Memory impact: May reduce temporary allocations, depending on the implementation.
-
 Compatibility: Requires checking the module's data types and interoperability boundary.
-
 Trade-off: Additional maintenance and cross-language integration complexity.
-
 Recommendation only. Benchmarking and developer approval are required before migration.
 
 
