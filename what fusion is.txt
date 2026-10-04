@@ -434,3 +434,5 @@ Many ecosystems underneath.
 
 Learn more on my website: https://fusion.ifree.page
 Link to repository(it truncates, because it's too large): https://github.com/methodicaldebugger/fusion.git
+
+I have started building fusion including all of the plugins, but the main focus will be on fusion vanilla/basic + C plugin.
