@@ -274,46 +274,9 @@ Fusion should be able to integrate or embeed a foreign language NOT inside a .fu
 
 
 
-Current status is getting Fusion bootstrap-ready by:
-Adding more features like:
-We still need to implement the following features:
-- Generics
-- Defer + I/O
-- Traits + impl
-- Enums
-- better Error handling
-- Modules
-- option/result
-- async/await
-
-There are many operations that are not yet implemented, including:
-- type_conversion(operations):
-as       explicit conversion
-from     user-defined conversion
-try      fallible conversion
-
-- growable arrays(operations):
-create, add, remove_last, access, modify, get_length, iterate, clear, insert_at_index, remove_at_index.
-- hash map(operations):
-create, insert, get, remove, contains_key, iterate, clear, iterate, keys, values.
-- iterators(operations):
-map, filter, enumerate, collect, find, any, all, fold.
-
-make the standard library prelude-like, so users don't have to write:
-import array
-import hashmap
-import iterator
+Current status is getting Fusion bootstrap-ready.
 
 When someone installs fusion vanilla/basic, they get Fusion the language + compiler/interpreter + stdlib, foundry the package/dependency/project manager, toolchain: orchestrates compilers, linkers, runtimes, SDKs, build environments.
-
-Link to repository(that truncates, because it is too large): https://github.com/methodicaldebugger/fusion.git
-
-
-
-
-
-
-
 
 
 
