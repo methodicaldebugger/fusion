@@ -105,3 +105,84 @@ fn missing_source_file_returns_failure_and_reports_error() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+fn native_output_path(label: &str) -> std::path::PathBuf {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let filename = if cfg!(windows) {
+        format!("fusion_native_{}_{}_{}.exe", std::process::id(), label, id)
+    } else {
+        format!("fusion_native_{}_{}_{}", std::process::id(), label, id)
+    };
+    std::env::temp_dir().join(filename)
+}
+
+fn assert_native_matches_interpreter(source: &str, label: &str) {
+    let source_path = write_fusion_file(source);
+    let native_path = native_output_path(label);
+
+    // Establish the interpreter's output first.
+    let interpreted = fusion()
+        .arg("run")
+        .arg(&source_path)
+        .output()
+        .expect("run Fusion interpreter");
+
+    assert!(
+        interpreted.status.success(),
+        "interpreter failed: {}",
+        String::from_utf8_lossy(&interpreted.stderr)
+    );
+
+    // Build a native executable using Fusion's LLVM/Clang pipeline.
+    let build = fusion()
+        .arg("build")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&native_path)
+        .output()
+        .expect("run Fusion native build");
+
+    assert!(
+        build.status.success(),
+        "native build failed. This test requires Clang. Install LLVM/Clang or configure FUSION_LLVM_DIR.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let native = Command::new(&native_path)
+        .output()
+        .expect("run generated native executable");
+
+    let _ = fs::remove_file(&source_path);
+    let _ = fs::remove_file(&native_path);
+
+    assert!(
+        native.status.success(),
+        "native executable failed: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+
+    let native_stdout = String::from_utf8_lossy(&native.stdout).replace("\r\n", "\n");
+    let interpreted_stdout = String::from_utf8_lossy(&interpreted.stdout).replace("\r\n", "\n");
+
+    assert_eq!(
+        native_stdout, interpreted_stdout,
+        "native output differs from interpreter output"
+    );
+}
+
+#[test]
+fn native_build_matches_interpreter_for_arithmetic() {
+    assert_native_matches_interpreter(
+        "main:\n    x = 10\n    y = 32\n    print(x + y)\n",
+        "arithmetic",
+    );
+}
+
+#[test]
+fn native_build_matches_interpreter_for_functions_and_loops() {
+    assert_native_matches_interpreter(
+        "fn sum_to(n: num) -> num:\n    total = 0\n    for i in 0..n:\n        total = total + i\n    return total\n\nmain:\n    print(sum_to(10))\n",
+        "control",
+    );
+}
