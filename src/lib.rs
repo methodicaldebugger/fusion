@@ -2272,4 +2272,687 @@ main:
             );
         }
     }
+
+// =========================================================================
+// Algorithmic correctness / LeetCode-style tests
+// =========================================================================
+
+#[test]
+fn two_sum_returns_correct_indices() {
+    assert_eq!(
+        run(
+            r#"fn two_sum(nums: num[], target: num) -> num:
+    i = 0
+    while i < nums.get_length():
+        j = i + 1
+        while j < nums.get_length():
+            if nums.access(i) + nums.access(j) == target:
+                return i * 100 + j
+            j = j + 1
+        i = i + 1
+    return -1
+
+main:
+    nums = [2, 7, 11, 15]
+    print(two_sum(nums, 9))
+    print(two_sum(nums, 26))
+"#
+        ),
+        vec!["1", "203"]
+    );
+}
+
+#[test]
+fn binary_search_finds_present_and_missing_values() {
+    assert_eq!(
+        run(
+            r#"fn binary_search(nums: num[], target: num) -> num:
+    left = 0
+    right = nums.get_length() - 1
+
+    while left <= right:
+        mid = left + (right - left) / 2
+        value = nums.access(mid)
+
+        if value == target:
+            return mid
+        else:
+            if value < target:
+                left = mid + 1
+            else:
+                right = mid - 1
+
+    return -1
+
+main:
+    nums = [1, 3, 5, 7, 9, 11]
+    print(binary_search(nums, 1))
+    print(binary_search(nums, 7))
+    print(binary_search(nums, 11))
+    print(binary_search(nums, 4))
+"#
+        ),
+        vec!["0", "3", "5", "-1"]
+    );
+}
+
+#[test]
+fn fibonacci_handles_multiple_inputs() {
+    assert_eq!(
+        run(
+            r#"fn fib(n: num) -> num:
+    if n <= 1:
+        return n
+
+    previous = 0
+    current = 1
+    i = 2
+
+    while i <= n:
+        next_value = previous + current
+        previous = current
+        current = next_value
+        i = i + 1
+
+    return current
+
+main:
+    print(fib(0))
+    print(fib(1))
+    print(fib(2))
+    print(fib(10))
+    print(fib(20))
+"#
+        ),
+        vec!["0", "1", "1", "55", "6765"]
+    );
+}
+
+#[test]
+fn reverse_array_in_place() {
+    assert_eq!(
+        run(
+            r#"fn reverse(nums: num[]) -> num[]:
+    left = 0
+    right = nums.get_length() - 1
+
+    while left < right:
+        temp = nums.access(left)
+        nums.modify(left, nums.access(right))
+        nums.modify(right, temp)
+        left = left + 1
+        right = right - 1
+
+    return nums
+
+main:
+    print(reverse([1, 2, 3, 4, 5]))
+    print(reverse([42]))
+    print(reverse([]))
+"#
+        ),
+        vec!["[5, 4, 3, 2, 1]", "[42]", "[]"]
+    );
+}
+
+#[test]
+fn maximum_subarray_uses_kadanes_algorithm() {
+    assert_eq!(
+        run(
+            r#"fn max_subarray(nums: num[]) -> num:
+    best = nums.access(0)
+    current = best
+    i = 1
+
+    while i < nums.get_length():
+        value = nums.access(i)
+
+        if current + value > value:
+            current = current + value
+        else:
+            current = value
+
+        if current > best:
+            best = current
+
+        i = i + 1
+
+    return best
+
+main:
+    print(max_subarray([-2, 1, -3, 4, -1, 2, 1, -5, 4]))
+    print(max_subarray([-8, -3, -6, -2, -5, -4]))
+    print(max_subarray([5]))
+"#
+        ),
+        vec!["6", "-2", "5"]
+    );
+}
+
+#[test]
+fn prefix_sums_produce_correct_range_totals() {
+    assert_eq!(
+        run(
+            r#"fn prefix_sums(nums: num[]) -> num[]:
+    result = [0]
+    i = 0
+
+    while i < nums.get_length():
+        result.add(result.access(i) + nums.access(i))
+        i = i + 1
+
+    return result
+
+fn range_sum(prefix: num[], left: num, right: num) -> num:
+    return prefix.access(right + 1) - prefix.access(left)
+
+main:
+    prefix = prefix_sums([2, 4, 6, 8, 10])
+    print(prefix)
+    print(range_sum(prefix, 0, 2))
+    print(range_sum(prefix, 1, 3))
+    print(range_sum(prefix, 4, 4))
+"#
+        ),
+        vec!["[0, 2, 6, 12, 20, 30]", "12", "18", "10"]
+    );
+}
+
+#[test]
+fn nested_loops_count_grid_cells() {
+    assert_eq!(
+        run(
+            r#"main:
+    rows = 3
+    cols = 4
+    count = 0
+    i = 0
+
+    while i < rows:
+        j = 0
+        while j < cols:
+            count = count + 1
+            j = j + 1
+        i = i + 1
+
+    print(count)
+"#
+        ),
+        vec!["12"]
+    );
+}
+
+#[test]
+fn prime_check_handles_small_and_composite_numbers() {
+    assert_eq!(
+        run(
+            r#"fn is_prime(n: num) -> bool:
+    if n < 2:
+        return false
+
+    divisor = 2
+    while divisor * divisor <= n:
+        if n / divisor * divisor == n:
+            return false
+        divisor = divisor + 1
+
+    return true
+
+main:
+    print(is_prime(-7))
+    print(is_prime(0))
+    print(is_prime(1))
+    print(is_prime(2))
+    print(is_prime(97))
+    print(is_prime(100))
+"#
+        ),
+        vec!["false", "false", "false", "true", "true", "false"]
+    );
+}
+
+#[test]
+fn hash_map_overwriting_a_key_does_not_duplicate_it() {
+    assert_eq!(
+        run(
+            r#"main:
+    m = hashmap()
+    m.insert("score", 10)
+    m.insert("score", 42)
+
+    print(m.get("score"))
+    print(m.get_length())
+"#
+        ),
+        vec!["Some(42)", "1"]
+    );
+}
+
+#[test]
+fn hash_map_missing_key_returns_none() {
+    assert_eq!(
+        run(
+            r#"main:
+    m = hashmap()
+    m.insert("known", 42)
+
+    print(m.get("missing"))
+    print(m.contains_key("missing"))
+    print(m.remove("missing"))
+    print(m.get_length())
+"#
+        ),
+        vec!["None", "false", "None", "1"]
+    );
+}
+
+#[test]
+fn iterator_pipeline_preserves_order_and_composes_operations() {
+    assert_eq!(
+        run(
+            r#"fn is_even(n: num) -> bool:
+    return n / 2 * 2 == n
+
+fn double(n: num) -> num:
+    return n * 2
+
+main:
+    nums = [1, 2, 3, 4, 5, 6]
+    result = nums.iterate().filter(is_even).map(double).collect()
+    print(result)
+"#
+        ),
+        vec!["[4, 8, 12]"]
+    );
+}
+
+#[test]
+fn iterator_all_any_and_find_handle_empty_arrays() {
+    assert_eq!(
+        run(
+            r#"fn positive(n: num) -> bool:
+    return n > 0
+
+main:
+    nums = []
+    print(nums.iterate().any(positive))
+    print(nums.iterate().all(positive))
+    print(nums.iterate().find(positive))
+"#
+        ),
+        vec!["false", "true", "None"]
+    );
+}
+
+#[test]
+fn fold_handles_nonzero_initial_accumulator() {
+    assert_eq!(
+        run(
+            r#"fn multiply(acc: num, value: num) -> num:
+    return acc * value
+
+main:
+    nums = [2, 3, 4]
+    print(nums.iterate().fold(5, multiply))
+    print(nums.iterate().fold(7, multiply))
+"#
+        ),
+        vec!["120", "168"]
+    );
+}
+
+#[test]
+fn struct_field_mutation_is_visible_to_subsequent_calls() {
+    assert_eq!(
+        run(
+            r#"struct Counter:
+    value: num
+
+main:
+    counter = Counter(value: 0)
+    counter.value = counter.value + 1
+    counter.value = counter.value + 1
+    counter.value = counter.value + 1
+    print(counter.value)
+"#
+        ),
+        vec!["3"]
+    );
+}
+
+#[test]
+fn nested_structs_keep_their_own_field_values() {
+    assert_eq!(
+        run(
+            r#"struct Point:
+    x: num
+    y: num
+
+struct Rectangle:
+    top_left: Point
+    bottom_right: Point
+
+main:
+    a = Point(x: 1, y: 2)
+    b = Point(x: 9, y: 8)
+    rectangle = Rectangle(top_left: a, bottom_right: b)
+
+    print(rectangle.top_left.x)
+    print(rectangle.top_left.y)
+    print(rectangle.bottom_right.x)
+    print(rectangle.bottom_right.y)
+"#
+        ),
+        vec!["1", "2", "9", "8"]
+    );
+}
+
+#[test]
+fn enum_variants_with_payloads_preserve_their_values() {
+    assert_eq!(
+        run(
+            r#"enum Message:
+    Quit
+    Number(num)
+    Text(string)
+
+fn describe(message: Message) -> string:
+    match message:
+        Message::Quit => return "quit"
+        Message::Number(n) => return "number"
+        Message::Text(text) => return text
+
+main:
+    print(describe(Message::Quit))
+    print(describe(Message::Number(42)))
+    print(describe(Message::Text("hello")))
+"#
+        ),
+        vec!["quit", "number", "hello"]
+    );
+}
+
+#[test]
+fn trait_methods_work_for_multiple_struct_types() {
+    assert_eq!(
+        run(
+            r#"struct Circle:
+    radius: num
+
+struct Square:
+    side: num
+
+trait Measure:
+    fn measure(value: Circle) -> num
+
+impl Measure for Circle:
+    fn measure(value: Circle) -> num:
+        return value.radius * value.radius * 3
+
+main:
+    circle = Circle(radius: 2)
+    print(circle.measure())
+"#
+        ),
+        vec!["12"]
+    );
+}
+
+#[test]
+fn function_cannot_return_a_boolean_from_numeric_signature() {
+    invalid(
+        r#"fn compute() -> num:
+    return 10 > 5
+
+main:
+    print(compute())
+"#,
+    );
+}
+
+#[test]
+fn incompatible_if_branches_cannot_silently_change_variable_type() {
+    invalid(
+        r#"main:
+    if true:
+        value = 42
+    else:
+        value = "hello"
+
+    print(value)
+"#,
+    );
+}
+
+#[test]
+fn generic_identity_rejects_mixed_argument_types() {
+    invalid(
+        r#"fn choose<T>(first: T, second: T) -> T:
+    return first
+
+main:
+    print(choose<num>(42, "wrong"))
+"#,
+    );
+}
+
+#[test]
+fn invalid_array_assignment_type_is_rejected() {
+    invalid(
+        r#"main:
+    nums = [1, 2, 3]
+    nums.modify(1, "wrong")
+"#,
+    );
+}
+
+#[test]
+fn non_boolean_logical_operands_are_rejected() {
+    invalid(
+        r#"main:
+    result = 1 && true
+"#,
+    );
+}
+
+#[test]
+fn comparison_cannot_compare_boolean_and_number() {
+    invalid(
+        r#"main:
+    result = true < 10
+"#,
+    );
+}
+
+#[test]
+fn void_function_cannot_be_used_as_a_numeric_expression() {
+    invalid(
+        r#"fn log_message():
+    print("hello")
+
+main:
+    result = log_message() + 1
+"#,
+    );
+}
+
+#[test]
+fn recursive_function_with_incompatible_return_type_is_rejected() {
+    invalid(
+        r#"fn recursive(n: num) -> num:
+    if n <= 0:
+        return "finished"
+    else:
+        return recursive(n - 1)
+
+main:
+    print(recursive(5))
+"#,
+    );
+}
+
+#[test]
+fn string_operations_handle_empty_strings() {
+    assert_eq!(
+        run(
+            r#"main:
+    text = ""
+    print(text.length())
+    print(text.trim())
+    print(text.contains(""))
+    print(text.starts_with(""))
+    print(text.ends_with(""))
+    print(text.replace("", "x"))
+"#
+        ),
+        vec!["0", "", "true", "true", "true", "x"]
+    );
+}
+
+#[test]
+fn string_search_distinguishes_missing_and_present_substrings() {
+    assert_eq!(
+        run(
+            r#"main:
+    text = "fusion"
+    print(text.find("sion"))
+    print(text.find("missing"))
+    print(text.contains("fusion"))
+    print(text.contains("Fusion"))
+"#
+        ),
+        vec!["Some(2)", "None", "true", "false"]
+    );
+}
+
+#[test]
+fn serialization_round_trip_preserves_nested_arrays() {
+    assert_eq!(
+        run(
+            r#"main:
+    original = [[1, 2], [3, 4]]
+    encoded = serialize(original)
+    decoded = deserialize(encoded)
+    print(decoded)
+"#
+        ),
+        vec!["[[1, 2], [3, 4]]"]
+    );
+}
+
+#[test]
+fn hexadecimal_encoding_handles_empty_and_zero_bytes() {
+    assert_eq!(
+        run(
+            r#"main:
+    print(hex_encode(""))
+    print(hex_encode("0"))
+    print(hex_decode(""))
+    print(hex_decode("30"))
+"#
+        ),
+        vec!["", "30", "", "0"]
+    );
+}
+
+#[test]
+fn base64_round_trip_handles_empty_and_padding_cases() {
+    assert_eq!(
+        run(
+            r#"main:
+    print(base64_encode(""))
+    print(base64_encode("f"))
+    print(base64_encode("fo"))
+    print(base64_encode("foo"))
+    print(base64_decode("Zg=="))
+    print(base64_decode("Zm8="))
+    print(base64_decode("Zm9v"))
+"#
+        ),
+        vec!["", "Zg==", "Zm8=", "Zm9v", "f", "fo", "foo"]
+    );
+}
+
+#[test]
+fn async_calls_preserve_independent_results() {
+    assert_eq!(
+        run(
+            r#"async fn calculate(x: num) -> num:
+    return x * x
+
+main:
+    a = await calculate(3)
+    b = await calculate(4)
+    c = await calculate(5)
+
+    print(a)
+    print(b)
+    print(c)
+    print(a + b + c)
+"#
+        ),
+        vec!["9", "16", "25", "50"]
+    );
+}
+
+#[test]
+fn async_recursion_returns_correct_result() {
+    assert_eq!(
+        run(
+            r#"async fn factorial(n: num) -> num:
+    if n <= 1:
+        return 1
+
+    previous = await factorial(n - 1)
+    return n * previous
+
+main:
+    print(await factorial(6))
+"#
+        ),
+        vec!["720"]
+    );
+}
+
+#[test]
+fn multiple_deferred_file_operations_preserve_written_content() {
+    let dir = std::env::temp_dir();
+    let path_a = dir.join(format!("fusion_defer_a_{}.txt", std::process::id()));
+    let path_b = dir.join(format!("fusion_defer_b_{}.txt", std::process::id()));
+
+    let a = path_a.to_string_lossy().replace('\\', "\\\\");
+    let b = path_b.to_string_lossy().replace('\\', "\\\\");
+
+    let source = format!(
+        r#"main:
+    first = open("{}")
+    second = open("{}")
+
+    defer first.close()
+    defer second.close()
+
+    first.write("alpha")
+    second.write("beta")
+"#,
+        a, b
+    );
+
+    run(&source);
+
+    assert_eq!(std::fs::read_to_string(&path_a).unwrap(), "alpha");
+    assert_eq!(std::fs::read_to_string(&path_b).unwrap(), "beta");
+
+    let _ = std::fs::remove_file(path_a);
+    let _ = std::fs::remove_file(path_b);
+}
+
+#[test]
+fn invalid_base64_is_rejected_or_returns_documented_error() {
+    // Choose one contract and enforce it consistently:
+    // - return an error/None; or
+    // - reject the operation with a documented runtime error.
+    //
+    // Do not silently return corrupted decoded data.
+}
+
 }

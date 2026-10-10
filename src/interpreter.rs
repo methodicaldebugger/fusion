@@ -143,8 +143,9 @@ impl Interpreter {
                 }
             }
 
-            struct_name => match value {
-                Value::Struct { name, .. } => name == struct_name,
+            type_name => match value {
+                Value::Struct { name, .. } => name == type_name,
+                Value::Enum { enum_name, .. } => enum_name == type_name,
                 _ => false,
             },
         }
@@ -299,18 +300,32 @@ impl Interpreter {
             return;
         }
 
-        let valid = match expected.as_str() {
-            "num" => matches!(value, Value::Number(_)),
-            "float" => matches!(value, Value::Float(_)),
-            "string" => matches!(value, Value::String(_)),
-            "bool" => matches!(value, Value::Boolean(_)),
-            "File" => matches!(value, Value::File(_)),
-            "TcpStream" => matches!(value, Value::TcpStream(_)),
-
-            struct_name => match value {
-                Value::Struct { name, .. } => name == struct_name,
+        let valid = if let Some(element_type) = expected.strip_suffix("[]") {
+            match value {
+                Value::Array(values) => values.iter().all(|item| match element_type {
+                    "num" => matches!(item, Value::Number(_)),
+                    "float" => matches!(item, Value::Float(_)),
+                    "string" => matches!(item, Value::String(_)),
+                    "bool" => matches!(item, Value::Boolean(_)),
+                    _ => matches!(item, Value::Struct { name, .. } if name == element_type)
+                        || matches!(item, Value::Enum { enum_name, .. } if enum_name == element_type),
+                }),
                 _ => false,
-            },
+            }
+        } else {
+            match expected.as_str() {
+                "num" => matches!(value, Value::Number(_)),
+                "float" => matches!(value, Value::Float(_)),
+                "string" => matches!(value, Value::String(_)),
+                "bool" => matches!(value, Value::Boolean(_)),
+                "File" => matches!(value, Value::File(_)),
+                "TcpStream" => matches!(value, Value::TcpStream(_)),
+                enum_or_struct_name => match value {
+                    Value::Struct { name, .. } => name == enum_or_struct_name,
+                    Value::Enum { enum_name, .. } => enum_name == enum_or_struct_name,
+                    _ => false,
+                },
+            }
         };
 
         if !valid {
@@ -2563,17 +2578,10 @@ impl Interpreter {
             return;
         }
 
-        let valid = match expected.as_str() {
-            "num" => matches!(value, Value::Number(_)),
-            "float" => matches!(value, Value::Float(_)),
-            "string" => matches!(value, Value::String(_)),
-            "bool" => matches!(value, Value::Boolean(_)),
-
-            struct_name => match value {
-                Value::Struct { name, .. } => name == struct_name,
-                _ => false,
-            },
-        };
+        // Use the same compatibility rules for returns as for arguments and
+        // assignments. This also handles arrays such as `num[]`, including
+        // validation of each element, as well as structs, enums, and options.
+        let valid = self.value_matches_type(value, expected);
 
         if !valid {
             panic!(
