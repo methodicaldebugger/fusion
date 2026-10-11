@@ -2167,7 +2167,7 @@ impl TypeChecker {
                     Type::Array(inner) => *inner,
 
                     Type::Iterator(inner) => *inner,
-                    Type::HashMap(key, value) => Type::Array(Box::new(Type::Unknown)),
+                    Type::HashMap(_, _) => Type::Array(Box::new(Type::Unknown)),
 
                     Type::Unknown => Type::Unknown,
 
