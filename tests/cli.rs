@@ -26,7 +26,10 @@ impl Fixture {
     }
 
     fn run(&self, command: &str) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_fusion"))
+        Command::new(
+    std::env::var("CARGO_BIN_EXE_fusion")
+        .expect("Cargo should provide the Fusion binary path for integration tests"),
+)
             .arg(command)
             .arg(&self.source)
             .output()
