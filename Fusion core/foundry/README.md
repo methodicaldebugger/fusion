@@ -4,6 +4,9 @@ The package manager for Fusion projects. It provides commands to create, build, 
 It is responsible managing dependency resolution, building Fusion programs, running and testing them, compatibility checks, publishing and more.
 It resolves version, dependencies and compatibility issues for plugins.
 
+Bazel, in particular, already supports multi-language build orchestration, so Foundry should not rely on multi-language builds alone as its novelty.
+We should relly on Bazel(a multi-language build system) and Cargo(a package manager with dependencies and builds + reproducability with cargo.lock) for guidance, knowledge and inspiration.
+
 
 I would divide Foundry into four responsibilities, each with a clearly defined boundary.
 
@@ -104,5 +107,24 @@ Existing managed runtimes.
 Existing registries and build systems where appropriate.
 
 
-Bazel, in particular, already supports multi-language build orchestration, so Foundry should not rely on multi-language builds alone as its novelty.
-We should relly on Bazel and Cargo for guidance, knowledge and inspiration.
+When you install fusion(vanilla/basic), you get something like this:
+Fusion installation(folders)
+│
+├── fusion compiler/interpreter
+├── docs(dcumentation)
+├── fusion package manager(foundry)
+├── (if an ecosystem plugin was downloaded with foundry) the fusion toolchain
+├── (if an ecosystem plugin was downloaded with foundry) static analyser (suggests moving fusion code into another programming language)
+├── (if an ecosystem plugin was downloaded with foundry) interop model (handles the 5 levels of integration)
+└── (potential) plugins (downloaded with foundry)
+       │
+       ├── C plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── C++ plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── Rust plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── SQLite plugin (does not download the toolchain, static analyser, interop model. Ergonomic plugins don't need them)
+       ├── Cloud-build plugin (does not download the toolchain, static analyser, interop model. Ergonomic plugins don't need them)
+       └── ...
+
+
+Currently we have all plugins(folders) available, even if many are underdeveloped!
+Foundry only downloads + installs fusion's toolchain, static analyser, interop model if an ecosystem plugin is required, this way the initial installation is small.

@@ -1,11 +1,13 @@
 # Cloud Builds
 
 This plugin provides an integration point for remote Fusion builds.
-
 The goal is not simply to "run the compiler on a server".
-
 A cloud build system should understand Fusion's build graph and provide
 reproducible remote execution.
+
+CLOUD BUILDS COULD BECOME MASSIVE AS THEY ENABLE FUSION DEVELOPERS TO AVOID INSTALLING MANY LOCAL ECOSYSTEM PLUGINS.
+Instead the server has the ecosystem plugins, the developer just installs fusion(basic/vanilla) + cloud builds. 
+The developer may download or write millions of lines of foreign code and let's the server handle the ecosystem plugins.
 
 ## Potential architecture
 

@@ -66,3 +66,11 @@ The interpreter now exposes these built-ins without external Rust dependencies:
 - Logging: `log_debug`, `log_info`, `log_warn`, `log_error`
 
 These are intentionally interpreter-first implementations. The compiler/IR architecture remains independent of the host runtime details so the same APIs can later be backed by a native Fusion runtime.
+
+
+We need to make one integration so good that it proves the entire model.
+1. Milestone 1 — C plugin: Compile a real .c file, link a C library, and call it from Fusion.
+2. Milestone 2 — Foundry toolchain management: Automatically obtain a pinned C compiler and linker, isolate the environment, and cache downloads.
+3. Milestone 3 — Reliable boundaries: Generate or maintain bindings, validate types, handle errors, and document memory and resource ownership at the ABI boundary.
+4. Milestone 4 — Second integration strategy: Add a language requiring a different mechanism, such as Python through an embedded runtime or process bridge.
+5. Milestone 5 — Integration SDK: Make it practical for the community to develop new language plugins without modifying Fusion's compiler.
