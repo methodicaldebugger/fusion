@@ -1,0 +1,6 @@
+# Fusion project manifest
+# Managed by Foundry.
+
+[package]
+name = "hello_world"
+version = "0.1.0"

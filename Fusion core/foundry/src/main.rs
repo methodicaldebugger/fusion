@@ -50,29 +50,31 @@ fn main() -> ExitCode {
     }
 }
 
-fn new_pkg(a: &[String]) -> Result<(), String> {
-    let name = a
-        .iter()
-        .find(|x| !x.starts_with('-'))
-        .ok_or("foundry new requires a package name")?;
-    if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
-        return Err("package name must be a simple directory/name".into());
+fn new_pkg(args: &[String]) -> Result<(), String> {
+    let Some(name) = args.first() else {
+        return Err("usage: foundry new <project-name>".into());
+    };
+
+    if args.len() != 1 {
+        return Err("usage: foundry new <project-name>".into());
     }
-    let r = cwd()?.join(name);
-    if r.exists() {
-        return Err(format!("destination already exists: {}", r.display()));
-    }
-    fs::create_dir_all(r.join("src")).map_err(|e| e.to_string())?;
-    fs::create_dir_all(r.join("tests")).map_err(|e| e.to_string())?;
-    fs::create_dir_all(r.join("foreign")).map_err(|e| e.to_string())?;
-    fs::write(r.join("fusion.toml"), foundry::manifest_template(name))
-        .map_err(|e| e.to_string())?;
-    fs::write(
-        r.join("src/main.fusion"),
-        "main:\n    print(\"Hello, Fusion!\")\n",
-    )
-    .map_err(|e| e.to_string())?;
-    println!("Created Fusion package '{name}'");
+
+    let parent = std::env::current_dir()
+        .map_err(|error| format!("cannot determine current directory: {error}"))?;
+
+    let project =
+        foundry::template::create_project(&parent, name).map_err(|error| error.to_string())?;
+
+    println!("Created Fusion project `{name}`");
+    println!();
+    println!("  {}", project.join("Foundry.toml").display());
+    println!("  {}", project.join("src/main.fusion").display());
+    println!();
+    println!("Next steps:");
+    println!("  cd {name}");
+    println!("  foundry check");
+    println!("  foundry run");
+
     Ok(())
 }
 

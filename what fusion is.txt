@@ -1,0 +1,676 @@
+!!!build bridges between communities!!!
+
+Hello everyone, I would like to build fusion(a brand new programing language). For more details continue reading.
+
+Fusion is an open-source programming language and compiler project with a long-term goal of making software ecosystems interoperate through one language, one toolchain, and one developer experience. The main idea here is knowledge interoperability. "Can a programmer's knowledge transfer across ecosystems?" "Fusion aims to do for programming ecosystems what SQL did for databases: provide a common interface across many underlying implementations."
+
+If you suffer from fragmentation, fusion is for you! This includes: Companies that already use many languages, Library maintainers, Cloud providers, Enterprise software companies, Universities and beginners who learn programing.
+
+Fusion has a easy to learn python-inspired synthax, a rust style debugger, and package manager called foundry(package manager and build system, simmilar to cargo and bazel). TO THE PROGRAMER IT FEELS LIKE ONE LANGUAGE.
+
+A beginner will install fusion, including the rust/bazel-style package manager(like cargo and the bazel build system). This is fusion basic/vanilla.
+
+
+The user could use the package manager(or manualy) download and install plugins. There are 2 types of plugins:
+The first type makes fusion more ergonomic to use: 
+-cloud builds(this one is massive, as fusion could provide appropriate environments for each foreign source file and allow fusion, to build/execute almost every programing language on the planet. The software of the planet without having to install and maintain additional programming languages or rewritting anything and avoiding a massive local install),
+-UI framework(to make it easier to build UI's accross many OS. It provides reusable components for websites, desktop or mobile apps), 
+-repl + jupyter(useful for interactive development, experimentation, data analysis, and learning), 
+-AOT + JIT(They determine when code gets compiled into machine code so it can run on a processor, also AOT removes the need to install anything on the targeted device), 
+-SQLite support(useful when an application needs to store, query, and manage structured data locally without running a separate database server. It lets an application persist information between runs using a lightweight database, usually stored in a single file), 
+-actors system(when there is a need to handle many concurrent activities reliably, especially when those activities must be isolated from one another and recover from failures).
+
+The second type extends fusions reach into existing ecosystems. Ideally fusion would embeed foreign source code(that are written in foreign files not fusion files), that way, the code does not need to be rewritten into fusion at all. The user doesn't install foreign languages or rewrite files, just installs a plugin and let's fusion + foundry(the package manager) do the hard work.
+
+
+The C plugin as an example would compile C source code, provide little overhead, this way C files do not have to be revritten into fusion. The same goes for other plugins C++, rust, nim, zig, swift, golang, dart, C#, java, Kotlin/native and so on. Foreign code must live inside explicit foreign-language boundaries(foreign files not fusion files).
+
+Fusion becomes the application-level language while other ecosystems become implementation-level resources.
+
+When you install fusion(vanilla/basic), you get something like this:
+Fusion installation(folders)
+│
+├── fusion compiler/interpreter
+├── docs(dcumentation)
+├── fusion package manager(foundry)
+├── (if an ecosystem plugin was downloaded with foundry) the fusion toolchain
+├── (if an ecosystem plugin was downloaded with foundry) static analyser (suggests moving fusion code into another programming language)
+├── (if an ecosystem plugin was downloaded with foundry) interop model (handles the 5 levels of integration)
+└── (potential) plugins (downloaded with foundry)
+       │
+       ├── C plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── C++ plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── Rust plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── SQLite plugin (does not download the toolchain, static analyser, interop model. Ergonomic plugins don't need them)
+       ├── Cloud-build plugin (does not download the toolchain, static analyser, interop model. Ergonomic plugins don't need them)
+       └── ...
+
+If the user needs an ecosystem plugin, foundry(the package manager) will download and install it together with the fusion toolchain + static analyser + interop model folders, that are inside the "Shared ecosystem infrastructure". More on them later.
+This way, fusion stays small, the basic/vanilla version only has the language + package manager, ergonomic plugins can be added individualy, an ecosystem plugin requires an additional folder("Shared ecosystem infrastructure"). The responsibilities must not overlap with foundry. 
+
+
+This folder is downloaded, whenever an ecosystem plugin is required.
+Below are the former readme.md's for the relevant folders.
+
+------------------------------------------------------------------------------------------
+
+# Fusion Toolchain discovery and foreign-build orchestration.
+
+The orchestrator owns external compilers, linkers, SDKs and runtimes. It
+consumes the neutral `fusion-interop-model` rather than putting foreign
+toolchain details into the Fusion parser or Foundry dependency resolver.
+Coordinates plugin availability with builds, tests, analysis and other development tools.
+
+
+Core responsibilities of the toolchain orchestrator include:
+
+Workflow coordination
+Coordinates the compiler, static analyser, formatter, test runner, debugger and other tools, choosing the correct execution order and managing dependencies between tasks.
+
+Build pipeline management
+Coordinates compilation stages, conditional builds, incremental compilation, linking and artifact generation.
+
+Tool and plugin integration
+Discovers installed tools and plugins through Foundry, checks compatibility and invokes them through defined interfaces.
+
+Resource and execution management
+Manages parallel tasks, caching, resource limits, task cancellation and execution timeouts.
+
+Result aggregation
+Collects compiler errors, test results, static analysis findings, compatibility issues and performance reports into one unified result.
+
+Environment and compatibility coordination
+Ensures tools, plugins, targets and language versions are compatible before execution, and reports unmet requirements.
+
+-----------------------------------------------------------------------------------------
+
+# Fusion Static Analyser
+
+A small, dependency-free Rust crate scaffold for static analysis in Fusion.
+
+## Layout
+
+- `analyzer.rs` — runs registered analysis rules over a source file.
+- `config.rs` — analyser configuration.
+- `diagnostic.rs` — source locations and findings.
+- `rule.rs` — common interface for analysis rules.
+- `rules/` — individual rules.
+
+The initial rules are deliberately conservative examples. They operate on a small
+`SourceFile` abstraction rather than assuming Fusion's parser/AST API. Once Fusion's
+AST is exposed as a library, rules can be upgraded to consume typed AST nodes and
+symbol/type information.
+
+## Use
+
+```rust
+use fusion_static_analyser::{Analyzer, SourceFile};
+
+let analyzer = Analyzer::default();
+let source = SourceFile::new("main.fus", "fn main() {\n    let unused = 1;\n}\n");
+let diagnostics = analyzer.analyze(&source);
+
+for diagnostic in diagnostics {
+    println!("{diagnostic}");
+}
+```
+
+the static analyser should identify opportunities and provide evidence, while a separate component decides whether to recommend a language transition and generates the message to the developer.
+
+Example of the message Fusion could generate
+
+Performance opportunity detected
+Your image_processing() function accounts for 38% of the application's measured execution time and performs frequent memory allocations.
+Suggested option: Consider implementing this module in Rust through Fusion's interoperability system.
+Potential benefit: Lower allocation overhead and improved execution speed, subject to benchmarking.
+Memory impact: May reduce temporary allocations, depending on the implementation.
+Compatibility: Requires checking the module's data types and interoperability boundary.
+Trade-off: Additional maintenance and cross-language integration complexity.
+Recommendation only. Benchmarking and developer approval are required before migration.
+
+
+
+
+
+The important part is that Fusion should not automatically assume another language will be faster. A language change can introduce FFI overhead, data conversion costs, memory ownership complications or additional maintenance. The analyser should distinguish between a potential performance gain and one demonstrated by benchmarks.
+
+Where the five interoperability levels fit
+
+I would make the Interoperability Advisor aware of Fusion's five levels, so it can recommend the least disruptive level that meets the requirement:
+Low interoperability: Call an external component through a simple interface.
+Higher interoperability: Share richer types, data and control flow.
+Deep interoperability: Integrate more tightly with another language's runtime or memory model.
+
+The exact descriptions should follow your planned five-level specification, but the general principle is to recommend only as much integration as necessary.
+
+
+The analyser detects. The advisor evaluates. The recommendation generator explains. The developer decides. The orchestrator executes only after approval.
+
+------------------------------------------------------------------------------------------
+
+# Fusion interoperability model.
+
+This crate defines the language/toolchain-neutral vocabulary for crossing the Fusion/foreign boundary. It deliberately contains no compiler process management. Foundry resolves *what* a project needs; 
+
+the toolchain orchestrator decides *how/with which tools* to build it.
+
+There are 5 layers of interoperability:
+1. Native ABI: the foreign code is compiled into a static or shared library and linked into the Fusion binary. The foreign code is called directly from Fusion code, and vice versa, using the platform's native ABI.
+2. Managed runtime: the foreign code is compiled into a library that is loaded into the Fusion process, and called via a managed runtime (e.g. JVM, CLR, etc.). The foreign code is called from Fusion code via the managed runtime's interop facilities, and vice versa.
+3. Embedded runtime: the foreign code is compiled into a library that is loaded into the Fusion process, and called via an embedded runtime.
+4. Process: the foreign code is compiled into a separate executable that is launched by the Fusion process. The foreign code is called from Fusion code via inter-process communication (IPC), and vice versa.
+5. WebAssembly: the foreign code is compiled into a WebAssembly module that is loaded into the Fusion process, and called via the WebAssembly runtime.
+
+
+fusion.toml could eventually specify something conceptually like:
+
+[plugins]
+c = "..."
+sqlite = "..."
+
+Then Fusion's toolchain manager knows:
+"This project requires the C plugin."
+
+
+The developer shouldn't have to think:
+“Oh no, this is a Python library, therefore I need a completely different API.”
+You can't make every arbitrary library magically interoperable so fusion needs adapters!
+
+You may use libraries in other languages, not mentioned above, with a wrapper, binding, ABI boundary, generated bindings, RPC bridge, WebAssembly module, etc.
+
+There are several levels of “foreign library”:
+Level 1 — Native ABI. Excellent interoperability. Very little overhead.
+Level 2 — Managed runtime. Very powerful, but requires runtime integration.
+Level 3 — Embedded runtime. More overhead, but potentially extremely useful.
+Level 4 — RPC/process bridge. The foreign library runs independently. This can be surprisingly powerful because the boundary is clean.
+Level 5 — WebAssembly. This could provide a very portable integration mechanism.
+
+"Foundry"(fusion's package manager) package manager/toolchain orchestrates the layers; individual plugins implement the actual integration mechanism.
+Foundry is simmilar to cargo, it answers questions like: How do I build, test, run, document, package, publish, and reproduce this entire project?
+I will also need the help from bazel the build system.
+
+
+
+
+
+A possible compiler feature, fusion could even suggest it.
+
+Example:
+Warning: Function simulate() consumes 68% of CPU.
+Suggestion: Move to Rust for ~8x speedup.
+
+Imagine clicking:
+Convert to Rust -> The IDE generates: -> pub fn simulate(...) {    ...     }
+and creates the wrapper automatically.
+
+Fusion could say:
+Options:
+[Optimize Fusion]
+[Move to Rust]
+[Move to GPU]
+[Parallelize]
+
+That is futuristic!
+
+this capability is in the static analyser folder.
+
+
+
+Developers will ask: "I'll build it in Fusion. Which ecosystem is the best implementation for this specific capability?"
+When to switch to another languag within fusion?
+Only when you need capabilities that Fusion intentionally doesn't try to optimize for. These are almost always libraries, not entire applications.
+If you can't build it in fusion, build it in another ecosystem.
+A beginner learns Fusion. An expert can access advanced ecosystems when they need them.
+Fusion source code should stay Fusion. Foreign source code should stay in its original language and live in its original files.
+No rewrite is neccessary or installing foreign programing languages. Fusion's tooling handles the foreign side.
+
+
+Evergreen Technologies(me basicaly)
+Evergreen Technologies provides professional services that support organizations building software at scale:
+hosted cloud builds, enterprise collaboration features, managed package registries, commercial IDE features, long-term support subscriptions.
+These services are commercial, while the core Fusion language and ecosystem remain open.
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+WE WILL BUILD INTERPRETER-FIRST INTERNALLY, BUT DESIGN COMPILER-FIRST ARCHITECTURALLY!
+Fusion 1.0 almost exists, read the official documentation for more.
+
+Like rust, it will have: Very sophisticated error messages.
+Fusion is extremely modern with minimal boilerplate, indentation or braces, structs, impl+traits, enums, match, growable arrays(no dictionaries), iterators, defer. Not to mention simplicity with installable and uninstallable plugins.
+Static typing with type inference, variables are mutable by default, strong typing.
+
+GC → automatically manages memory
+defer → deterministically releases resources
+scopes → let programmers control when deferred cleanup happens
+That's much simpler than importing C++'s entire RAII/ownership system.
+When file leaves scope, its destructor runs. This makes resource management deterministic.
+Fusion takeaway: Even with GC, deterministic resource cleanup is extremely valuable for things like files, sockets, GPU resources, database connections, and foreign handles.
+
+Algebraic Data Types(like the kind in rust)
+match like in rust(It matches the structure, not just values, Exhaustiveness checking, It works with nested data, You can add conditions, Destructuring structs, Matching references safely, The compiler can optimize it, It replaces many language features)
+Pattern matching (like rust)
+loop iterators(like rust with zero cost abstractions, but not all of them, only a small set of iterators:map(), filter(), reduce(), fold(), collect(), find(), any(), all(), count(), take(), skip(), zip(), flatten())
+Make Option and Result foundational:
+Option instead of null "Option<int>" This eliminates a huge class of null-pointer bugs.
+Result for errors "Result<T, E>" Instead of throwing exceptions everywhere.
+
+Structs
+impl+Traits (instead of interfaces)
+only growable arrays(with 10+ operations) no dictionaries
+iterators(8+ operations)
+hash map(8+ operations)
+Async/await
+Generics
+Properties
+Modules
+Package manager
+Automatic memory management
+type conversion
+generics
+option/result
+file I/O + defer
+async/await
+
+
+Fusion -> Fusion IR -> LLVM -> Machine code. LLVM is an existing compiler infrastructure used by many languages. Building your own optimizer and code generator from scratch would multiply the amount of work.
+make the IR a very deliberate boundary. foreign ecosystem becomes much easier to reason about if Fusion has a stable internal representation.
+The foreign language doesn't necessarily need to become Fusion IR. It only needs to produce something that Fusion's linker/toolchain can consume.
+
+Fusion will NOT have:
+a generic <loop{}> like rust has, fusion will only have <for 0..10:> + <while x>0;> + iterators like in rust
+Classes(they are not neccessary, you have structs)
+No inheritance(no need for it)
+Pointers(not neccessary)
+Complex macros
+Header files
+Preprocessor directives
+NO OWNERSHIP, NO borrow checker, NO lifetime annotations
+
+
+We only have a growable array!! Instead of: an array, vector, list, linked list, slice, dynamic array. 
+Fusion has a small, deliberately chosen collection model(growable arrays + hash maps).
+
+
+
+The memory model: GC + deterministic resource cleanup via defer. GC manages memory. defer manages resources.
+Option + Result + GC is an interesting combination.
+Don't make defer secretly depend on garbage collection.
+
+
+
+I would build a very small Fusion language that can call C libraries first, while deliberately designing the compiler so that self-hosting becomes easy later. The reason is strategic: your differentiator isn't "Fusion is a programming language." It's "Fusion lets you use existing software ecosystems without making the programmer learn each ecosystem's language/toolchain." Fusion needs to access the ecosystems of other languages, to connect them, foreign languages and libraries are a valuable asset fusion cannot live without.
+
+So you need to prove that claim early. If Fusion 1.0 can make C libraries feel like ordinary Fusion libraries, I've demonstrated the central idea.
+Fusion should be able to integrate or embeed a foreign language NOT inside a .fusion file but in run/compile a separate file(like .c). Foreign languages are project-level dependencies, not syntax-level extensions. If that experience genuinely feels like “I installed Fusion, imported a C library, and never had to think about the C toolchain”, you've demonstrated the central idea behind Fusion.
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+ChatGPT generated explanation of fusion:
+Build software across ecosystems without learning a different language and toolchain for every dependency.
+Fusion is an open-source programming language, compiler, and toolchain designed around knowledge interoperability.
+
+The goal is simple:
+Fusion code stays Fusion. Foreign code stays foreign. Fusion connects them.
+
+Write your application in Fusion. When you need an existing C, C++, Rust, Go, Swift, Java, or other ecosystem, keep that code in its original language. Fusion's toolchain and plugins handle the foreign compiler, linker, runtime, ABI, bindings, WebAssembly module, or process boundary required to integrate it.
+
+To a Fusion programmer, the experience should feel like using one language and one toolchain.
+
+The stack
+Fusion source
+     ↓
+Fusion compiler
+     ↓
+Fusion IR
+     ↓
+interpreter / native compiler
+     ↓
+Foundry
+     ↓
+toolchains, runtimes, SDKs, foreign ecosystems
+Fusion
+
+Fusion deliberately avoids requiring programmers to learn ownership, borrowing, lifetime annotations, inheritance, header files, or complex macro systems.
+
+Foundry can orchestrate:
+
+Fusion packages
+foreign-language toolchains
+compilers and linkers
+SDKs
+runtimes
+build environments
+native libraries
+generated bindings
+WebAssembly modules
+RPC/process dependencies
+Foreign ecosystems
+
+Foreign source code remains in its original language and its original files.
+
+For example:
+
+my-project/
+├── src/
+│   └── main.fusion
+│
+└── foreign/
+    └── physics.cpp
+
+A project can declare the required integration tooling:
+
+[plugins]
+cpp = "..."
+
+Fusion then knows that the project requires the C++ integration plugin.
+The programmer should not have to manually manage every foreign compiler and build system just because the project uses one foreign library.
+
+The first proof
+
+Fusion will initially focus on C integration.
+The goal is not merely to prove that Fusion can call C.
+The goal is to prove that:
+A Fusion programmer can consume a real C library while Fusion and Foundry handle the foreign build and integration machinery.
+Once that boundary works well, additional ecosystems can be implemented through dedicated integration mechanisms.
+
+Long-term vision
+Fusion does not attempt to replace every programming language.
+Instead, it aims to make existing programming ecosystems composable.
+Different ecosystems remain excellent at different things. Fusion provides a common developer experience for using them together.
+
+One language for the application.
+One toolchain for the project.
+Many ecosystems underneath.
+
+Learn more on my website: https://fusion.ifree.page
+Link to repository(it truncates, because it's too large): https://github.com/methodicaldebugger/fusion.git
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+I have started building fusion including all of the plugins, but the main focus will be on fusion vanilla/basic + C plugin.
+
+We need to make one integration so good that it proves the entire model.
+1. Milestone 1 — C plugin: Compile a real .c file, link a C library, and call it from Fusion.
+2. Milestone 2 — Foundry toolchain management: Automatically obtain a pinned C compiler and linker, isolate the environment, and cache downloads.
+3. Milestone 3 — Reliable boundaries: Generate or maintain bindings, validate types, handle errors, and document memory and resource ownership at the ABI boundary.
+4. Milestone 4 — Second integration strategy: Add a language requiring a different mechanism, such as Python through an embedded runtime or process bridge.
+5. Milestone 5 — Integration SDK: Make it practical for the community to develop new language plugins without modifying Fusion's compiler.
+
+
+Foundry - Fusion project/package/toolchain manager
+
+The package manager for Fusion projects. It provides commands to create, build, run, and manage Fusion packages and their dependencies.
+It is responsible managing dependency resolution, building Fusion programs, running and testing them, compatibility checks, publishing and more.
+It resolves version, dependencies and compatibility issues for plugins.
+
+Bazel, in particular, already supports multi-language build orchestration, so Foundry should not rely on multi-language builds alone as its novelty.
+We should relly on Bazel(a multi-language build system) and Cargo(a package manager with dependencies and builds + reproducability with cargo.lock) for guidance, knowledge and inspiration.
+
+Foundry: Supplies dependency resolution, build tooling, test execution, compatibility management and publishing.
+
+
+I would divide Foundry into four responsibilities, each with a clearly defined boundary.
+
+1. Package manager
+
+Download and resolve dependencies.
+Manage package versions and a lockfile.
+Support local, Git, and registry dependencies.
+Handle optional dependencies and features.
+Build and publish Fusion packages.
+Manage workspaces.
+This should be the foundation of Foundry, with predictable and reproducible dependency resolution.
+
+2. Build orchestrator
+
+This is where Foundry becomes different from a conventional language package manager.
+Determine which compilers are required.
+Build Fusion and foreign-language source files.
+Manage compilation order and build dependencies.
+Coordinate linking and artifact generation.
+Cache build outputs.
+Support cross-compilation and build profiles.
+Foundry should delegate compilation to the appropriate compiler instead of implementing the build logic of every language itself.
+
+3. Toolchain and plugin manager
+
+This is potentially the most distinctive part.
+Detect and provision compatible compilers, SDKs, and runtimes.
+Install and update integration plugins.
+Check plugin and toolchain compatibility.
+Configure environment variables and compiler flags.
+Generate or manage language bindings.
+Handle foreign-language integration strategies.
+For example, a C plugin could define how to compile C files, expose native libraries to Fusion, and link the resulting artifacts.
+Foundry could download or provision a C toolchain where licensing and platform constraints permit, rather than assuming the user has installed it.
+
+4. Project workflow
+
+This is the developer-facing experience.
+foundry new my_project
+foundry add serde
+foundry build
+foundry run
+foundry test
+foundry doc
+foundry publish
+
+Developers should not need to know which internal tool performs each operation. Foundry provides the unified interface while still allowing access to lower-level commands when needed.
+
+One important architectural decision is to separate packages, plugins, and toolchains. They are related, but they should not be the same thing.
+
+
+
+We will build foundry in stages:
+Stage 1 — Minimal project manager
+
+Implement:
+foundry new
+foundry build
+foundry run
+foundry test
+Basic fusion.toml
+Local package dependencies
+The objective is to have one working Fusion project that can be built consistently.
+
+Stage 2 — Dependency management
+Add:
+Version constraints
+Dependency resolution
+fusion.lock (or a similarly named lockfile)
+Git and registry dependencies
+Basic workspaces
+At this point, Foundry starts to resemble Cargo in its core package-management responsibilities.
+
+Stage 3 — C integration First interoperability proof
+Build a minimal C plugin that:
+Identifies required C source files.
+Invokes a compatible C compiler.
+Produces native object files or libraries.
+Links them with Fusion's output.
+Exposes C functions to Fusion through explicit declarations and bindings.
+Use a small real C library to demonstrate that a Fusion programmer can consume foreign code without manually orchestrating the C build.
+
+Stage 4 — Plugin and toolchain management
+Add plugin versioning, compatibility checks, toolchain provisioning, caching, and a documented plugin interface.
+Keep plugin execution controlled and secure. Plugins that can run arbitrary build commands should be treated as executable code, not harmless configuration.
+
+Stage 5 — More ecosystems
+Add further integrations for third-party created plugins.
+
+
+Foundry should orchestrate, not reinvent.
+Use existing, mature infrastructure whenever possible:
+Rust's compiler and Cargo.
+LLVM for native code generation.
+Existing C and C++ compilers and linkers.
+Existing managed runtimes.
+Existing registries and build systems where appropriate.
+
+
+When you install fusion(vanilla/basic), you get something like this:
+Fusion installation(folders)
+│
+├── fusion compiler/interpreter
+├── docs(dcumentation)
+├── fusion package manager(foundry)
+├── (if an ecosystem plugin was downloaded with foundry) the fusion toolchain
+├── (if an ecosystem plugin was downloaded with foundry) static analyser (suggests moving fusion code into another programming language)
+├── (if an ecosystem plugin was downloaded with foundry) interop model (handles the 5 levels of integration)
+└── (potential) plugins (downloaded with foundry)
+       │
+       ├── C plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── C++ plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── Rust plugin (also downloads the toolchain, static analyser, interop model. Ecosystem plugins require them)
+       ├── SQLite plugin (does not download the toolchain, static analyser, interop model. Ergonomic plugins don't need them)
+       ├── Cloud-build plugin (does not download the toolchain, static analyser, interop model. Ergonomic plugins don't need them)
+       └── ...
+
+
+Currently we have all plugins(folders) available, even if many are underdeveloped!
+Foundry only downloads + installs fusion's toolchain, static analyser, interop model if an ecosystem plugin is required, this way the initial installation is small.
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Last but not least, what differentiates fusion and makes it a multi-billion dollar project(potentialy):
+Fusion architecture
+
+1. Cloud toolchain provisioning
+Automatically obtain the right compiler, SDK, linker, and plugin environment when needed. Developers shouldn't have to install every foreign toolchain on their machines.
+
+2. Cargo-style package manager
+Dependency resolution, lockfiles, workspaces, registries, version constraints, and a consistent package workflow.
+
+3. Bazel-style build orchestration
+Dependency graphs, incremental and parallel builds, remote caching, reproducibility, and the ability to coordinate components written in different languages.
+
+4. Static analyser
+Detect potential bugs, suspicious patterns, unnecessary complexity, and opportunities to use safer or more idiomatic code. An interoperability advisor could recommend existing libraries or foreign-language integrations, with the developer retaining control.
+
+The architectural principle connecting these four components should be one project model. The package manager, build engine, analyser, and cloud workers should share dependency metadata, toolchain definitions, and configuration instead of maintaining separate systems.
+
+
+Fusion programming language
+
+1. Enums and exhaustive match
+Model alternatives explicitly and make missing cases detectable at compile time.
+
+2. Traits and generics
+Enable reusable abstractions and compile-time polymorphism without relying on class inheritance.
+
+3. Option and Result as foundational types
+Represent absence and recoverable failure explicitly. Integrate them into the standard library and error-handling syntax rather than treating them as afterthoughts.
+
+4. Indentation and braces
+Support indentation-based blocks and brace-delimited blocks, with a clear, consistent parsing rule so developers can choose their preferred style.
+
+5. Growable arrays as the primary collection
+Keep the core collection model approachable. Hash maps and sets can still be available through the standard library when needed; they don't have to be separate built-in language constructs.
+
+6. Traits for interoperability: a consistent way to describe capabilities, foreign-library wrappers, and generic APIs. The exact boundary between Fusion traits and foreign interfaces will need careful design.
+
+7. Deterministic cleanup with defer: particularly important for a language with garbage collection. Memory reclamation and timely release of files, sockets, locks, and other resources are different problems.
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+here are the folders I have(that I can upload to my github repository)
+PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion> Get-ChildItem -Name
+.git
+.github
+Fusion core
+Plugins
+Shared ecosystem infrastructure
+target
+tests
+.gitignore
+bootstrap.patch.gz.b64
+Cargo.lock
+Cargo.toml
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+Fusion v1.0.md
+LICENSE
+patch-diagnostic.txt
+README.md
+repair-diagnostic.txt
+PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion\Fusion core> Get-ChildItem -Name
+docs
+examples
+foundry
+fusion_impl
+target
+tests
+ast.rs
+bootstrap.sh
+Cargo.lock
+Cargo.toml
+codegen.rs
+environment.rs
+errors.rs
+foreign.rs
+fusion logo.png
+hello.exe
+hello.ll
+hir_lower.rs
+hir.rs
+interpreter.rs
+ir.rs
+lexer.rs
+lib.rs
+llvm_backend.rs
+main.exe
+main.pdb
+main.rs
+name_resolution.rs
+parser.rs
+README.md
+span.rs
+type_checker.rs
+types.rs
+value.rs
+PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion\Plugins> Get-ChildItem -Name
+actors system
+c
+cloud builds
+cpp
+csharp
+dart
+golang
+java
+jit+aot
+kotlin
+nim
+python
+repl+jupyter
+rust
+sqlite support
+swift
+typescript
+ui framework
+zig
+README for ergonomic plugins.md
+README for languages.md
+PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion\Shared ecosystem infrastructure> Get-ChildItem -Name
+fusion-interop-model
+static analyser
+toolchain-orchestrator
+README.md
+
+There are more src folders and rust files inside of the previous folders.
+
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------
+
+Current status is getting Fusion bootstrap-ready.
+Also making foundry.

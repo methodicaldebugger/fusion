@@ -1,0 +1,8 @@
+// Fusion application entry point.
+//
+// Add your application code here.
+// Keep this file compatible with the Fusion compiler version you use.
+
+fn main() {
+    print("Hello, world!");
+}

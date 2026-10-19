@@ -1,0 +1,18 @@
+# Foundry build output
+/target/
+
+# Local compiler and IDE artifacts
+*.ll
+*.o
+*.obj
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

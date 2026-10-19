@@ -18,6 +18,7 @@ pub mod graph;
 pub mod manifest;
 pub mod plugin;
 pub mod process;
+pub mod template;
 
 #[derive(Debug, Clone, Default)]
 pub struct Manifest {

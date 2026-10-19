@@ -181,3 +181,8 @@ Foundry shouldn't reinvent LLVM, C compilers, or existing language build systems
 
 
 A Fusion developer shouldn't need to learn a different command set for every language.
+
+Remember there is a folder called "toolchain-orchestrator", "fusion-interop-model", "static analyser" inside of the "Shared ecosystem infrastructure" folder that is downloaded, when the user needs an ecosystem plugin. The responsibilities must not overlap with foundry.
+
+
+Foundry owns the standard Fusion development workflow. Optional ecosystem components may extend that workflow through defined interfaces, but they must not duplicate Foundry's core responsibilities. Optional components are acquired and initialized only when required by an explicitly selected capability or plugin.
