@@ -1,18 +1,20 @@
-This folder is downloaded, whenever an ecosystem plugin is required.
+This folder(Shared ecosystem infrastructure) is downloaded, whenever an ecosystem plugin is required. Inside of it, are 3 folders.
+The first folder is "toolchain-orchestrator", the second "static analyser", third "fusion-interop-model".
 Below are the former readme.md's for the relevant folders.
 
 ------------------------------------------------------------------------------------------
 
-Toolchain discovery and foreign-build orchestration.
+# Fusion Toolchain discovery and foreign-build orchestration.
 
 The orchestrator owns external compilers, linkers, SDKs and runtimes. It
 consumes the neutral `fusion-interop-model` rather than putting foreign
 toolchain details into the Fusion parser or Foundry dependency resolver.
 Coordinates plugin availability with builds, tests, analysis and other development tools.
 
+Toolchain Orchestrator
+Coordinates analysis, builds, tests, compatibility checks and any migration workflow.
 
 Core responsibilities of the toolchain orchestrator include:
-
 Workflow coordination
 Coordinates the compiler, static analyser, formatter, test runner, debugger and other tools, choosing the correct execution order and managing dependencies between tasks.
 
@@ -66,54 +68,28 @@ for diagnostic in diagnostics {
 
 the static analyser should identify opportunities and provide evidence, while a separate component decides whether to recommend a language transition and generates the message to the developer.
 
-Suggested architecture
+Suggested architecture:
 
-step 1. Fusion Source Code
+Fusion Source Code
 Application and dependencies
 
-step 2. Fusion Performance Analyser
+Fusion Performance Analyser
 Detects bottlenecks, resource usage and optimization opportunities
 
-step 3. Interoperability Advisor
+Interoperability Advisor
 Evaluates whether another language or implementation could offer a measurable benefit
 
-step 4. Recommendation Generator
+Recommendation Generator
 Produces an actionable explanation for the developer
-
-
-
-Toolchain Orchestrator coordinates the workflow; Foundry manages builds, dependencies, tests and publishing.
-
-
-
-What each component should do
-
-Component
-Responsibility
 
 Static Analyser
 Inspects code for inefficient patterns, allocations, unnecessary copies, and expensive operations.
-
-Performance Analyser
 Combines static analysis with profiling and benchmarking to identify actual bottlenecks.
-
-Interoperability Advisor
 Evaluates whether moving a specific module to another language could help, considering the five interoperability levels.
-
-Recommendation Generator
 Creates the human-readable message, including evidence, estimated benefits, trade-offs and suggested next steps.
 
-Toolchain Orchestrator
-Coordinates analysis, builds, tests, compatibility checks and any migration workflow.
 
-Foundry
-Supplies dependency resolution, build tooling, test execution, compatibility management and publishing.
-
-
-
-
-
-Example of the message Fusion could generate
+Example of the message Fusion could generate:
 
 Performance opportunity detected
 Your image_processing() function accounts for 38% of the application's measured execution time and performs frequent memory allocations.
@@ -123,9 +99,6 @@ Memory impact: May reduce temporary allocations, depending on the implementation
 Compatibility: Requires checking the module's data types and interoperability boundary.
 Trade-off: Additional maintenance and cross-language integration complexity.
 Recommendation only. Benchmarking and developer approval are required before migration.
-
-
-
 
 
 The important part is that Fusion should not automatically assume another language will be faster. A language change can introduce FFI overhead, data conversion costs, memory ownership complications or additional maintenance. The analyser should distinguish between a potential performance gain and one demonstrated by benchmarks.
@@ -139,12 +112,9 @@ Deep interoperability: Integrate more tightly with another language's runtime or
 
 The exact descriptions should follow your planned five-level specification, but the general principle is to recommend only as much integration as necessary.
 
-
-The analyser detects. The advisor evaluates. The recommendation generator explains. The developer decides. The orchestrator executes only after approval.
-
 ------------------------------------------------------------------------------------------
 
-Fusion interoperability model.
+# Fusion interoperability model.
 
 This crate defines the language/toolchain-neutral vocabulary for crossing the Fusion/foreign boundary. It deliberately contains no compiler process management. Foundry resolves *what* a project needs; 
 

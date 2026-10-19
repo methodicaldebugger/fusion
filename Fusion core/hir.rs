@@ -1,5 +1,27 @@
 //contents of hir.rs
 
+/*
+HIR — a higher-level intermediate representation
+HIR stands for High-level Intermediate Representation.
+
+It is another representation of the program, 
+usually designed to be easier for later compiler stages to analyze 
+and transform than the original AST.
+
+Why have one?
+Source code often contains convenient syntax
+ that is complicated to implement repeatedly throughout the compiler. 
+ HIR can simplify that syntax while preserving the program's meaning.
+
+ HIR can also include information that the AST lacks or leaves unresolved, such as:
+- Resolved variable and function references.
+- Unique IDs for declarations.
+- Explicit type information.
+- Desugared syntax.
+- More uniform representations of expressions and control flow.
+
+ */
+
 use crate::span::Span;
 
 #[derive(Debug, Clone)]

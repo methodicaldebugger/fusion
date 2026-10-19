@@ -7,6 +7,8 @@ It resolves version, dependencies and compatibility issues for plugins.
 Bazel, in particular, already supports multi-language build orchestration, so Foundry should not rely on multi-language builds alone as its novelty.
 We should relly on Bazel(a multi-language build system) and Cargo(a package manager with dependencies and builds + reproducability with cargo.lock) for guidance, knowledge and inspiration.
 
+Foundry: Supplies dependency resolution, build tooling, test execution, compatibility management and publishing.
+
 
 I would divide Foundry into four responsibilities, each with a clearly defined boundary.
 
@@ -95,7 +97,7 @@ Add plugin versioning, compatibility checks, toolchain provisioning, caching, an
 Keep plugin execution controlled and secure. Plugins that can run arbitrary build commands should be treated as executable code, not harmless configuration.
 
 Stage 5 — More ecosystems
-Add further integrations only when the underlying mechanism has a clear benefit.
+Add further integrations for third-party created plugins.
 
 
 Foundry should orchestrate, not reinvent.
@@ -128,3 +130,54 @@ Fusion installation(folders)
 
 Currently we have all plugins(folders) available, even if many are underdeveloped!
 Foundry only downloads + installs fusion's toolchain, static analyser, interop model if an ecosystem plugin is required, this way the initial installation is small.
+
+
+Running foundry new hello_world should create a real, usable project with a familiar structure.
+hello_world/
+src/
+Application source code, starting with main.fusion.
+tests/
+Integration tests and test programs.
+examples/
+Runnable example programs.
+Foundry.toml
+Project configuration.
+foundry.lock
+Reproducible dependency resolution.
+.gitignore
+
+Cargo-inspired commands
+These should be first-class Foundry commands, not separate scripts.
+Command	Expected behavior
+foundry new hello_world	Create a new project
+foundry init	Initialize the current directory
+foundry check	Validate source and types without producing a release executable
+foundry build	Build the project
+foundry run	Build and execute the application
+foundry test	Discover, compile, and execute tests
+foundry fmt	Format Fusion source
+foundry clippy	Run Fusion's static analyzer and lint checks
+foundry add <dependency>	Add a dependency to the manifest
+foundry remove <dependency>	Remove a dependency
+foundry update	Update dependencies within their allowed constraints
+foundry clean	Remove generated build artifacts
+foundry doc	Generate documentation
+foundry tree	Display the dependency graph
+foundry metadata	Print machine-readable project metadata
+The crucial distinction is that foundry test must actually execute tests and report failures. Merely checking that test files compile is not sufficient.
+
+
+
+Add Bazel-inspired build capabilities
+
+- Correct dependency graphs: build only the targets affected by a change.
+- Incremental builds: fingerprint source files, compiler versions, flags, target platform, and dependencies.
+- Parallel execution: compile independent modules and targets concurrently.
+- Reproducible builds: lock dependency revisions and track the toolchain used.
+- Multiple targets: applications, libraries, tests, examples, and eventually foreign-language artifacts.
+- Extensible toolchains: let plugins contribute build actions without embedding every language's rules into Foundry.
+- Optional remote caching: a later capability, once local caching and fingerprints are reliable.
+Foundry shouldn't reinvent LLVM, C compilers, or existing language build systems. It should orchestrate them through a consistent build model.
+
+
+A Fusion developer shouldn't need to learn a different command set for every language.

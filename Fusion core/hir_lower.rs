@@ -1,5 +1,16 @@
 // contents of hir_lower
 
+/*
+lower_hir — converts another representation into HIR
+lower_hir is generally a function or compiler stage, 
+rather than a standardized compiler term.
+Its job is to take an earlier representation—often an AST—and lower it into HIR.
+
+Lowering is not necessarily the same as optimization. 
+Its primary purpose is to transform the representation
+ and make implicit language features explicit.
+*/
+
 use crate::ast::*;
 use crate::hir::*;
 use crate::span::Span;

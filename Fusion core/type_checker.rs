@@ -1,4 +1,23 @@
 //contents of type_checker.rs
+
+/*
+Type checker — verifies that operations are type-correct
+The type checker determines whether the program uses values in ways allowed 
+by the language's type rules.
+
+For example:
+let x = 10 + 20;
+
+If both integers support addition, this is valid.
+
+The type checker may also need to:
+- Resolve variable names and their types.
+- Check function arguments and return values.
+- Verify that conditions are booleans.
+- Check generic types and type constraints.
+- Report incompatible types.
+*/
+
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;

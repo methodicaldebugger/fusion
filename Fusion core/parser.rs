@@ -1,5 +1,24 @@
 //contents of parser.rs
 
+/*
+Parser — understands the grammatical structure
+The parser receives tokens from the lexer
+ and checks whether they follow the language's grammar.
+
+The parser determines how the tokens fit together: 
+which tokens form a variable declaration, which form an expression, 
+and which operations belong inside other operations.
+
+Its most common output is an AST.
+Think of it as: understanding how the words in a sentence 
+fit together according to grammar.
+
+For example, this is valid:
+let x = 10 + 20;
+But this might be invalid:
+let = + 10;
+*/
+
 use crate::ast::*;
 use crate::errors::ParseError;
 use crate::lexer::Token;

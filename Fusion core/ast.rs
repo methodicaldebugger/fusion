@@ -1,4 +1,15 @@
 // contents of ast.rs
+
+/*
+AST — represents the program as a tree
+AST stands for Abstract Syntax Tree.
+
+It is a data structure, not necessarily a separate processing stage. 
+The parser usually constructs it.
+It understands operator precendece, multiplication has precedence over addition.
+Real ASTs often also contain source locations, which help produce useful error messages.
+*/
+
 use crate::span::Span;
 
 #[derive(Debug, Clone)]

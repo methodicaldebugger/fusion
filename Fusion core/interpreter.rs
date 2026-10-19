@@ -1,4 +1,29 @@
 //contents of interpreter.rs
+
+/*
+Interpreter — executes the program
+An interpreter evaluates the program's instructions or syntax 
+and produces behavior directly, 
+rather than necessarily compiling the program to machine code first.
+
+For example:
+let x = 10 + 20;
+print(x);
+
+
+The interpreter might:
+1. Evaluate 10 to the integer value 10.
+2. Evaluate 20 to the integer value 20.
+3. Add the two values to get 30.
+4. Store 30 in the variable x.
+5. Evaluate print(x) and display 30.
+Output:
+30
+
+An interpreter can evaluate the AST directly, evaluate HIR, or execute bytecode
+ generated from an intermediate representation. There isn't one mandatory architecture.
+*/
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;

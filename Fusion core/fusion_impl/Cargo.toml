@@ -1,0 +1,20 @@
+
+[package]
+name = "fusion"
+version = "0.2.0"
+edition = "2021"
+description = "Fusion programming language bootstrap compiler"
+license = "MIT"
+
+[[bin]]
+name = "fusion"
+path = "main.rs"
+
+[lib]
+name = "fusion"
+path = "lib.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

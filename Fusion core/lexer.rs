@@ -1,5 +1,25 @@
 //contents of lexer.rs
 
+/*
+Lexer — breaks text into tokens
+The lexer, also called a scanner or tokenizer, reads the source code character by character 
+and groups characters into meaningful units called tokens.
+
+Example:
+let x = 10 + 20;
+Tokens:
+LET       "let"
+IDENTIFIER "x"
+EQUALS    "="
+NUMBER    "10"
+PLUS      "+"
+NUMBER    "20"
+SEMICOLON ";"
+
+The lexer typically doesn't care whether the expression makes sense. 
+It just identifies the pieces.
+*/
+
 use std::collections::VecDeque;
 
 use crate::span::Spanned;
