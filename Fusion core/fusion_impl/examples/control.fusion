@@ -1,8 +1,0 @@
-fn sum_to(n: num) -> num:
-    total = 0
-    for i in 0..n:
-        total = total + i
-    return total
-
-main:
-    print(sum_to(10))

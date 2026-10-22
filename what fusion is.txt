@@ -694,15 +694,17 @@ GC meets the ABI boundary: the native backend has no GC. The interpreter borrows
 Backend gaps: native code can’t yet do match, defer, for-each, break/continue, collections, or conversions. Self-hosting is blocked there first.
 
 
-The list is short, but the items to fix are very uneven in effort.
+What we still need to implement:
 
-Small: missing iterator and array methods, tuple types, nested patterns, guards, ranges, or-patterns, and derives. These are mostly local changes to the parser, checker and interpreter.
-Medium: modules, because cross-file resolution, import paths, visibility and name collisions touch every stage and Foundry depends on them. Fixed-width integers are also medium, since they need casts and overflow rules in the checker, interpreter and backend.
-Large:
+add more iterator and array methods, tuple types, nested patterns, guards, ranges, or-patterns, and derives.
+modules, because cross-file resolution, import paths, visibility and name collisions touch every stage and Foundry depends on them. Fixed-width integers also need casts and overflow rules in the checker, interpreter and backend.
+
+Diagnostics: rustc-quality errors with multiple spans and suggestions never really finish, though they can improve incrementally.
+
 Native runtime: this is the one to watch. Arrays, strings, closures and hash maps need a heap, so you need a runtime library and a GC strategy (tracing, reference counting, or arenas) before the backend can lower collections, defer and match. Self-hosting waits on this.
+
 C interop: it needs more than types. You need foreign declarations, header-to-binding generation (parsing C headers is a project in itself), callbacks into a GC’d language, error mapping, and pinning rules.
 Real async: you need an executor, not just syntax.
-Diagnostics: rustc-quality errors with multiple spans and suggestions never really finish, though they can improve incrementally.
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
