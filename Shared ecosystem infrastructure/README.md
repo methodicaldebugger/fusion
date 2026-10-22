@@ -1,5 +1,8 @@
 This folder(Shared ecosystem infrastructure) is downloaded, whenever an ecosystem plugin is required. Inside of it, are 3 folders.
 The first folder is "toolchain-orchestrator", the second "static analyser", third "fusion-interop-model".
+It is the job of these folders to make the next ecosystem plugin easier to install/integrate(not just the first).
+The other ecosystem folders like C, C++, C#, java, golang, Kotlin, Swift, nim, zig, contain their respective language peculiarities(unique properties/features).
+This folder is agnostic to the ecosystem plugins, it merely enables fusion to be integration/interoperability ready.
 Below are the former readme.md's for the relevant folders.
 
 ------------------------------------------------------------------------------------------

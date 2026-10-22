@@ -186,3 +186,35 @@ Remember there is a folder called "toolchain-orchestrator", "fusion-interop-mode
 
 
 Foundry owns the standard Fusion development workflow. Optional ecosystem components may extend that workflow through defined interfaces, but they must not duplicate Foundry's core responsibilities. Optional components are acquired and initialized only when required by an explicitly selected capability or plugin.
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+What's been added
+
+Dependency commands
+foundry add and foundry remove now edit the project manifest, supporting version, path, Git, and development-dependency declarations.
+
+Incremental build caching
+Builds fingerprint Fusion source contents, manifest configuration, compiler path and version output, target platform, profile, and compiler arguments. A matching existing build can be reused.
+
+Test execution
+foundry test now executes each .fusion test file with fusion run and reports failures, instead of merely checking whether files compile.
+
+Additional developer commands
+Added foundry fmt, foundry clippy, and foundry doc. Formatting and analysis delegate to the Fusion compiler, while documentation generates a basic package overview.
+
+Manifest compatibility
+Found and addressed the mismatch between Foundry.toml in your project template and fusion.toml expected by the implementation. Foundry.toml is now preferred, while existing fusion.toml projects remain supported.
+
+
+
+What remains for the next iteration
+Some parts also need further work before they are production-ready:
+- Transitive dependency resolution and passing downloaded packages into the Fusion compiler are not yet fully integrated.
+- The registry does not yet implement publishing, authentication, or full SemVer prerelease ordering.
+- The remote cache still needs authentication and artifact-digest verification.
+- Multi-target builds rely on the compiler supporting the requested targets.
+- The formatter and analyser depend on fusion fmt and fusion analyze being available.

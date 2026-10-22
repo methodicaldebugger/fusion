@@ -238,7 +238,7 @@ WE WILL BUILD INTERPRETER-FIRST INTERNALLY, BUT DESIGN COMPILER-FIRST ARCHITECTU
 Fusion 1.0 almost exists, read the official documentation for more.
 
 Like rust, it will have: Very sophisticated error messages.
-Fusion is extremely modern with minimal boilerplate, indentation or braces, structs, impl+traits, enums, match, growable arrays(no dictionaries), iterators, defer. Not to mention simplicity with installable and uninstallable plugins.
+Fusion is extremely modern with minimal boilerplate, indentation or braces, structs, impl+traits, enums, match, growable arrays + hash maps(that is it), iterators, defer. Not to mention simplicity with installable and uninstallable plugins.
 Static typing with type inference, variables are mutable by default, strong typing.
 
 GC → automatically manages memory
@@ -540,7 +540,7 @@ Foundry only downloads + installs fusion's toolchain, static analyser, interop m
 ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-Last but not least, what differentiates fusion and makes it a multi-billion dollar project(potentialy):
+Last but not least, what differentiates fusion and makes it a multi-billion dollar project:
 Fusion architecture
 
 1. Cloud toolchain provisioning
@@ -674,3 +674,67 @@ There are more src folders and rust files inside of the previous folders.
 
 Current status is getting Fusion bootstrap-ready.
 Also making foundry.
+
+Acording to claudeAI these things require our attention:
+
+tuple types (tuple expressions exist, but Type has no tuple variant), Operator overloading and derives: no Add/Index/Deref traits, no #[derive], no attributes. Patterns: only wildcard, identifier, literal, and flat enum variant with bindings. Missing are nested patterns, guards (if), ranges, or-patterns (|), tuple and struct patterns, @ bindings, and ref patterns. Nested patterns, guards, and struct destructuring don’t exist yet.
+
+Iterators: your list has 13 operations. The type checker has map, filter, fold, collect, find, any, all and enumerate. I didn’t find reduce, count, take, skip, zip or flatten.
+Collections: arrays only have about 9 operations against my “10+”, and HashMap has the 8 or so you want but is stored as a list of pairs, so lookups are O(n).
+
+Modules and packaging
+import parses but is a no-op in the interpreter, resolver and checker, so there are effectively no modules, namespaces, use paths, re-exports or cross-file programs. pub/private exist but only on functions, structs and enums. There’s no equivalent of crates, Cargo, a registry, features, workspaces or build scripts.
+
+Macros, tooling and ecosystem
+Diagnostics have only six error kinds, which is a long way from rustc’s multi-span, suggestion-rich errors.
+
+Bigger risks for your actual goal (C interop)
+No FFI-capable types: you have num (i64) and float only. Real C APIs need fixed-width integers (int32, uint8, size_t), float32, byte buffers, opaque handles, struct layout, and callbacks. “No pointers” can stay true at the language level while the FFI layer has a restricted pointer-like type.
+GC meets the ABI boundary: the native backend has no GC. The interpreter borrows the host’s Rc and clone semantics. Before Milestone 3 you need rules for passing GC memory to C (pinning versus copying), and defer must not depend on the GC, as you wrote.
+Backend gaps: native code can’t yet do match, defer, for-each, break/continue, collections, or conversions. Self-hosting is blocked there first.
+
+
+The list is short, but the items to fix are very uneven in effort.
+
+Small: missing iterator and array methods, tuple types, nested patterns, guards, ranges, or-patterns, and derives. These are mostly local changes to the parser, checker and interpreter.
+Medium: modules, because cross-file resolution, import paths, visibility and name collisions touch every stage and Foundry depends on them. Fixed-width integers are also medium, since they need casts and overflow rules in the checker, interpreter and backend.
+Large:
+Native runtime: this is the one to watch. Arrays, strings, closures and hash maps need a heap, so you need a runtime library and a GC strategy (tracing, reference counting, or arenas) before the backend can lower collections, defer and match. Self-hosting waits on this.
+C interop: it needs more than types. You need foreign declarations, header-to-binding generation (parsing C headers is a project in itself), callbacks into a GC’d language, error mapping, and pinning rules.
+Real async: you need an executor, not just syntax.
+Diagnostics: rustc-quality errors with multiple spans and suggestions never really finish, though they can improve incrementally.
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Plugins can supply the language-specific mappings and policies for the first two items, but the core has to provide the substrate they sit on.
+
+FFI types: if each plugin invented its own integer and buffer types, the checker couldn’t validate calls and plugins couldn’t share data. The core needs fixed-width ints, float32, bytes, an opaque Handle, struct layout control, and a callback type. Your self-hosting compiler also needs u8 and bytes for the lexer, so this isn’t only for interop.
+
+GC and the boundary: defer can be the shared mechanism. Treat every foreign object as a resource with a deterministic close that defer runs, and keep GC finalizers as a safety net only. The policy then differs by layer:
+
+Native ABI: copy by default, with explicit pinned buffers for zero-copy.
+Managed runtime: handle tables, thread attach, and exception mapping.
+Embedded runtime: bridge reference counts, plus the Python GIL.
+Process: serialize everything, with no shared memory.
+WebAssembly: copy through linear memory.
+
+What you still need for 10+ languages
+1. Count mechanisms, not languages. Most native languages reach you through the C ABI.
+So a language plugin is mostly an adapter onto an existing layer, which is what makes 10+ realistic. Process and WebAssembly give the most breadth per unit of work.
+
+2. A neutral interface description. Your interop model should define one language-neutral type system and signature schema. Each plugin then:
+introspects its ecosystem (C headers, JVM class files, .NET metadata, Python stubs, rustdoc JSON, WIT);
+generates Fusion binding files and glue code.
+
+The schema needs ints, floats, strings (with encoding, since Java, C# and JS use UTF-16), bytes, lists, records, variants, resource handles, callbacks, and ownership annotations (borrowed, owned, out-param). The WebAssembly Component Model’s WIT and canonical ABI are the best reference, and Fusion’s Option, Result, structs and enums already map onto them.
+
+3. A plugin SDK built like protoc plugins. Run plugins as separate executables that read a request and write generated files plus build steps. That makes them language-agnostic, versionable and sandboxable, which fits your point that build-running plugins are executable code. Ship a conformance test suite that every plugin must pass.
+
+4. Cross-boundary rules the core must decide:
+Errors: map exceptions, panics, errno and status codes into Result, and never unwind through an ABI.
+Threads: decide how callbacks arriving on foreign threads enter the GC (safepoints), plus the GIL, JVM attach, and Go runtime init.
+Diagnostics: error messages should name the foreign side.
+
+5. Dynamic calls in the interpreter. Since you’re interpreter-first, layer 1 needs dlopen plus a libffi-style mechanism, or it only works in compiled builds. The process bridge has no such need, so it can prove a second strategy before the native backend is finished.
+
+6. Foundry’s job: pinned, hash-verified toolchains per OS, hermetic builds, a lockfile of toolchains, and cross-compilation. On Windows, choose one ABI and linker story (MSVC-style versus MinGW) early, because mixing them breaks linking. Also budget for the binding generators: parsing C headers properly means using libclang, and every other language needs its own introspector.
