@@ -8,7 +8,7 @@ If you suffer from fragmentation, fusion is for you! This includes: Companies th
 
 Fusion has a easy to learn python-inspired synthax, a rust style debugger, and package manager called foundry(package manager and build system, simmilar to cargo and bazel). TO THE PROGRAMER IT FEELS LIKE ONE LANGUAGE.
 
-A beginner will install fusion, including the rust/bazel-style package manager(like cargo and the bazel build system). This is fusion basic/vanilla.
+A beginner will install fusion, including the rust/bazel-style package manager(simmilar to cargo and the bazel build system). This is fusion basic/vanilla.
 
 
 The user could use the package manager(or manualy) download and install plugins. There are 2 types of plugins:
@@ -237,41 +237,32 @@ These services are commercial, while the core Fusion language and ecosystem rema
 WE WILL BUILD INTERPRETER-FIRST INTERNALLY, BUT DESIGN COMPILER-FIRST ARCHITECTURALLY!
 Fusion 1.0 almost exists, read the official documentation for more.
 
-Like rust, it will have: Very sophisticated error messages.
-Fusion is extremely modern with minimal boilerplate, indentation or braces, structs, impl+traits, enums, match, growable arrays + hash maps(that is it), iterators, defer. Not to mention simplicity with installable and uninstallable plugins.
-Static typing with type inference, variables are mutable by default, strong typing.
 
+Static typing with type inference, variables are mutable by default, strong typing. Both indentation and braces are supported.
 GC → automatically manages memory
 defer → deterministically releases resources
 scopes → let programmers control when deferred cleanup happens
-That's much simpler than importing C++'s entire RAII/ownership system.
 When file leaves scope, its destructor runs. This makes resource management deterministic.
 Fusion takeaway: Even with GC, deterministic resource cleanup is extremely valuable for things like files, sockets, GPU resources, database connections, and foreign handles.
+The memory model: GC + deterministic resource cleanup via defer. GC manages memory. defer manages resources.
+Option + Result + GC is an interesting combination.
+Don't make defer secretly depend on garbage collection.
 
-Algebraic Data Types(like the kind in rust)
-match like in rust(It matches the structure, not just values, Exhaustiveness checking, It works with nested data, You can add conditions, Destructuring structs, Matching references safely, The compiler can optimize it, It replaces many language features)
-Pattern matching (like rust)
-loop iterators(like rust with zero cost abstractions, but not all of them, only a small set of iterators:map(), filter(), reduce(), fold(), collect(), find(), any(), all(), count(), take(), skip(), zip(), flatten())
-Make Option and Result foundational:
-Option instead of null "Option<int>" This eliminates a huge class of null-pointer bugs.
-Result for errors "Result<T, E>" Instead of throwing exceptions everywhere.
 
-Structs
-impl+Traits (instead of interfaces)
-only growable arrays(with 10+ operations) no dictionaries
-iterators(8+ operations)
-hash map(8+ operations)
-Async/await
+Simmilarly to rust, it has Algebraic Data Types, enums, match(It matches the structure, not just values, Exhaustiveness checking, It works with nested data, You can add conditions, Destructuring structs, Matching references safely, The compiler can optimize it, It replaces many language features), Pattern matching, loop iterators(like rust with zero cost abstractions), Option and Result is foundational: Option instead of null "Option<int>" This eliminates a huge class of null-pointer bugs. Result for errors "Result<T, E>" Instead of throwing exceptions everywhere, structs, impl + Traits (instead of interfaces). 
+
+We only have a growable array + hash map! Instead of: an array, vector, list, linked list, slice, dynamic array.
+Fusion has a small, deliberately chosen collection model(growable arrays + hash maps).
+growable arrays(many operations), hash map(many operations), iterators(operations)
+
+type conversion
 Generics
 Properties
 Modules
-Package manager
-Automatic memory management
-type conversion
-generics
-option/result
 file I/O + defer
 async/await
+rich error messages like rust
+
 
 
 Fusion -> Fusion IR -> LLVM -> Machine code. LLVM is an existing compiler infrastructure used by many languages. Building your own optimizer and code generator from scratch would multiply the amount of work.
@@ -289,14 +280,6 @@ Preprocessor directives
 NO OWNERSHIP, NO borrow checker, NO lifetime annotations
 
 
-We only have a growable array!! Instead of: an array, vector, list, linked list, slice, dynamic array. 
-Fusion has a small, deliberately chosen collection model(growable arrays + hash maps).
-
-
-
-The memory model: GC + deterministic resource cleanup via defer. GC manages memory. defer manages resources.
-Option + Result + GC is an interesting combination.
-Don't make defer secretly depend on garbage collection.
 
 
 
@@ -580,95 +563,6 @@ Keep the core collection model approachable. Hash maps and sets can still be ava
 7. Deterministic cleanup with defer: particularly important for a language with garbage collection. Memory reclamation and timely release of files, sockets, locks, and other resources are different problems.
 
 
-----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-here are the folders I have(that I can upload to my github repository)
-PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion> Get-ChildItem -Name
-.git
-.github
-Fusion core
-Plugins
-Shared ecosystem infrastructure
-target
-tests
-.gitignore
-bootstrap.patch.gz.b64
-Cargo.lock
-Cargo.toml
-CODE_OF_CONDUCT.md
-CONTRIBUTING.md
-Fusion v1.0.md
-LICENSE
-patch-diagnostic.txt
-README.md
-repair-diagnostic.txt
-PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion\Fusion core> Get-ChildItem -Name
-docs
-examples
-foundry
-fusion_impl
-target
-tests
-ast.rs
-bootstrap.sh
-Cargo.lock
-Cargo.toml
-codegen.rs
-environment.rs
-errors.rs
-foreign.rs
-fusion logo.png
-hello.exe
-hello.ll
-hir_lower.rs
-hir.rs
-interpreter.rs
-ir.rs
-lexer.rs
-lib.rs
-llvm_backend.rs
-main.exe
-main.pdb
-main.rs
-name_resolution.rs
-parser.rs
-README.md
-span.rs
-type_checker.rs
-types.rs
-value.rs
-PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion\Plugins> Get-ChildItem -Name
-actors system
-c
-cloud builds
-cpp
-csharp
-dart
-golang
-java
-jit+aot
-kotlin
-nim
-python
-repl+jupyter
-rust
-sqlite support
-swift
-typescript
-ui framework
-zig
-README for ergonomic plugins.md
-README for languages.md
-PS C:\Users\zapla\OneDrive\Namizje\programming\rust\fusion\Shared ecosystem infrastructure> Get-ChildItem -Name
-fusion-interop-model
-static analyser
-toolchain-orchestrator
-README.md
-
-There are more src folders and rust files inside of the previous folders.
-
-
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -678,9 +572,6 @@ Also making foundry.
 Acording to claudeAI these things require our attention:
 
 tuple types (tuple expressions exist, but Type has no tuple variant), Operator overloading and derives: no Add/Index/Deref traits, no #[derive], no attributes. Patterns: only wildcard, identifier, literal, and flat enum variant with bindings. Missing are nested patterns, guards (if), ranges, or-patterns (|), tuple and struct patterns, @ bindings, and ref patterns. Nested patterns, guards, and struct destructuring don’t exist yet.
-
-Iterators: your list has 13 operations. The type checker has map, filter, fold, collect, find, any, all and enumerate. I didn’t find reduce, count, take, skip, zip or flatten.
-Collections: arrays only have about 9 operations against my “10+”, and HashMap has the 8 or so you want but is stored as a list of pairs, so lookups are O(n).
 
 Modules and packaging
 import parses but is a no-op in the interpreter, resolver and checker, so there are effectively no modules, namespaces, use paths, re-exports or cross-file programs. pub/private exist but only on functions, structs and enums. There’s no equivalent of crates, Cargo, a registry, features, workspaces or build scripts.
@@ -696,15 +587,48 @@ Backend gaps: native code can’t yet do match, defer, for-each, break/continue,
 
 What we still need to implement:
 
-add more iterator and array methods, tuple types, nested patterns, guards, ranges, or-patterns, and derives.
-modules, because cross-file resolution, import paths, visibility and name collisions touch every stage and Foundry depends on them. Fixed-width integers also need casts and overflow rules in the checker, interpreter and backend.
+tuple types, nested patterns, guards, ranges, or-patterns, and derives.
 
-Diagnostics: rustc-quality errors with multiple spans and suggestions never really finish, though they can improve incrementally.
+Diagnostics: rustc-quality errors with multiple spans and suggestions.
+
+Real async fn/await exist, but functions run eagerly and return Task(value), so there’s no executor.
+
+modules, because cross-file resolution, import paths, visibility and name collisions touch every stage and Foundry depends on them. Fixed-width integers also need casts and overflow rules in the checker, interpreter and backend.
 
 Native runtime: this is the one to watch. Arrays, strings, closures and hash maps need a heap, so you need a runtime library and a GC strategy (tracing, reference counting, or arenas) before the backend can lower collections, defer and match. Self-hosting waits on this.
 
 C interop: it needs more than types. You need foreign declarations, header-to-binding generation (parsing C headers is a project in itself), callbacks into a GC’d language, error mapping, and pinning rules.
-Real async: you need an executor, not just syntax.
+
+
+Beyond that, in order to make fusion a general purpose language, we still need:
+
+Networking & HTTP:
+A native TCP/UDP socket abstraction.
+A standard HTTP/1.1 and HTTP/2 client and server framework (comparable to Go's net/http) so developers don't have to pull in heavy foreign bindings just to spin up an API endpoint.
+
+Text Processing & Encoding:
+Built-in string manipulation (UTF-8 validation, regex support, and parsing).
+Native serialization/deserialization primitives (e.g., JSON and TOML support baked into the core toolchain, given fusion.toml is central to Foundry).
+
+Cryptographic & Hashing Utilities:
+Secure hashing (SHA-256, HMAC) and random number generation (rand) natively supported without external dependencies.
+Time, Date, and Calendaring:
+Robust UTC/timezone-aware date and time arithmetic (date_utc, formatting, parsing).
+
+2. Concurrency and Async I/O
+General-purpose programming today demands high-performance handling of asynchronous tasks (web servers, database queries, file streaming).
+Async/Await with Structured Concurrency: Since you already plan to include async/await, pairing it with an actor system (which you noted as an ergonomic plugin) provides safe, isolated concurrency.
+Work-Stealing Runtime: A lightweight green-threading or task-spawning runtime (similar to Go's goroutines or Rust's Tokio) managed by the Fusion interpreter/compiler ensures IO-bound applications scale effortlessly.
+
+3. File System & OS Interoperability
+General-purpose languages must interact with the host operating system safely.
+Cross-Platform Path & File I/O: Standardized abstractions for reading, writing, traversing directories, and managing permissions across Linux, macOS, and Windows.
+Process Management: Utilities to spawn, communicate with, and terminate child processes (essential for build tools and automation scripts).
+
+4. Testing, Benchmarking, and Tooling primitives
+Since Foundry handles building and testing, the language itself needs first-class support for quality assurance:
+Built-in Unit & Integration Testing Framework: A #[test] attribute and assertion library baked directly into the compiler/test runner.
+Documentation Generator: Automatic markdown/HTML doc generation from doc comments (similar to Rust's cargo doc).
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------
 

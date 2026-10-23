@@ -1429,6 +1429,36 @@ impl TypeChecker {
                     Ok(Type::Void)
                 }
                 "get_length" | "length" => Ok(Type::Num),
+                "capacity" | "count" => Ok(Type::Num),
+                "is_empty" => Ok(Type::Bool),
+                "first" | "last" => Ok(Type::Option(inner.clone())),
+                "dedup" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::Syntax { message: "dedup expects no arguments".into(), span });
+                    }
+                    Ok(Type::Void)
+                }
+                "truncate" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "truncate expects a length".into(), span });
+                    }
+                    let t = self.infer_expression(&arguments[0])?;
+                    if !matches!(t, Type::Num | Type::Unknown) {
+                        return Err(self.type_mismatch("num", t.name(), arguments[0].span()));
+                    }
+                    Ok(Type::Void)
+                }
+                "extend" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "extend expects an array or iterator".into(), span });
+                    }
+                    let t = self.infer_expression(&arguments[0])?;
+                    match t {
+                        Type::Array(other) | Type::Iterator(other) if self.types_compatible(&inner, &other) => Ok(Type::Void),
+                        Type::Unknown => Ok(Type::Void),
+                        other => Err(self.type_mismatch("array or iterator", other.name(), arguments[0].span())),
+                    }
+                }
                 "clear" | "sort" | "reverse" => {
                     if !arguments.is_empty() {
                         return Err(FusionError::Syntax {
@@ -1530,6 +1560,42 @@ impl TypeChecker {
                     check_callback(self, &arguments[0])?;
                     Ok(Type::Bool)
                 }
+                "reduce" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "reduce expects callback".into(), span });
+                    }
+                    check_callback(self, &arguments[0])?;
+                    Ok(Type::Option(inner))
+                }
+                "count" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::Syntax { message: "count expects no arguments".into(), span });
+                    }
+                    Ok(Type::Num)
+                }
+                "take" | "skip" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: format!("{} expects a count", method), span });
+                    }
+                    let count_ty = self.infer_expression(&arguments[0])?;
+                    if !self.types_compatible(&Type::Num, &count_ty) {
+                        return Err(self.type_mismatch("num", count_ty.name(), arguments[0].span()));
+                    }
+                    Ok(Type::Iterator(inner))
+                }
+                "zip" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "zip expects one array or iterator".into(), span });
+                    }
+                    let _ = self.infer_expression(&arguments[0])?;
+                    Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown)))))
+                }
+                "flatten" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::Syntax { message: "flatten expects no arguments".into(), span });
+                    }
+                    Ok(Type::Iterator(Box::new(Type::Unknown)))
+                }
                 "fold" => {
                     if arguments.len() != 2 {
                         return Err(FusionError::Syntax {
@@ -1591,6 +1657,42 @@ impl TypeChecker {
                     check_callback(self, &arguments[0])?;
                     Ok(Type::Bool)
                 }
+                "reduce" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "reduce expects callback".into(), span });
+                    }
+                    check_callback(self, &arguments[0])?;
+                    Ok(Type::Option(inner))
+                }
+                "count" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::Syntax { message: "count expects no arguments".into(), span });
+                    }
+                    Ok(Type::Num)
+                }
+                "take" | "skip" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: format!("{} expects a count", method), span });
+                    }
+                    let count_ty = self.infer_expression(&arguments[0])?;
+                    if !self.types_compatible(&Type::Num, &count_ty) {
+                        return Err(self.type_mismatch("num", count_ty.name(), arguments[0].span()));
+                    }
+                    Ok(Type::Iterator(inner))
+                }
+                "zip" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "zip expects one array or iterator".into(), span });
+                    }
+                    let _ = self.infer_expression(&arguments[0])?;
+                    Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown)))))
+                }
+                "flatten" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::Syntax { message: "flatten expects no arguments".into(), span });
+                    }
+                    Ok(Type::Iterator(Box::new(Type::Unknown)))
+                }
                 "fold" => {
                     if arguments.len() != 2 {
                         return Err(FusionError::Syntax {
@@ -1645,11 +1747,41 @@ impl TypeChecker {
                 "contains_key" => Ok(Type::Bool),
                 "clear" => Ok(Type::Void),
                 "keys" => Ok(Type::Array(key)),
-                "values" => Ok(Type::Array(value)),
+                "values" => Ok(Type::Array(value.clone())),
                 "iterate" => Ok(Type::Iterator(Box::new(Type::Array(Box::new(
                     Type::Unknown,
                 ))))),
                 "get_length" | "length" => Ok(Type::Num),
+                "capacity" | "count" => Ok(Type::Num),
+                "is_empty" => Ok(Type::Bool),
+                "first" | "last" => Ok(Type::Option(value.clone())), // Changed from inner to value
+                "dedup" => {
+                    if !arguments.is_empty() {
+                        return Err(FusionError::Syntax { message: "dedup expects no arguments".into(), span });
+                    }
+                    Ok(Type::Void)
+                }
+                "truncate" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "truncate expects a length".into(), span });
+                    }
+                    let t = self.infer_expression(&arguments[0])?;
+                    if !matches!(t, Type::Num | Type::Unknown) {
+                        return Err(self.type_mismatch("num", t.name(), arguments[0].span()));
+                    }
+                    Ok(Type::Void)
+                }
+                "extend" => {
+                    if arguments.len() != 1 {
+                        return Err(FusionError::Syntax { message: "extend expects an array or iterator".into(), span });
+                    }
+                    let t = self.infer_expression(&arguments[0])?;
+                    match t {
+                        Type::Array(other) | Type::Iterator(other) if self.types_compatible(&value, &other) => Ok(Type::Void), // Changed from inner to value
+                        Type::Unknown => Ok(Type::Void),
+                        other => Err(self.type_mismatch("array or iterator", other.name(), arguments[0].span())),
+                    }
+                }
                 _ => Err(FusionError::Syntax {
                     message: format!("Unknown hash map method '{}'", method),
                     span,

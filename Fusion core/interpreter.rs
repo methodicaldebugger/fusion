@@ -2173,6 +2173,64 @@ impl Interpreter {
                 };
                 Value::Number(values.len() as i64)
             }
+            "is_empty" => {
+                if !arguments.is_empty() { panic!("is_empty() expects no arguments") }
+                Value::Boolean(values.is_empty())
+            }
+            "first" => {
+                if !arguments.is_empty() { panic!("first() expects no arguments") }
+                Value::Option(values.first().cloned().map(Box::new))
+            }
+            "last" => {
+                if !arguments.is_empty() { panic!("last() expects no arguments") }
+                Value::Option(values.last().cloned().map(Box::new))
+            }
+            "capacity" => {
+                if !arguments.is_empty() { panic!("capacity() expects no arguments") }
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get(name) {
+                        Some(Value::Array(items)) => Value::Number(items.capacity() as i64),
+                        _ => panic!("capacity() requires an array variable"),
+                    },
+                    _ => panic!("capacity() requires an array variable"),
+                }
+            }
+            "truncate" => {
+                if arguments.len() != 1 { panic!("truncate() expects a length") }
+                let Value::Number(n) = self.evaluate(&arguments[0]) else { panic!("truncate() expects a number") };
+                if n < 0 { panic!("truncate() length cannot be negative") }
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => { items.truncate(n as usize); Value::None },
+                        _ => panic!("truncate() requires an array variable"),
+                    },
+                    _ => panic!("truncate() requires an array variable"),
+                }
+            }
+            "dedup" => {
+                if !arguments.is_empty() { panic!("dedup() expects no arguments") }
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => { items.dedup(); Value::None },
+                        _ => panic!("dedup() requires an array variable"),
+                    },
+                    _ => panic!("dedup() requires an array variable"),
+                }
+            }
+            "extend" => {
+                if arguments.len() != 1 { panic!("extend() expects an array or iterator") }
+                let other = match self.evaluate(&arguments[0]) {
+                    Value::Array(v) | Value::Iterator(v) => v,
+                    _ => panic!("extend() expects an array or iterator"),
+                };
+                match object {
+                    Expression::Identifier { name, .. } => match self.environment.get_mut(name) {
+                        Some(Value::Array(items)) => { items.extend(other); Value::None },
+                        _ => panic!("extend() requires an array variable"),
+                    },
+                    _ => panic!("extend() requires an array variable"),
+                }
+            }
             "clear" => {
                 if !arguments.is_empty() {
                     panic!("clear() expects no arguments")
@@ -2272,7 +2330,7 @@ impl Interpreter {
                 }
             }
             "iterate" => Value::Iterator(values),
-            "map" | "filter" | "enumerate" | "collect" | "find" | "any" | "all" | "fold" => {
+            "map" | "filter" | "enumerate" | "collect" | "find" | "any" | "all" | "fold" | "reduce" | "count" | "take" | "skip" | "zip" | "flatten" => {
                 self.evaluate_iterator_method(values, method, arguments)
             }
             _ => panic!("Unknown array method '{}'", method),
@@ -2399,6 +2457,56 @@ impl Interpreter {
                     acc = self.invoke_function(&name, &f, vec![acc, v]);
                 }
                 acc
+            }
+            "reduce" => {
+                if arguments.len() != 1 {
+                    panic!("reduce() expects one callback")
+                };
+                let name = Self::callback_name(arguments, 0);
+                let f = self.functions.get(&name).cloned()
+                    .unwrap_or_else(|| panic!("Unknown callback '{}'", name));
+                let mut iter = values.into_iter();
+                match iter.next() {
+                    None => Value::Option(None),
+                    Some(first) => {
+                        let acc = iter.fold(first, |acc, v| self.invoke_function(&name, &f, vec![acc, v]));
+                        Value::Option(Some(Box::new(acc)))
+                    }
+                }
+            }
+            "count" => {
+                if !arguments.is_empty() { panic!("count() expects no arguments") }
+                Value::Number(values.len() as i64)
+            }
+            "take" | "skip" => {
+                if arguments.len() != 1 { panic!("{}() expects a count", method) }
+                let Value::Number(n) = self.evaluate(&arguments[0]) else { panic!("{}() expects a numeric count", method) };
+                let n = n.max(0) as usize;
+                let result = if method == "take" {
+                    values.into_iter().take(n).collect()
+                } else {
+                    values.into_iter().skip(n).collect()
+                };
+                Value::Iterator(result)
+            }
+            "zip" => {
+                if arguments.len() != 1 { panic!("zip() expects one array or iterator") }
+                let other = match self.evaluate(&arguments[0]) {
+                    Value::Array(v) | Value::Iterator(v) => v,
+                    _ => panic!("zip() expects an array or iterator"),
+                };
+                Value::Iterator(values.into_iter().zip(other).map(|(a,b)| Value::Array(vec![a,b])).collect())
+            }
+            "flatten" => {
+                if !arguments.is_empty() { panic!("flatten() expects no arguments") }
+                let mut result = Vec::new();
+                for value in values {
+                    match value {
+                        Value::Array(items) | Value::Iterator(items) => result.extend(items),
+                        other => result.push(other),
+                    }
+                }
+                Value::Iterator(result)
             }
             _ => panic!("Unknown iterator method '{}'", method),
         }

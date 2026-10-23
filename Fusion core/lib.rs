@@ -2955,4 +2955,71 @@ fn invalid_base64_is_rejected_or_returns_documented_error() {
     // Do not silently return corrupted decoded data.
 }
 
+
+    #[test]
+    fn iterator_reduce_count_take_skip_zip_flatten() {
+        assert_eq!(
+            run(
+                r#"fn add(a: num, b: num) -> num:
+    return a + b
+
+main:
+    nums = [1, 2, 3, 4]
+    print(nums.iterate().reduce(add))
+    print(nums.iterate().count())
+    print(nums.iterate().take(2).collect())
+    print(nums.iterate().skip(2).collect())
+    print(nums.iterate().zip([10, 20]).collect())
+    nested = [[1, 2], [3], [4, 5]]
+    print(nested.iterate().flatten().collect())
+"#
+            ),
+            vec![
+                "Some(10)",
+                "4",
+                "[1, 2]",
+                "[3, 4]",
+                "[[1, 10], [2, 20]]",
+                "[1, 2, 3, 4, 5]"
+            ]
+        );
+    }
+
+    #[test]
+    fn iterator_reduce_empty_returns_none() {
+        assert_eq!(
+            run(
+                r#"fn add(a: num, b: num) -> num:
+    return a + b
+
+main:
+    nums = []
+    print(nums.iterate().reduce(add))
+"#
+            ),
+            vec!["None"]
+        );
+    }
+
+
+    #[test]
+    fn growable_array_collection_operations() {
+        assert_eq!(
+            run(
+                r#"main:
+    values = [1, 1, 2, 3, 3]
+    print(values.first())
+    print(values.last())
+    print(values.is_empty())
+    values.dedup()
+    values.extend([4, 5])
+    values.truncate(4)
+    print(values)
+    print(values.length())
+"#
+            ),
+            vec!["Some(1)", "Some(3)", "false", "[1, 2, 3, 4]", "4"]
+        );
+    }
+
 }
