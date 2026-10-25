@@ -12,6 +12,7 @@ pub enum Value {
     String(String),
     Boolean(bool),
     Array(Vec<Value>),
+    Tuple(Vec<Value>),
     HashMap(Vec<(Value, Value)>),
     Iterator(Vec<Value>),
 
@@ -45,6 +46,13 @@ impl std::fmt::Display for Value {
             Value::String(v) => write!(f, "{}", v),
 
             Value::Boolean(v) => write!(f, "{}", v),
+
+            Value::Tuple(values) => {
+                write!(f, "(")?;
+                for (i, value) in values.iter().enumerate() { if i > 0 { write!(f, ", ")?; } write!(f, "{}", value)?; }
+                if values.len() == 1 { write!(f, ",")?; }
+                write!(f, ")")
+            }
 
             Value::Array(values) => {
                 write!(f, "[")?;
@@ -143,6 +151,7 @@ impl PartialEq for Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::HashMap(a), Value::HashMap(b)) => a == b,
             (Value::Iterator(a), Value::Iterator(b)) => a == b,
             (

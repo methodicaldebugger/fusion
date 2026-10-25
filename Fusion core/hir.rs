@@ -70,9 +70,12 @@ pub enum HirStatement {
 
     Function(HirFunction),
 
+    Main { body: Vec<HirStatement>, span: Span },
+
     Struct {
         name: String,
         fields: Vec<HirStructField>,
+        derives: Vec<String>,
         span: Span,
     },
 
@@ -180,6 +183,9 @@ pub enum HirExpression {
     Identifier(String),
 
     Array(Vec<HirExpression>),
+
+    /// Heterogeneous, fixed-length tuple value. Element order and types are preserved.
+    Tuple(Vec<HirExpression>),
 
     Index {
         array: Box<HirExpression>,

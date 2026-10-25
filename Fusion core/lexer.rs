@@ -90,10 +90,12 @@ pub enum Token {
     GreaterEqual,
     AndAnd,
     OrOr,
+    Pipe,
     Bang,
     LeftParen,
     RightParen,
     LeftBracket,
+    Hash,
     RightBracket,
     Comma,
     Colon,
@@ -478,6 +480,10 @@ impl Lexer {
                     return Ok(Spanned::new(Token::NewLine, start, self.position));
                 }
                 '#' => {
+                    self.advance();
+                    if self.peek() == Some('[') {
+                        return Ok(Spanned::new(Token::Hash, start, self.position));
+                    }
                     while let Some(c) = self.peek() {
                         self.advance();
                         if c == '\n' {
@@ -715,7 +721,7 @@ impl Lexer {
                         self.advance();
                         return Ok(Spanned::new(Token::OrOr, start, self.position));
                     }
-                    return self.error("expected `||`");
+                    return Ok(Spanned::new(Token::Pipe, start, self.position));
                 }
                 c if c.is_ascii_digit() => {
                     return Ok(Spanned::new(self.read_number()?, start, self.position));

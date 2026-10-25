@@ -790,20 +790,13 @@ impl Interpreter {
                 }
 
                 let mut field_list = Vec::new();
-
                 for field in fields {
-                    if field_list
-                        .iter()
-                        .any(|(field_name, _)| field_name == &field.name)
-                    {
+                    if field_list.iter().any(|(field_name, _)| field_name == &field.name) {
                         panic!("Duplicate field '{}' in struct '{}'", field.name, name);
                     }
-
                     field_list.push((field.name.clone(), self.type_from_name(&field.type_name)));
                 }
-
-                self.structs
-                    .insert(name.clone(), StructDefinition { fields: field_list });
+                self.structs.insert(name.clone(), StructDefinition { fields: field_list });
             }
         }
 
@@ -1364,11 +1357,9 @@ impl Interpreter {
                 for arm in arms {
                     if let Some(bindings) = self.pattern_matches(&arm.pattern, &value) {
                         self.environment.push_scope();
-
-                        for (name, binding_value) in bindings {
-                            self.environment.declare(name, binding_value, true);
-                        }
-
+                        for (name, binding_value) in bindings { self.environment.declare(name, binding_value, true); }
+                        let guard_passes = arm.guard.as_ref().map(|g| matches!(self.evaluate(g), Value::Boolean(true))).unwrap_or(true);
+                        if !guard_passes { self.exit_scope(); continue; }
                         let flow = self.execute_statement_list(&arm.body);
 
                         self.exit_scope();
@@ -1533,6 +1524,14 @@ impl Interpreter {
                 )
             }
 
+            (PatternKind::Tuple(patterns), Value::Tuple(values)) if patterns.len() == values.len() => {
+                let mut all = Vec::new();
+                for (p, v) in patterns.iter().zip(values) { all.extend(self.pattern_matches(p, v)?); }
+                Some(all)
+            }
+            (PatternKind::Or(patterns), value) => patterns.iter().find_map(|p| self.pattern_matches(p, value)),
+            (PatternKind::Range { start, end, inclusive }, Value::Number(value))
+                if *value >= *start && ((*inclusive && *value <= *end) || (!*inclusive && *value < *end)) => Some(Vec::new()),
             _ => None,
         }
     }
@@ -1566,6 +1565,8 @@ impl Interpreter {
             // -----------------------------------------------------------------
             // Array
             // -----------------------------------------------------------------
+            Expression::Tuple { elements, .. } => Value::Tuple(elements.iter().map(|e| self.evaluate(e)).collect()),
+
             Expression::Array { elements, .. } => {
                 let values = elements
                     .iter()
@@ -1649,6 +1650,16 @@ impl Interpreter {
             Expression::Call {
                 name, arguments, ..
             } => {
+                if name == "__fusion_derive_debug" {
+                    if arguments.len() != 1 { panic!("internal derive debug helper expects one argument"); }
+                    return Value::String(format!("{:?}", self.evaluate(&arguments[0])));
+                }
+                if name == "__fusion_derive_eq" {
+                    if arguments.len() != 2 { panic!("internal derive equality helper expects two arguments"); }
+                    let left = self.evaluate(&arguments[0]);
+                    let right = self.evaluate(&arguments[1]);
+                    return Value::Boolean(values_equal(&left, &right));
+                }
                 // Struct constructor.
                 if let Some(struct_definition) = self.structs.get(name).cloned() {
                     if arguments.len() != struct_definition.fields.len() {
@@ -2072,10 +2083,7 @@ impl Interpreter {
             }
             Value::String(text) => self.evaluate_string_method(text, method, arguments),
             Value::Struct { name, .. } => {
-                let function = self
-                    .methods
-                    .get(&(name.clone(), method.to_string()))
-                    .cloned()
+                let function = self.methods.get(&(name.clone(), method.to_string())).cloned()
                     .unwrap_or_else(|| panic!("Unknown method '{}.{}'", name, method));
                 let mut values = Vec::with_capacity(arguments.len() + 1);
                 values.push(object_value);
@@ -2908,6 +2916,12 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 }
 fn serialize_value(v: &Value) -> String {
     match v {
+        Value::Tuple(items) => {
+            format!(
+                "({})",
+                items.iter().map(serialize_value).collect::<Vec<_>>().join(", ")
+            )
+        }
         Value::Number(n) => n.to_string(),
 
         Value::Float(x) => x.to_string(),
@@ -3104,4 +3118,21 @@ fn base64_decode(s: &str) -> String {
         i += 4;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+
+/// Structural equality used by derived `PartialEq` for values that can occur in a struct.
+fn values_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(a), Value::Number(b)) => a == b,
+        (Value::Float(a), Value::Float(b)) => a == b,
+        (Value::String(a), Value::String(b)) => a == b,
+        (Value::Boolean(a), Value::Boolean(b)) => a == b,
+        (Value::None, Value::None) => true,
+        (Value::Tuple(a), Value::Tuple(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| values_equal(x, y)),
+        (Value::Struct { name: an, fields: af }, Value::Struct { name: bn, fields: bf }) => an == bn && af.len() == bf.len() && af.iter().all(|(key, value)| bf.get(key).is_some_and(|other| values_equal(value, other))),
+        (Value::Enum { enum_name: an, variant: av, values: ax }, Value::Enum { enum_name: bn, variant: bv, values: bx }) => an == bn && av == bv && ax.len() == bx.len() && ax.iter().zip(bx).all(|(x, y)| values_equal(x, y)),
+        (Value::Option(a), Value::Option(b)) => match (a, b) { (None, None) => true, (Some(a), Some(b)) => values_equal(a, b), _ => false },
+        _ => false,
+    }
 }

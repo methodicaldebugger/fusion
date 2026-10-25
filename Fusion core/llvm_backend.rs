@@ -37,6 +37,7 @@ pub struct LLVMBackend {
     string_ids: HashMap<String, usize>,
     functions: HashMap<String, FunctionSig>,
     structs: HashMap<String, StructDefinition>,
+    tuple_types: HashMap<String, Vec<Type>>,
     next_temp: u32,
     next_block: u32,
     locals: HashMap<String, (LlType, String)>,
@@ -52,6 +53,7 @@ impl LLVMBackend {
             string_ids: HashMap::new(),
             functions: HashMap::new(),
             structs: HashMap::new(),
+            tuple_types: HashMap::new(),
             next_temp: 0,
             next_block: 0,
             locals: HashMap::new(),
@@ -83,7 +85,47 @@ impl LLVMBackend {
         out.push('\n');
         out.push_str("declare i32 @printf(ptr, ...)\n");
         out.push_str("declare i32 @puts(ptr)\n");
-        out.push_str("declare void @llvm.trap()\n\n");
+        out.push_str("declare ptr @malloc(i64)\n");
+        out.push_str("declare void @free(ptr)\n");
+        out.push_str("declare void @llvm.trap()\n");
+        out.push_str(r#"
+@fusion_tuple_head = internal global ptr null
+
+define internal ptr @fusion_tuple_new(i64 %count) {
+entry:
+  %slots = add i64 %count, 2
+  %bytes = mul i64 %slots, 8
+  %raw = call ptr @malloc(i64 %bytes)
+  %next_slot = getelementptr inbounds i64, ptr %raw, i64 1
+  %old_head = load ptr, ptr @fusion_tuple_head
+  %old_int = ptrtoint ptr %old_head to i64
+  store i64 %old_int, ptr %next_slot, align 8
+  store ptr %raw, ptr @fusion_tuple_head
+  %count_slot = getelementptr inbounds i64, ptr %raw, i64 0
+  store i64 %count, ptr %count_slot, align 8
+  %data = getelementptr inbounds i64, ptr %raw, i64 2
+  ret ptr %data
+}
+
+define internal void @fusion_tuple_cleanup() {
+entry:
+  br label %loop
+loop:
+  %raw = load ptr, ptr @fusion_tuple_head
+  %done = icmp eq ptr %raw, null
+  br i1 %done, label %exit, label %body
+body:
+  %next_slot = getelementptr inbounds i64, ptr %raw, i64 1
+  %next_int = load i64, ptr %next_slot, align 8
+  %next = inttoptr i64 %next_int to ptr
+  store ptr %next, ptr @fusion_tuple_head
+  call void @free(ptr %raw)
+  br label %loop
+exit:
+  ret void
+}
+"#);
+        out.push_str("\n");
         Ok(out)
     }
 
@@ -201,6 +243,7 @@ impl LLVMBackend {
         self.next_temp = 0;
         self.next_block = 0;
         self.locals.clear();
+        self.tuple_types.clear();
         self.current_ret = ret;
     }
 
@@ -252,6 +295,7 @@ impl LLVMBackend {
         writeln!(b, "define i32 @main() {{").unwrap();
         writeln!(b, "entry:").unwrap();
         self.emit_statements(body, &mut b)?;
+        writeln!(b, "  call void @fusion_tuple_cleanup()").unwrap();
         writeln!(b, "  ret i32 0").unwrap();
         writeln!(b, "}}").unwrap();
         self.module.push_str(&b);
@@ -331,6 +375,10 @@ impl LLVMBackend {
                     writeln!(out, "  {} = alloca {}, align 8", slot, ty.text()).unwrap();
                     writeln!(out, "  store {} {}, ptr {}", ty.text(), value, slot).unwrap();
                     self.locals.insert(d.name.clone(), (ty, slot));
+                    if let Some(Expression::Tuple { elements, .. }) = d.value.as_ref() {
+                        let tuple_types = elements.iter().map(|e| self.fusion_type_of_expr(e)).collect();
+                        self.tuple_types.insert(d.name.clone(), tuple_types);
+                    }
                 }
             }
             Statement::ConstDeclaration {
@@ -339,15 +387,21 @@ impl LLVMBackend {
                 declared_type,
                 ..
             } => {
+                let tuple_types = if let Expression::Tuple { elements, .. } = value {
+                    Some(elements.iter().map(|e| self.fusion_type_of_expr(e)).collect())
+                } else { None };
                 let ty = declared_type
                     .as_deref()
                     .map(|x| self.llvm_type_name(x))
                     .unwrap_or_else(|| self.expr_type(value));
-                let value = self.emit_expr(value, out)?;
+                let emitted_value = self.emit_expr(value, out)?;
                 let slot = format!("%local_{}_{}", sanitize_symbol(name), self.next_temp);
                 writeln!(out, "  {} = alloca {}, align 8", slot, ty.text()).unwrap();
-                writeln!(out, "  store {} {}, ptr {}", ty.text(), value, slot).unwrap();
+                writeln!(out, "  store {} {}, ptr {}", ty.text(), emitted_value, slot).unwrap();
                 self.locals.insert(name.clone(), (ty, slot));
+                if let Some(tuple_types) = tuple_types {
+                    self.tuple_types.insert(name.clone(), tuple_types);
+                }
             }
             Statement::Assignment { target, value, .. } => {
                 let Expression::Identifier { name, .. } = target else {
@@ -358,6 +412,10 @@ impl LLVMBackend {
                     // Existing variable: evaluate the new value and store it.
                     let v = self.emit_expr(value, out)?;
                     writeln!(out, "  store {} {}, ptr {}", ty.text(), v, slot).unwrap();
+                    if let Expression::Tuple { elements, .. } = value {
+                        let tuple_types = elements.iter().map(|e| self.fusion_type_of_expr(e)).collect();
+                        self.tuple_types.insert(name.clone(), tuple_types);
+                    }
                 } else {
                     // New variable: Fusion treats `x = value` as an inferred declaration.
                     let ty = self.expr_type(value);
@@ -368,6 +426,10 @@ impl LLVMBackend {
                     writeln!(out, "  store {} {}, ptr {}", ty.text(), v, slot).unwrap();
 
                     self.locals.insert(name.clone(), (ty, slot));
+                    if let Expression::Tuple { elements, .. } = value {
+                        let tuple_types = elements.iter().map(|e| self.fusion_type_of_expr(e)).collect();
+                        self.tuple_types.insert(name.clone(), tuple_types);
+                    }
                 }
             }
             Statement::Expression { expression, .. } | Statement::Call { expression, .. } => {
@@ -535,6 +597,72 @@ impl LLVMBackend {
                 "false".into()
             }),
             Expression::String { value, .. } => Ok(self.string_ptr(value)),
+            Expression::Tuple { elements, .. } => {
+                // Tuples use a tracked heap allocation. The runtime stores a length and
+                // linked-list pointer in a two-slot header immediately before the data.
+                // All tuple allocations are released by the generated main epilogue.
+                let tuple_ptr = self.temp();
+                writeln!(out, "  {} = call ptr @fusion_tuple_new(i64 {})", tuple_ptr, elements.len()).unwrap();
+                for (index, element) in elements.iter().enumerate() {
+                    let value = self.emit_expr(element, out)?;
+                    let encoded = match self.expr_type(element) {
+                        LlType::I64 => value,
+                        LlType::I1 => {
+                            let widened = self.temp();
+                            writeln!(out, "  {} = zext i1 {} to i64", widened, value).unwrap();
+                            widened
+                        }
+                        LlType::F64 => {
+                            let bits = self.temp();
+                            writeln!(out, "  {} = bitcast double {} to i64", bits, value).unwrap();
+                            bits
+                        }
+                        LlType::Ptr => {
+                            let bits = self.temp();
+                            writeln!(out, "  {} = ptrtoint ptr {} to i64", bits, value).unwrap();
+                            bits
+                        }
+                        LlType::Void => return Err(self.unsupported("void value cannot be stored in a tuple")),
+                    };
+                    let slot_ptr = self.temp();
+                    writeln!(out, "  {} = getelementptr inbounds i64, ptr {}, i64 {}", slot_ptr, tuple_ptr, index).unwrap();
+                    writeln!(out, "  store i64 {}, ptr {}, align 8", encoded, slot_ptr).unwrap();
+                }
+                Ok(tuple_ptr)
+            }
+            Expression::Index { array, index, .. } => {
+                let index_value = match index.as_ref() {
+                    Expression::Number { value, .. } if *value >= 0 => *value as usize,
+                    _ => return Err(self.unsupported("native tuple indexing requires a non-negative integer literal index")),
+                };
+                let element_type = self.tuple_element_type(array, index_value)
+                    .ok_or_else(|| self.unsupported("tuple index is out of bounds or tuple layout is unknown"))?;
+                let native_element_type = self.native_type_for_fusion_type(&element_type);
+                let tuple = self.emit_expr(array, out)?;
+                let slot = self.temp();
+                writeln!(out, "  {} = getelementptr inbounds i64, ptr {}, i64 {}", slot, tuple, index_value).unwrap();
+                let encoded = self.temp();
+                writeln!(out, "  {} = load i64, ptr {}, align 8", encoded, slot).unwrap();
+                match native_element_type {
+                    LlType::I64 => Ok(encoded),
+                    LlType::I1 => {
+                        let value = self.temp();
+                        writeln!(out, "  {} = trunc i64 {} to i1", value, encoded).unwrap();
+                        Ok(value)
+                    }
+                    LlType::F64 => {
+                        let value = self.temp();
+                        writeln!(out, "  {} = bitcast i64 {} to double", value, encoded).unwrap();
+                        Ok(value)
+                    }
+                    LlType::Ptr => {
+                        let value = self.temp();
+                        writeln!(out, "  {} = inttoptr i64 {} to ptr", value, encoded).unwrap();
+                        Ok(value)
+                    }
+                    LlType::Void => Err(self.unsupported("cannot index a tuple element of type void")),
+                }
+            }
             Expression::Identifier { name, .. } => {
                 let (ty, slot) = self
                     .locals
@@ -754,6 +882,62 @@ impl LLVMBackend {
         }
     }
 
+    fn tuple_element_type(&self, tuple: &Expression, index: usize) -> Option<Type> {
+        match tuple {
+            Expression::Tuple { elements, .. } => elements.get(index).map(|e| self.fusion_type_of_expr(e)),
+            Expression::Identifier { name, .. } => self.tuple_types.get(name).and_then(|items| items.get(index)).cloned(),
+            Expression::Index { array, index: inner_index, .. } => {
+                let Expression::Number { value, .. } = inner_index.as_ref() else { return None; };
+                if *value < 0 { return None; }
+                match self.tuple_element_type(array, *value as usize)? {
+                    Type::Tuple(items) => items.get(index).cloned(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn fusion_type_of_expr(&self, e: &Expression) -> Type {
+        match e {
+            Expression::Tuple { elements, .. } => Type::Tuple(elements.iter().map(|e| self.fusion_type_of_expr(e)).collect()),
+            Expression::Number { .. } => Type::Num,
+            Expression::Float { .. } => Type::Float,
+            Expression::Boolean { .. } => Type::Bool,
+            Expression::String { .. } => Type::String,
+            Expression::Identifier { name, .. } => {
+                if let Some(items) = self.tuple_types.get(name) { return Type::Tuple(items.clone()); }
+                match self.locals.get(name).map(|entry| entry.0) {
+                    Some(LlType::I64) => Type::Num,
+                    Some(LlType::I1) => Type::Bool,
+                    Some(LlType::F64) => Type::Float,
+                    Some(LlType::Ptr) => Type::String,
+                    _ => Type::Unknown,
+                }
+            },
+            Expression::Index { array, index, .. } => {
+                if let Expression::Number { value, .. } = index.as_ref() {
+                    if *value >= 0 {
+                        if let Some(ty) = self.tuple_element_type(array, *value as usize) { return ty; }
+                    }
+                }
+                Type::Unknown
+            }
+            _ => Type::Unknown,
+        }
+    }
+
+    fn native_type_for_fusion_type(&self, ty: &Type) -> LlType {
+        match ty {
+            Type::Num => LlType::I64,
+            Type::Float => LlType::F64,
+            Type::Bool => LlType::I1,
+            Type::String | Type::Tuple(_) | Type::Array(_) | Type::Struct(_) | Type::Enum(_) => LlType::Ptr,
+            Type::Void => LlType::Void,
+            _ => LlType::I64,
+        }
+    }
+
     fn expr_type(&self, e: &Expression) -> LlType {
         match e {
             Expression::Number { .. } => LlType::I64,
@@ -783,6 +967,17 @@ impl LLVMBackend {
             Expression::Identifier { name, .. } => {
                 self.locals.get(name).map(|x| x.0).unwrap_or(LlType::I64)
             }
+            Expression::Index { array, index, .. } => {
+                if let Expression::Number { value, .. } = index.as_ref() {
+                    if *value >= 0 {
+                        if let Some(ty) = self.tuple_element_type(array, *value as usize) {
+                            return self.native_type_for_fusion_type(&ty);
+                        }
+                    }
+                }
+                LlType::I64
+            }
+            Expression::Tuple { .. } => LlType::Ptr,
             Expression::Call { name, .. } => self
                 .functions
                 .get(name)

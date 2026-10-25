@@ -207,6 +207,19 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_type(&mut self) -> Result<String, ParseError> {
+        if self.consume(&Token::LeftParen) {
+            let mut items = Vec::new();
+            if self.current() != &Token::RightParen {
+                loop {
+                    items.push(self.parse_type()?);
+                    if !self.consume(&Token::Comma) { break; }
+                    if self.current() == &Token::RightParen { break; }
+                }
+            }
+            if !self.consume(&Token::RightParen) { return self.error("Expected ')' after tuple type"); }
+            if items.len() < 2 { return self.error("Tuple types require at least two elements"); }
+            return Ok(format!("({})", items.join(", ")));
+        }
         let base = match self.current() {
             Token::NumType => {
                 self.advance();
@@ -285,6 +298,24 @@ impl Parser {
                 Ok(Some(self.parse_function()?))
             }
 
+            Token::Hash => {
+                self.advance();
+                if !self.consume(&Token::LeftBracket) { return self.error("Expected '[' after '#'"); }
+                match self.current() { Token::Identifier(name) if name == "derive" => self.advance(), _ => return self.error("Expected derive attribute") }
+                if !self.consume(&Token::LeftParen) { return self.error("Expected '(' after derive"); }
+                let mut derives = Vec::new();
+                loop {
+                    match self.current() { Token::Identifier(name) => { derives.push(name.clone()); self.advance(); }, _ => return self.error("Expected trait name in derive list") }
+                    if !self.consume(&Token::Comma) { break; }
+                }
+                if !self.consume(&Token::RightParen) || !self.consume(&Token::RightBracket) { return self.error("Expected ')]' after derive list"); }
+                // The attribute is normally followed by a newline before the item it decorates.
+                self.skip_newlines();
+                if self.current() != &Token::Struct { return self.error("derive attribute must precede a struct declaration"); }
+                let mut declaration = self.parse_struct()?;
+                if let Statement::Struct { derives: stored, .. } = &mut declaration { *stored = derives; }
+                Ok(Some(declaration))
+            }
             Token::Struct => Ok(Some(self.parse_struct()?)),
 
             Token::Enum => Ok(Some(self.parse_enum()?)),
@@ -868,6 +899,7 @@ impl Parser {
         Ok(Statement::Struct {
             name,
             fields,
+            derives: Vec::new(),
             span: self.span_from(start),
         })
     }
@@ -1141,8 +1173,36 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         let start = self.current_span().start;
+        let mut first = self.parse_pattern_atom()?;
+        if let PatternKind::Number(low) = first.kind.clone() {
+            if self.consume(&Token::DotDot) {
+                let inclusive = false;
+                let high = match self.current() { Token::Num(n) => { let n=*n; self.advance(); n }, _ => return self.error("Expected integer at end of range pattern") };
+                first = Pattern { kind: PatternKind::Range { start: low, end: high, inclusive }, span: self.span_from(start) };
+            }
+        }
+        let mut alternatives = vec![first];
+        while self.consume(&Token::Pipe) { alternatives.push(self.parse_pattern_atom()?); }
+        if alternatives.len() > 1 { Ok(Pattern { kind: PatternKind::Or(alternatives), span: self.span_from(start) }) } else { Ok(alternatives.remove(0)) }
+    }
+
+    fn parse_pattern_atom(&mut self) -> Result<Pattern, ParseError> {
+        let start = self.current_span().start;
 
         let kind = match self.current() {
+            Token::LeftParen => {
+                self.advance();
+                let mut patterns = Vec::new();
+                if self.current() != &Token::RightParen {
+                    loop {
+                        patterns.push(self.parse_pattern()?);
+                        if !self.consume(&Token::Comma) { break; }
+                        if self.current() == &Token::RightParen { break; }
+                    }
+                }
+                if !self.consume(&Token::RightParen) { return self.error("Expected ')' after tuple pattern"); }
+                PatternKind::Tuple(patterns)
+            }
             Token::Identifier(name) => {
                 let first = name.clone();
                 self.advance();
@@ -1278,6 +1338,7 @@ impl Parser {
         let start = self.current_span().start;
 
         let pattern = self.parse_pattern()?;
+        let guard = if self.consume(&Token::If) { Some(self.parse_expression()?) } else { None };
 
         let has_arrow = self.consume(&Token::FatArrow);
         let has_colon = if !has_arrow {
@@ -1311,6 +1372,7 @@ impl Parser {
 
         Ok(MatchArm {
             pattern,
+            guard,
             body,
             span: self.span_from(start),
         })
@@ -2433,15 +2495,21 @@ impl Parser {
             }
 
             Token::LeftParen => {
+                let start = self.current_span().start;
                 self.advance();
-
-                let expression = self.parse_expression()?;
-
-                if !self.consume(&Token::RightParen) {
-                    return self.error("Expected ')' after expression");
+                let first = self.parse_expression()?;
+                if self.consume(&Token::Comma) {
+                    let mut elements = vec![first];
+                    while self.current() != &Token::RightParen && self.current() != &Token::Eof {
+                        elements.push(self.parse_expression()?);
+                        if !self.consume(&Token::Comma) { break; }
+                    }
+                    if !self.consume(&Token::RightParen) { return self.error("Expected ')' after tuple expression"); }
+                    Expression::Tuple { elements, span: self.span_from(start) }
+                } else {
+                    if !self.consume(&Token::RightParen) { return self.error("Expected ')' after expression"); }
+                    first
                 }
-
-                expression
             }
 
             Token::LeftBracket => {
@@ -2590,9 +2658,10 @@ impl Parser {
             .map(|token| token.span.end)
             .unwrap_or(program_start);
 
-        Ok(Program {
+        let program = Program {
             statements,
             span: Span::new(program_start, program_end),
-        })
+        };
+        Ok(crate::derive_expansion::expand_derives(program))
     }
 }

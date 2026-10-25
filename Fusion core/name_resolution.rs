@@ -271,14 +271,13 @@ impl Resolver {
                 {
                     return Err(FusionError::UnknownVariable {
                         name: name.clone(),
+                        suggestion: None,
                         span: *span,
                     });
                 }
             }
-            Expression::Array { elements, .. } => {
-                for e in elements {
-                    self.resolve_expression(e)?;
-                }
+            Expression::Array { elements, .. } | Expression::Tuple { elements, .. } => {
+                for e in elements { self.resolve_expression(e)?; }
             }
             Expression::Index { array, index, .. } => {
                 self.resolve_expression(array)?;

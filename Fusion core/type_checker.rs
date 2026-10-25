@@ -46,6 +46,8 @@ pub struct TypeEnvironment {
     pub enums: HashMap<String, EnumDefinition>,
     pub methods: HashMap<(String, String), FunctionType>,
     pub traits: HashMap<String, Vec<TraitMethod>>,
+    /// Traits requested by `#[derive(...)]`; their generated methods share the ordinary method-signature table.
+    pub derived_traits: HashMap<String, HashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +151,8 @@ impl TypeChecker {
                 Type::TcpStream,
             ),
             ("serialize", vec![Type::Unknown], Type::String),
+            ("__fusion_derive_debug", vec![Type::Unknown], Type::String),
+            ("__fusion_derive_eq", vec![Type::Unknown, Type::Unknown], Type::Bool),
             ("deserialize", vec![Type::String], Type::Unknown),
             (
                 "format",
@@ -183,6 +187,7 @@ impl TypeChecker {
                 enums: HashMap::new(),
                 methods: HashMap::new(),
                 traits: HashMap::new(),
+                derived_traits: HashMap::new(),
             },
             current_function: None,
             loop_depth: 0,
@@ -245,6 +250,7 @@ impl TypeChecker {
     fn unknown_variable(&self, name: &str, span: Span) -> FusionError {
         FusionError::UnknownVariable {
             name: name.to_string(),
+            suggestion: None,
             span,
         }
     }
@@ -291,6 +297,7 @@ impl TypeChecker {
             (Type::Unknown, _) | (_, Type::Unknown) => true,
 
             // Array element types must be compatible.
+            (Type::Tuple(a), Type::Tuple(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x,y)| self.types_compatible(x,y)),
             (Type::Array(expected_inner), Type::Array(found_inner)) => {
                 self.types_compatible(expected_inner, found_inner)
             }
@@ -334,6 +341,12 @@ impl TypeChecker {
     }
 
     fn convert_type(&self, name: &str, span: Span) -> Result<Type, FusionError> {
+        if name.starts_with('(') && name.ends_with(')') {
+            let inner = &name[1..name.len()-1];
+            let parts = inner.split(',').map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>();
+            if parts.len() < 2 { return Err(FusionError::Syntax { message: "Tuple types require at least two elements".into(), span }); }
+            return Ok(Type::Tuple(parts.iter().map(|p| self.convert_type(p, span)).collect::<Result<Vec<_>, _>>()?));
+        }
         match name {
             "num" => Ok(Type::Num),
             "float" => Ok(Type::Float),
@@ -415,6 +428,9 @@ impl TypeChecker {
         generic_parameters: &[String],
         span: Span,
     ) -> Result<Type, FusionError> {
+        if name == "Self" {
+            return Ok(Type::Unknown);
+        }
         if generic_parameters.iter().any(|parameter| parameter == name) {
             return Ok(Type::Generic(name.to_string()));
         }
@@ -794,6 +810,26 @@ impl TypeChecker {
         match &pattern.kind {
             PatternKind::Wildcard => {}
 
+            PatternKind::Tuple(patterns) => {
+                match expected {
+                    Type::Tuple(types) if types.len() == patterns.len() => {
+                        for (p, ty) in patterns.iter().zip(types) { bindings.extend(self.check_pattern(p, ty)?); }
+                    }
+                    Type::Unknown => { for p in patterns { bindings.extend(self.check_pattern(p, &Type::Unknown)?); } }
+                    other => return Err(self.type_mismatch("tuple", other.name(), pattern.span)),
+                }
+            }
+            PatternKind::Or(alternatives) => {
+                if let Some(first) = alternatives.first() { bindings.extend(self.check_pattern(first, expected)?); }
+                for alternative in alternatives.iter().skip(1) {
+                    let other = self.check_pattern(alternative, expected)?;
+                    let a: Vec<_> = bindings.iter().map(|(n, _)| n).collect();
+                    let b: Vec<_> = other.iter().map(|(n, _)| n).collect();
+                    if a != b { return Err(FusionError::Syntax { message: "Every alternative in an or-pattern must bind the same names in the same order".into(), span: alternative.span }); }
+                }
+            }
+            PatternKind::Range { .. } => if !matches!(expected, Type::Num | Type::Unknown) { return Err(self.type_mismatch("num", expected.name(), pattern.span)); },
+
             PatternKind::Identifier(name) => {
                 bindings.push((name.clone(), expected.clone()));
             }
@@ -933,6 +969,13 @@ impl TypeChecker {
                 .map(|info| info.ty.clone())
                 .ok_or_else(|| self.unknown_variable(name, *span)),
 
+            Expression::Tuple { elements, .. } => {
+                let mut types = Vec::new();
+                for element in elements { types.push(self.infer_expression(element)?); }
+                if types.len() < 2 { return Err(FusionError::Syntax { message: "Tuple expressions require at least two elements".into(), span: expression.span() }); }
+                Ok(Type::Tuple(types))
+            }
+
             Expression::Array { elements, span } => {
                 if elements.is_empty() {
                     return Ok(Type::Array(Box::new(Type::Unknown)));
@@ -969,6 +1012,16 @@ impl TypeChecker {
                     Type::Array(inner) => Ok(*inner),
 
                     Type::Iterator(inner) => Ok(*inner),
+
+                    Type::Tuple(items) => {
+                        let Expression::Number { value, .. } = index.as_ref() else {
+                            return Err(FusionError::Syntax { message: "Tuple indices must be integer literals because tuple elements may have different types".into(), span: *span });
+                        };
+                        if *value < 0 || (*value as usize) >= items.len() {
+                            return Err(FusionError::Syntax { message: format!("Tuple index {} is out of bounds for a tuple of length {}", value, items.len()), span: *span });
+                        }
+                        Ok(items[*value as usize].clone())
+                    }
 
                     Type::Unknown => Ok(Type::Unknown),
 
@@ -2489,7 +2542,7 @@ impl TypeChecker {
                     }
                 }
 
-                PatternKind::Identifier(_) => {}
+                PatternKind::Identifier(_) | PatternKind::Tuple(_) | PatternKind::Or(_) | PatternKind::Range { .. } => {}
             }
 
             let bindings = self.check_pattern(&arm.pattern, &expression_type)?;
@@ -2501,6 +2554,10 @@ impl TypeChecker {
                     self.declare_variable(name, binding_type, true, arm.pattern.span)?;
                 }
 
+                if let Some(guard) = &arm.guard {
+                    let guard_type = self.infer_expression(guard)?;
+                    if !matches!(guard_type, Type::Bool | Type::Unknown) { return Err(self.type_mismatch("bool", guard_type.name(), guard.span())); }
+                }
                 self.check_block(&arm.body)
             })();
 
@@ -2859,7 +2916,20 @@ impl TypeChecker {
     pub fn check(&mut self, program: &Program) -> Result<(), FusionError> {
         // Pass 1: register struct names.
         for statement in &program.statements {
-            if let Statement::Struct { name, span, .. } = statement {
+            if let Statement::Struct { name, derives, span, .. } = statement {
+                let mut requested = HashSet::new();
+                for trait_name in derives {
+                    if !matches!(trait_name.as_str(), "Debug" | "Clone" | "PartialEq") {
+                        return Err(FusionError::Syntax {
+                            message: format!("Unsupported derive '{}'; supported derives are Debug, Clone, and PartialEq", trait_name),
+                            span: *span,
+                        });
+                    }
+                    if !requested.insert(trait_name.clone()) {
+                        return Err(FusionError::Syntax { message: format!("Duplicate derive '{}'", trait_name), span: *span });
+                    }
+                }
+                self.environment.derived_traits.insert(name.clone(), requested);
                 if self.environment.structs.contains_key(name) {
                     return Err(FusionError::Syntax {
                         message: format!("Duplicate struct '{}'", name),
@@ -2894,7 +2964,7 @@ impl TypeChecker {
 
         // Pass 3: resolve struct fields.
         for statement in &program.statements {
-            if let Statement::Struct { name, fields, span } = statement {
+            if let Statement::Struct { name, fields, span, .. } = statement {
                 let mut seen = HashSet::new();
                 let mut resolved_fields = Vec::new();
 
@@ -2921,6 +2991,7 @@ impl TypeChecker {
                         })?;
 
                 definition.fields = resolved_fields;
+
             }
         }
 

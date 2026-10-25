@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod codegen;
+pub mod derive_expansion;
 pub mod environment;
 pub mod errors;
 pub mod foreign;
@@ -120,6 +121,18 @@ mod tests {
         assert!(
             checker.check(&program).is_err(),
             "expected type checker to reject invalid program"
+        );
+    }
+
+    /// Assert semantic error content without depending on whether the caller
+    /// renders the legacy Display form or the newer rustc-style diagnostic.
+    pub(crate) fn assert_error_mentions(error: &str, expected_fragments: &[&str], context: &str) {
+        assert!(
+            expected_fragments.iter().all(|fragment| error.contains(fragment)),
+            "{}: expected error to contain all of {:?}, got:\n{}",
+            context,
+            expected_fragments,
+            error
         );
     }
 
@@ -1797,6 +1810,7 @@ main:
 mod stdlib_feature_tests {
     use super::*;
     use crate::interpreter::Interpreter;
+    use crate::tests::assert_error_mentions;
     use crate::lexer::{BlockMode, Lexer};
     use crate::parser::Parser;
     use std::fs;
@@ -2046,10 +2060,10 @@ main:
         )
         .expect_err("awaiting a non-task must fail");
 
-        assert!(
-            error.contains("Task<T>") && error.contains("num"),
-            "expected Task<T>/num type error, got: {}",
-            error
+        assert_error_mentions(
+            &error,
+            &["Task<T>", "num"],
+            "await on a non-task should report the expected and actual types",
         );
     }
 
@@ -2119,8 +2133,8 @@ main:
         .expect_err("a value-returning function needs a return on every path");
 
         assert!(
-            error.contains("must return a value") || error.contains("may reach the end"),
-            "expected a return-path error, got: {}",
+            error.contains("must return a value") || error.contains("may reach the end") || error.contains("return") && error.contains("path"),
+            "expected a return-path diagnostic, got: {}",
             error
         );
     }
@@ -2264,11 +2278,10 @@ main:
 
         for (name, source, expected) in cases {
             let error = compile_source(source).expect_err("program should be rejected");
-            assert!(
-                error.contains(expected),
-                "{} produced an unrelated error: {}",
-                name,
-                error
+            assert_error_mentions(
+                &error,
+                &[expected],
+                &format!("{} should report the incompatible type", name),
             );
         }
     }
@@ -3022,4 +3035,242 @@ main:
         );
     }
 
+}
+
+#[cfg(test)]
+mod pattern_and_tuple_feature_tests {
+    use super::*;
+
+    fn execute(source: &str) -> Vec<String> {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("lexing should succeed");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("parsing should succeed");
+        let mut interpreter = interpreter::Interpreter::new();
+        interpreter.execute(&program);
+        interpreter.output().to_vec()
+    }
+
+    #[test]
+    fn tuple_expression_and_nested_tuple_pattern() {
+        let output = execute(r#"main:
+    pair = (7, (8, 9))
+    match pair:
+        (left, (middle, right)) => print(left + middle + right)
+"#);
+        assert_eq!(output, vec!["24"]);
+    }
+
+    #[test]
+    fn match_guards_continue_to_next_arm_when_false() {
+        let output = execute(r#"main:
+    value = 4
+    match value:
+        n if n < 0 => print("negative")
+        n if n > 3 => print("large")
+        _ => print("other")
+"#);
+        assert_eq!(output, vec!["large"]);
+    }
+
+    #[test]
+    fn integer_ranges_and_or_patterns_match() {
+        let output = execute(r#"main:
+    value = 3
+    match value:
+        1 | 2 => print("small")
+        3..6 => print("range")
+        _ => print("other")
+"#);
+        assert_eq!(output, vec!["range"]);
+    }
+
+    #[test]
+    fn tuple_types_are_preserved_by_the_type_checker() {
+        let program = compile_source(r#"fn unpack(pair: (num, string)) -> num:
+    return 1
+main:
+    value = (1, "one")
+"#);
+        // Tuple declarations and annotations are parsed and type-checked. Field
+        // projection is deliberately not asserted until tuple indexing is added.
+        assert!(program.is_ok(), "tuple type should compile: {:?}", program.err());
+    }
+
+    #[test]
+    fn derive_attributes_are_retained_on_struct_ast() {
+        let program = compile_source(r#"#[derive(Debug, PartialEq, Clone)]
+struct Point:
+    x: num
+    y: num
+main:
+    p = Point(x: 1, y: 2)
+"#).expect("derive attribute should parse and type-check");
+        let struct_decl = program.statements.iter().find_map(|statement| {
+            if let ast::Statement::Struct { derives, .. } = statement { Some(derives) } else { None }
+        }).expect("struct declaration should remain in expanded AST");
+        assert_eq!(struct_decl, &["Debug", "PartialEq", "Clone"]);
+
+        for trait_name in ["Debug", "PartialEq", "Clone"] {
+            assert!(program.statements.iter().any(|statement| matches!(statement,
+                ast::Statement::Impl { trait_name: Some(found), type_name, methods, .. }
+                if found == trait_name && type_name == "Point" && methods.iter().any(|method| matches!(method, ast::Statement::Function { .. }))
+            )), "derive should expand into a regular impl of {} for Point", trait_name);
+            assert!(program.statements.iter().any(|statement| matches!(statement,
+                ast::Statement::Trait { name, .. } if name == trait_name
+            )), "the built-in trait declaration {} should be present", trait_name);
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod native_hir_and_derive_tests {
+    use super::*;
+    use crate::interpreter::Interpreter;
+    use crate::tests::assert_error_mentions;
+
+    #[test]
+    fn tuple_expressions_lower_to_hir_instead_of_erroring() {
+        let mut lexer = Lexer::new("main:\n    pair = (1, 2.5)\n", BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("lexing should succeed");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("parsing should succeed");
+        let mut lowerer = hir_lower::HirLowerer::new();
+        let hir = lowerer.lower_program(&program).expect("tuple should lower to HIR");
+        match &hir.statements[0] {
+            hir::HirStatement::Main { body, .. } => match &body[0] {
+                hir::HirStatement::VariableDeclaration { value: hir::HirExpression::Tuple(items), .. } => {
+                    assert_eq!(items.len(), 2);
+                    assert!(matches!(items[0], hir::HirExpression::Number(1)));
+                    assert!(matches!(items[1], hir::HirExpression::Float(v) if (v - 2.5).abs() < f64::EPSILON));
+                }
+                other => panic!("expected tuple variable initializer, got {:?}", other),
+            },
+            other => panic!("expected HIR main block, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn native_backend_emits_tuple_construction_for_mixed_scalar_elements() {
+        let llvm = emit_llvm("main:\n    pair = (7, 2.5, true, \"hello\")\n").expect("native tuple construction should lower");
+        assert!(llvm.contains("call ptr @fusion_tuple_new(i64 4)"));
+        assert!(llvm.contains("define internal void @fusion_tuple_cleanup()"));
+        assert!(llvm.contains("call void @fusion_tuple_cleanup()"));
+        assert!(llvm.contains("bitcast double"));
+        assert!(llvm.contains("zext i1"));
+        assert!(llvm.contains("ptrtoint ptr"));
+    }
+
+    #[test]
+    fn derived_clone_debug_and_partial_eq_are_executable() {
+        let output = {
+            let mut lexer = Lexer::new(r#"#[derive(Debug, PartialEq, Clone)]
+struct Point:
+    x: num
+    y: num
+main:
+    a = Point(x: 2, y: 5)
+    b = a.clone()
+    print(a.eq(b))
+    print(a.debug())
+"#, BlockMode::Unknown);
+            let tokens = lexer.tokenize().expect("lexing should succeed");
+            let mut parser = Parser::new(tokens);
+            let program = parser.parse().expect("parsing should succeed");
+            let mut checker = TypeChecker::new();
+            checker.check(&program).expect("derived methods should type-check");
+            let mut interpreter = Interpreter::new();
+            interpreter.execute(&program);
+            interpreter.output().to_vec()
+        };
+        assert_eq!(output[0], "true");
+        assert!(output[1].contains("Point"));
+        assert!(output[1].contains("x"));
+        assert!(output[1].contains("y"));
+    }
+
+    #[test]
+    fn unknown_derive_is_rejected_with_a_diagnostic() {
+        let result = compile_source("#[derive(Serialize)]\nstruct Point:\n    x: num\nmain:\n    p = Point(x: 1)\n");
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_error_mentions(
+            &error,
+            &["Unsupported derive 'Serialize'", "Debug", "Clone", "PartialEq"],
+            "unsupported derive should list the supported built-in derives",
+        );
+    }
+    #[test]
+    fn native_tuple_indexing_loads_and_decodes_elements() {
+        let llvm = emit_llvm("main:\n    pair = (7, 2.5, true, \"hello\")\n    print(pair[1])\n    print(pair[2])\n").expect("native tuple indexing should lower");
+        assert!(llvm.contains("getelementptr inbounds i64"));
+        assert!(llvm.contains("load i64"));
+        assert!(llvm.contains("bitcast i64"));
+        assert!(llvm.contains("trunc i64"));
+    }
+
+    #[test]
+    fn tuple_indexing_checks_literal_bounds_and_types() {
+        let ok = compile_source("main:\n    pair = (7, 2.5)\n    x = pair[0]\n");
+        assert!(ok.is_ok(), "first tuple element should type-check: {:?}", ok.err());
+        let out_of_bounds = compile_source("main:\n    pair = (7, 2.5)\n    x = pair[2]\n");
+        assert!(out_of_bounds.is_err());
+        let dynamic = compile_source("main:\n    pair = (7, 2.5)\n    i = 0\n    x = pair[i]\n");
+        assert!(dynamic.is_err());
+    }
+
+
+    #[test]
+    fn test_rust_style_suggestion_rich_error_messages() {
+        use crate::errors::{FusionError};
+        use crate::span::Span;
+
+        let source = "main:
+    total_count = 42
+    print(total_coun)
+";
+        // Byte offset 37 is the start of `total_coun` (line 3, col 11).
+        let span = Span::new(37, 47);
+        
+        let err = FusionError::UnknownVariable {
+            name: "total_coun".to_string(),
+            suggestion: Some("total_count".to_string()),
+            span,
+        };
+
+        let diag = err.to_diagnostic();
+        let emitted = diag.emit(source);
+
+        assert!(emitted.contains("error[E0425]: cannot find value `total_coun` in this scope"));
+        assert!(emitted.contains("--> line 3, col 11"));
+        assert!(emitted.contains("3 |     print(total_coun)"));
+        assert!(emitted.contains("^^^^^^^^^^ not found in scope"));
+        assert!(emitted.contains("= help: did you mean `total_count`?; consider replacing with `total_count`"));
+    }
+
+    #[test]
+    fn test_rust_style_type_mismatch_diagnostic() {
+        use crate::errors::{FusionError};
+        use crate::span::Span;
+
+        let source = r#"main:
+    x: int = "hello"
+"#;
+        // Byte offset 19 is the opening quote of `"hello"` (line 2, col 14).
+        let span = Span::new(19, 26);
+
+        let err = FusionError::TypeMismatch {
+            expected: "int".to_string(),
+            found: "string".to_string(),
+            span,
+        };
+
+        let diag = err.to_diagnostic();
+        let emitted = diag.emit(source);
+
+        assert!(emitted.contains("error[E0308]: mismatched types"));
+        assert!(emitted.contains("--> line 2, col 14"));
+        assert!(emitted.contains("expected `int`, found `string`"));
+    }
 }

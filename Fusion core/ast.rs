@@ -62,6 +62,7 @@ pub struct TraitMethod {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Expression>,
     pub body: Vec<Statement>,
     pub span: Span,
 }
@@ -81,6 +82,9 @@ pub enum PatternKind {
     String(String),
     Boolean(bool),
     Variant { name: String, bindings: Vec<String> },
+    Tuple(Vec<Pattern>),
+    Or(Vec<Pattern>),
+    Range { start: i64, end: i64, inclusive: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +121,7 @@ pub enum Statement {
     Struct {
         name: String,
         fields: Vec<StructField>,
+        derives: Vec<String>,
         span: Span,
     },
 
@@ -239,6 +244,8 @@ pub enum Expression {
         span: Span,
     },
 
+    Tuple { elements: Vec<Expression>, span: Span },
+
     Identifier {
         name: String,
         span: Span,
@@ -318,6 +325,7 @@ impl Expression {
             | Expression::Boolean { span, .. }
             | Expression::String { span, .. }
             | Expression::Array { span, .. }
+            | Expression::Tuple { span, .. }
             | Expression::Identifier { span, .. }
             | Expression::Index { span, .. }
             | Expression::Property { span, .. }

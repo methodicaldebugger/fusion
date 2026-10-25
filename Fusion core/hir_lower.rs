@@ -15,11 +15,28 @@ use crate::ast::*;
 use crate::hir::*;
 use crate::span::Span;
 
-pub struct HirLowerer;
+pub struct HirLowerer {
+    /// Lexical scopes of variable names declared so far. Used to tell Fusion's
+    /// inferred declaration form (`x = 10` where `x` is new) apart from a real
+    /// re-assignment of an existing variable.
+    scopes: Vec<std::collections::HashSet<String>>,
+}
 
 impl HirLowerer {
     pub fn new() -> Self {
-        Self
+        Self {
+            scopes: vec![std::collections::HashSet::new()],
+        }
+    }
+
+    fn is_declared(&self, name: &str) -> bool {
+        self.scopes.iter().any(|scope| scope.contains(name))
+    }
+
+    fn declare(&mut self, name: &str) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string());
+        }
     }
 
     pub fn lower_program(&mut self, program: &Program) -> Result<HirProgram, String> {
@@ -51,11 +68,29 @@ impl HirLowerer {
                 target,
                 value,
                 span,
-            } => Ok(HirStatement::Assignment {
-                target: self.lower_expression(target)?,
-                value: self.lower_expression(value)?,
-                span: *span,
-            }),
+            } => {
+                // `x = expr` where `x` has not been declared yet is Fusion's
+                // inferred declaration form (the type checker treats it the
+                // same way), so lower it to a variable declaration.
+                if let Expression::Identifier { name, .. } = target {
+                    if !self.is_declared(name) {
+                        let value = self.lower_expression(value)?;
+                        self.declare(name);
+                        return Ok(HirStatement::VariableDeclaration {
+                            name: name.clone(),
+                            declared_type: None,
+                            value,
+                            span: *span,
+                        });
+                    }
+                }
+
+                Ok(HirStatement::Assignment {
+                    target: self.lower_expression(target)?,
+                    value: self.lower_expression(value)?,
+                    span: *span,
+                })
+            }
 
             Statement::Return { value, span } => Ok(HirStatement::Return {
                 value: match value {
@@ -83,18 +118,21 @@ impl HirLowerer {
 
                 let declaration = &declarations[0];
 
+                let value = match &declaration.value {
+                    Some(value) => self.lower_expression(value)?,
+                    None => {
+                        return Err(format!(
+                            "variable '{}' has no initializer; HIR requires a value",
+                            declaration.name
+                        ));
+                    }
+                };
+                self.declare(&declaration.name);
+
                 Ok(HirStatement::VariableDeclaration {
                     name: declaration.name.clone(),
                     declared_type: declaration.declared_type.clone(),
-                    value: match &declaration.value {
-                        Some(value) => self.lower_expression(value)?,
-                        None => {
-                            return Err(format!(
-                                "variable '{}' has no initializer; HIR requires a value",
-                                declaration.name
-                            ));
-                        }
-                    },
+                    value,
                     span: *span,
                 })
             }
@@ -105,12 +143,16 @@ impl HirLowerer {
                 value,
                 span,
                 ..
-            } => Ok(HirStatement::ConstDeclaration {
-                name: name.clone(),
-                declared_type: declared_type.clone(),
-                value: self.lower_expression(value)?,
-                span: *span,
-            }),
+            } => {
+                let value = self.lower_expression(value)?;
+                self.declare(name);
+                Ok(HirStatement::ConstDeclaration {
+                    name: name.clone(),
+                    declared_type: declared_type.clone(),
+                    value,
+                    span: *span,
+                })
+            }
 
             Statement::If {
                 condition,
@@ -143,11 +185,35 @@ impl HirLowerer {
                 end,
                 body,
                 span,
-            } => Ok(HirStatement::For {
-                variable: variable.clone(),
-                start: self.lower_expression(start)?,
-                end: self.lower_expression(end)?,
+            } => {
+                let start = self.lower_expression(start)?;
+                let end = self.lower_expression(end)?;
+                self.scopes.push(std::collections::HashSet::new());
+                self.declare(variable);
+                let body = self.lower_statements(body);
+                self.scopes.pop();
+                Ok(HirStatement::For {
+                    variable: variable.clone(),
+                    start,
+                    end,
+                    body: body?,
+                    span: *span,
+                })
+            }
+
+            Statement::Main { body, span } => Ok(HirStatement::Main {
                 body: self.lower_statements(body)?,
+                span: *span,
+            }),
+
+            Statement::Struct { name, fields, derives, span } => Ok(HirStatement::Struct {
+                name: name.clone(),
+                fields: fields.iter().map(|field| HirStructField {
+                    name: field.name.clone(),
+                    type_name: field.type_name.clone(),
+                    span: field.span,
+                }).collect(),
+                derives: derives.clone(),
                 span: *span,
             }),
 
@@ -164,10 +230,14 @@ impl HirLowerer {
     }
 
     fn lower_statements(&mut self, statements: &[Statement]) -> Result<Vec<HirStatement>, String> {
-        statements
+        // Every nested block gets its own lexical scope.
+        self.scopes.push(std::collections::HashSet::new());
+        let result = statements
             .iter()
             .map(|statement| self.lower_statement(statement))
-            .collect()
+            .collect();
+        self.scopes.pop();
+        result
     }
 
     fn lower_expression(&mut self, expression: &Expression) -> Result<HirExpression, String> {
@@ -183,10 +253,10 @@ impl HirLowerer {
             Expression::Identifier { name, .. } => Ok(HirExpression::Identifier(name.clone())),
 
             Expression::Array { elements, .. } => Ok(HirExpression::Array(
-                elements
-                    .iter()
-                    .map(|e| self.lower_expression(e))
-                    .collect::<Result<_, _>>()?,
+                elements.iter().map(|e| self.lower_expression(e)).collect::<Result<_, _>>()?,
+            )),
+            Expression::Tuple { elements, .. } => Ok(HirExpression::Tuple(
+                elements.iter().map(|element| self.lower_expression(element)).collect::<Result<_, _>>()?,
             )),
 
             Expression::Await { .. } => {
