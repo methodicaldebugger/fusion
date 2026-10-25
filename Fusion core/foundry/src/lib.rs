@@ -104,63 +104,105 @@ pub fn load_project(root: &Path) -> Result<Project, String> {
 }
 
 pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
+    // Parse the manifest as TOML instead of splitting lines manually. This correctly
+    // handles escaped strings, comments, dotted keys, and inline tables.
+    let value: toml::Value = toml::from_str(text)
+        .map_err(|e| format!("invalid Foundry manifest: {e}"))?;
+    let root = value.as_table().ok_or("manifest root must be a TOML table")?;
+    let package = root
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or("manifest: [package] table is required")?;
+
+    let get_string = |table: &toml::map::Map<String, toml::Value>, key: &str| -> Result<Option<String>, String> {
+        match table.get(key) {
+            None => Ok(None),
+            Some(v) => v.as_str().map(|s| Some(s.to_owned()))
+                .ok_or_else(|| format!("manifest: '{key}' must be a string")),
+        }
+    };
+
+    let name = get_string(package, "name")?
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("manifest: [package].name is required and must not be empty")?;
+    if !valid_manifest_name(&name) {
+        return Err(format!("manifest: invalid package name '{name}' (use letters, digits, '_' or '-')"));
+    }
     let mut m = Manifest::default();
-    let mut section = String::new();
-    for (n, raw) in text.lines().enumerate() {
-        let line = strip_comment(raw).trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            section = line[1..line.len() - 1].trim().to_string();
-            continue;
-        }
-        let (k, v) = line
-            .split_once('=')
-            .ok_or_else(|| format!("manifest:{}: expected key = value", n + 1))?;
-        let k = k.trim();
-        let v = v.trim();
-        match section.as_str() {
-            "package" => match k {
-                "name" => m.package.name = parse_string(v)?,
-                "version" => m.package.version = parse_string(v)?,
-                "edition" => m.package.edition = parse_string(v)?,
-                "description" => m.package.description = Some(parse_string(v)?),
-                _ => {}
-            },
-            "dependencies" => {
-                m.dependencies.insert(k.into(), parse_dependency(v)?);
-            }
-            "dev-dependencies" => {
-                m.dev_dependencies.insert(k.into(), parse_dependency(v)?);
-            }
-            "plugins" => {
-                m.plugins.insert(k.into(), parse_dependency(v)?);
-            }
-            "toolchain" => match k {
-                "fusion" => m.toolchain.fusion = Some(parse_string(v)?),
-                "channel" => m.toolchain.channel = Some(parse_string(v)?),
-                _ => {}
-            },
-            _ => {
-                return Err(format!(
-                    "manifest:{}: unknown or unsupported section [{}]",
-                    n + 1,
-                    section
-                ))
+    m.package.name = name;
+    m.package.version = get_string(package, "version")?.unwrap_or_else(|| "0.1.0".into());
+    m.package.edition = get_string(package, "edition")?.unwrap_or_else(|| "2021".into());
+    m.package.description = get_string(package, "description")?;
+
+    for section in ["dependencies", "dev-dependencies", "plugins"] {
+        if let Some(table) = root.get(section) {
+            let table = table.as_table().ok_or_else(|| format!("manifest: [{section}] must be a table"))?;
+            for (dependency_name, spec) in table {
+                if !valid_manifest_name(dependency_name) {
+                    return Err(format!("manifest: invalid dependency name '{dependency_name}'"));
+                }
+                let parsed = parse_dependency_value(spec, dependency_name)?;
+                match section {
+                    "dependencies" => { m.dependencies.insert(dependency_name.clone(), parsed); }
+                    "dev-dependencies" => { m.dev_dependencies.insert(dependency_name.clone(), parsed); }
+                    "plugins" => { m.plugins.insert(dependency_name.clone(), parsed); }
+                    _ => unreachable!(),
+                }
             }
         }
     }
-    if m.package.name.is_empty() {
-        return Err("manifest: [package].name is required".into());
+
+    if let Some(toolchain) = root.get("toolchain") {
+        let table = toolchain.as_table().ok_or("manifest: [toolchain] must be a table")?;
+        m.toolchain.fusion = get_string(table, "fusion")?;
+        m.toolchain.channel = get_string(table, "channel")?;
     }
-    if m.package.version.is_empty() {
-        m.package.version = "0.1.0".into();
-    }
-    if m.package.edition.is_empty() {
-        m.package.edition = "2021".into();
+
+    // Fail clearly on unsupported top-level sections rather than silently ignoring them.
+    for key in root.keys() {
+        if !matches!(key.as_str(), "package" | "dependencies" | "dev-dependencies" | "plugins" | "toolchain") {
+            return Err(format!("manifest: unsupported top-level section or key '{key}'"));
+        }
     }
     Ok(m)
+}
+
+fn valid_manifest_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn parse_dependency_value(value: &toml::Value, name: &str) -> Result<Dependency, String> {
+    if let Some(version) = value.as_str() {
+        if version.trim().is_empty() {
+            return Err(format!("manifest: dependency '{name}' has an empty version requirement"));
+        }
+        return Ok(Dependency::Version(version.to_owned()));
+    }
+    let table = value.as_table().ok_or_else(|| format!("manifest: invalid dependency specification for '{name}'"))?;
+    let version = table.get("version").and_then(toml::Value::as_str).map(str::to_owned);
+    let path = table.get("path").and_then(toml::Value::as_str).map(PathBuf::from);
+    let git = table.get("git").and_then(toml::Value::as_str).map(str::to_owned);
+    let source_count = usize::from(version.is_some()) + usize::from(path.is_some()) + usize::from(git.is_some());
+    if source_count != 1 {
+        return Err(format!("manifest: dependency '{name}' must specify exactly one of version, path, or git"));
+    }
+    let rev = table.get("rev").and_then(toml::Value::as_str).map(str::to_owned);
+    let tag = table.get("tag").and_then(toml::Value::as_str);
+    let branch = table.get("branch").and_then(toml::Value::as_str);
+    if (rev.is_some() || tag.is_some() || branch.is_some()) && git.is_none() {
+        return Err(format!("manifest: dependency '{name}' uses rev/tag/branch without git"));
+    }
+    if usize::from(rev.is_some()) + usize::from(tag.is_some()) + usize::from(branch.is_some()) > 1 {
+        return Err(format!("manifest: dependency '{name}' must not specify more than one of rev, tag, or branch"));
+    }
+    if let Some(path) = path {
+        Ok(Dependency::Path(path))
+    } else if let Some(git) = git {
+        let selector = rev.or_else(|| tag.map(str::to_owned)).or_else(|| branch.map(str::to_owned));
+        Ok(Dependency::Git { url: git, rev: selector })
+    } else {
+        Ok(Dependency::Version(version.unwrap_or_default()))
+    }
 }
 
 fn strip_comment(s: &str) -> &str {
@@ -394,10 +436,11 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
 }
 pub fn find_fusion(explicit: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(p) = explicit {
-        return Ok(p.to_path_buf());
+        return Ok(p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
     }
     if let Ok(p) = env::var("FUSION_COMPILER") {
-        return Ok(p.into());
+        let path = PathBuf::from(p);
+        return Ok(path.canonicalize().unwrap_or(path));
     }
     let name = if cfg!(windows) {
         "fusion.exe"
@@ -486,7 +529,9 @@ pub fn build(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra: &
 }
 
 fn build_inner(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra: &[String], resolve: bool) -> Result<PathBuf, String> {
-    if resolve { resolve_dependencies(p, false)?; }
+    if resolve {
+        resolve_dependencies(p, env::var_os("FOUNDRY_OFFLINE").is_some())?;
+    }
     let src = main_source(p)?;
     let target = extra.windows(2).find(|w|w[0]=="--target").map(|w|w[1].clone());
     let mut dir = p.root.join("target").join(profile.name());
@@ -554,7 +599,7 @@ pub fn build_targets(p: &Project, profile: BuildProfile, fusion: Option<&Path>, 
     let mut graph=graph::TaskGraph::default();
     for target in targets { graph.add_task(format!("target:{target}"),std::iter::empty::<String>()).map_err(|e|e.to_string())?; }
     graph.execution_order().map_err(|e|e.to_string())?;
-    resolve_dependencies(p,false)?;
+    resolve_dependencies(p, env::var_os("FOUNDRY_OFFLINE").is_some())?;
     let pinned_compiler=find_project_fusion(p,fusion)?;
     let results=std::thread::scope(|scope| {
         let handles=targets.iter().map(|target| {
@@ -599,9 +644,16 @@ pub fn test(p: &Project, fusion: Option<&Path>) -> Result<(), String> {
 }
 
 pub fn clean(p: &Project) -> Result<(), String> {
-    let t = p.root.join("target");
-    if t.exists() {
-        fs::remove_dir_all(t).map_err(|e| e.to_string())?
+    // Keep downloaded dependencies and toolchains cached under target/foundry.
+    // `clean` should remove generated build outputs, not force users to download
+    // every dependency again.
+    let target = p.root.join("target");
+    for relative in ["debug", "release", "doc"] {
+        let path = target.join(relative);
+        if path.exists() {
+            fs::remove_dir_all(&path)
+                .map_err(|e| format!("remove build output {}: {e}", path.display()))?;
+        }
     }
     Ok(())
 }
@@ -639,6 +691,53 @@ mod tests {
         assert!(registry::satisfies("1.2.9", "~1.2"));
         assert!(!registry::satisfies("1.3.0", "~1.2"));
         assert!(registry::satisfies("1.2.0", ">=1.2"));
+    }
+
+    #[test]
+    fn manifest_parser_uses_toml_semantics_for_inline_tables_and_escapes() {
+        let m = parse_manifest(r#"
+[package]
+name = "demo"
+description = "line one # not a comment"
+
+[dependencies]
+path_dep = { path = "../libs/a,b" }
+git_dep = { git = "https://example.invalid/repo.git", tag = "v1.2.0" }
+"#).unwrap();
+        assert_eq!(m.package.description.as_deref(), Some("line one # not a comment"));
+        assert!(matches!(m.dependencies["path_dep"], Dependency::Path(_)));
+        assert!(matches!(&m.dependencies["git_dep"], Dependency::Git { rev: Some(tag), .. } if tag == "v1.2.0"));
+    }
+
+    #[test]
+    fn manifest_rejects_multiple_dependency_sources_and_unsafe_names() {
+        let multiple = "[package]\\nname = \\"demo\\"\\n[dependencies]\\nx = { path = \\"../x\\", version = \\"1\\" }\\n";
+        assert!(parse_manifest(multiple).is_err());
+        let unsafe_name = "[package]\\nname = \\"demo\\"\\n[dependencies]\\n\\"../escape\\" = \\"1\\"\\n";
+        assert!(parse_manifest(unsafe_name).is_err());
+    }
+
+    #[test]
+    fn clean_preserves_dependency_cache() {
+        let root = std::env::temp_dir().join(format!("foundry-clean-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::create_dir_all(root.join("target/foundry/deps")).unwrap();
+        fs::write(root.join("target/debug/app"), "artifact").unwrap();
+        fs::write(root.join("target/foundry/deps/keep"), "cached").unwrap();
+        let project = Project { root: root.clone(), manifest: Manifest::default() };
+        clean(&project).unwrap();
+        assert!(!root.join("target/debug").exists());
+        assert!(root.join("target/foundry/deps/keep").is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manifest_rejects_unsafe_package_name() {
+        let input = r#"[package]
+name = "../escape"
+"#;
+        assert!(parse_manifest(input).is_err());
     }
 
     #[test]

@@ -2564,6 +2564,18 @@ impl Interpreter {
                 Value::Boolean(entries.iter().any(|(key, _)| key == &k))
             }
             "get_length" | "length" => Value::Number(entries.len() as i64),
+            "count" => {
+                if !arguments.is_empty() {
+                    panic!("count() expects no arguments")
+                };
+                Value::Number(entries.len() as i64)
+            }
+            "is_empty" => {
+                if !arguments.is_empty() {
+                    panic!("is_empty() expects no arguments")
+                };
+                Value::Boolean(entries.is_empty())
+            }
             "clear" => {
                 self.replace_hashmap(object, Vec::new());
                 Value::None

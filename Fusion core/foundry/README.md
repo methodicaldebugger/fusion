@@ -218,3 +218,35 @@ Some parts also need further work before they are production-ready:
 - The remote cache still needs authentication and artifact-digest verification.
 - Multi-target builds rely on the compiler supporting the requested targets.
 - The formatter and analyser depend on fusion fmt and fusion analyze being available.
+
+## Improvements in this iteration
+
+### `foundry doctor`
+
+Run `foundry doctor` from a project directory to inspect the current package configuration.
+It reports source/test layout, checks whether the selected Fusion compiler can be executed,
+flags missing path dependencies, and points out when registry configuration may be required.
+Warnings about optional setup do not fail the command; blocking checks return a non-zero exit code.
+
+### Manifest validation
+
+Foundry now parses `Foundry.toml` and legacy `fusion.toml` as real TOML rather than splitting
+each line manually. This supports escaped strings and inline dependency tables reliably, and
+validates dependency source declarations (`version`, `path`, or `git`) before commands proceed.
+Dependency names are restricted to letters, digits, `_`, and `-` to prevent unsafe names from
+being used as cache paths.
+
+### Safer workflow behavior
+
+- `foundry metadata` JSON-escapes names, versions, and paths so its output remains valid JSON.
+- `FOUNDRY_OFFLINE` is respected during builds and multi-target builds as well as dependency fetches.
+- `foundry clean` removes debug/release/doc outputs while preserving the downloaded dependency and
+  toolchain cache under `target/foundry`.
+- Relative `FUSION_COMPILER` paths are resolved before Foundry changes the child process directory.
+
+### Verification note
+
+The source archive was updated with tests for TOML manifest edge cases, JSON escaping, and cache
+preservation. This environment did not have `cargo`, `rustc`, or `rustfmt` installed, so the Rust
+test suite could not be executed here; run `cargo test` in a Rust development environment before
+merging this iteration into a release.

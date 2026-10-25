@@ -3,7 +3,7 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 fn usage() {
-    println!("Foundry 0.1.0 - Fusion project/package/toolchain manager\n\nCommands:\n  foundry new <name>\n  foundry init\n  foundry build [--release] [--target <triple> ...]\n  foundry run [-- <args...>]\n  foundry check\n  foundry test\n  foundry fetch [--offline]\n  foundry tree\n  foundry metadata\n  foundry clean\n  foundry add <name> [version | --path PATH | --git URL]\n  foundry remove <name>\n  foundry fmt [--check]\n  foundry clippy\n  foundry doc\n  foundry version\n\nSet FUSION_COMPILER to select the Fusion executable.")
+    println!("Foundry 0.1.0 - Fusion project/package/toolchain manager\n\nCommands:\n  foundry new <name>\n  foundry init\n  foundry build [--release] [--target <triple> ...]\n  foundry run [-- <args...>]\n  foundry check\n  foundry test\n  foundry fetch [--offline]\n  foundry update\n  foundry tree\n  foundry metadata\n  foundry doctor\n  foundry clean\n  foundry add <name> [version | --path PATH | --git URL]\n  foundry remove <name>\n  foundry fmt [--check]\n  foundry clippy\n  foundry doc\n  foundry version\n\nSet FUSION_COMPILER to select the Fusion executable.")
 }
 
 fn cwd() -> Result<PathBuf, String> {
@@ -39,6 +39,7 @@ fn main() -> ExitCode {
         "update" => fetch(&a, true),
         "tree" => tree(),
         "metadata" => metadata(),
+        "doctor" => doctor(),
         "clean" => clean(),
         "add" => add(&a),
         "remove" => remove(&a),
@@ -169,8 +170,111 @@ fn test() -> Result<(), String> {
 
 fn metadata() -> Result<(), String> {
     let p = project()?;
-    println!("{{\n  \"name\": \"{}\",\n  \"version\": \"{}\",\n  \"root\": \"{}\",\n  \"sources\": {},\n  \"tests\": {},\n  \"dependencies\": {}\n}}",p.manifest.package.name,p.manifest.package.version,p.root.display(),foundry::source_files(&p).len(),foundry::test_files(&p).len(),p.manifest.dependencies.len());
+    println!(
+        "{{\n  \"name\": \"{}\",\n  \"version\": \"{}\",\n  \"root\": \"{}\",\n  \"sources\": {},\n  \"tests\": {},\n  \"dependencies\": {}\n}}",
+        json_escape(&p.manifest.package.name),
+        json_escape(&p.manifest.package.version),
+        json_escape(&p.root.to_string_lossy()),
+        foundry::source_files(&p).len(),
+        foundry::test_files(&p).len(),
+        p.manifest.dependencies.len()
+    );
     Ok(())
+}
+
+fn doctor() -> Result<(), String> {
+    let p = project()?;
+    let mut issues = 0usize;
+    println!("Foundry environment check");
+    println!("  project: {} v{}", p.manifest.package.name, p.manifest.package.version);
+    println!("  root: {}", p.root.display());
+    println!("  manifest: {}", if p.root.join(foundry::MANIFEST).is_file() { foundry::MANIFEST } else { foundry::LEGACY_MANIFEST });
+
+    let sources = foundry::source_files(&p);
+    if sources.is_empty() {
+        println!("  ERROR: no .fusion source files found in src/");
+        issues += 1;
+    } else {
+        println!("  OK: {} Fusion source file(s)", sources.len());
+    }
+    if p.root.join("tests").is_dir() {
+        println!("  OK: tests/ directory exists ({} test file(s))", foundry::test_files(&p).len());
+    } else {
+        println!("  NOTE: tests/ directory is missing");
+    }
+
+    match foundry::find_project_fusion(&p, None) {
+        Ok(compiler) => match std::process::Command::new(&compiler).arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                println!("  OK: Fusion compiler: {}{}", compiler.display(),
+                    if version.is_empty() { String::new() } else { format!(" ({version})") });
+            }
+            Ok(output) => {
+                println!("  WARNING: compiler at {} returned {}", compiler.display(), output.status);
+                issues += 1;
+            }
+            Err(error) => {
+                println!("  ERROR: cannot execute Fusion compiler {}: {error}", compiler.display());
+                issues += 1;
+            }
+        },
+        Err(error) => {
+            println!("  WARNING: {error}");
+            issues += 1;
+        }
+    }
+
+    for (name, dependency) in p.manifest.dependencies.iter()
+        .chain(p.manifest.dev_dependencies.iter())
+        .chain(p.manifest.plugins.iter())
+    {
+        match dependency {
+            foundry::Dependency::Path(path) => {
+                let resolved = p.root.join(path);
+                if resolved.is_dir() {
+                    println!("  OK: path dependency '{name}' -> {}", resolved.display());
+                } else {
+                    println!("  ERROR: path dependency '{name}' does not exist: {}", resolved.display());
+                    issues += 1;
+                }
+            }
+            foundry::Dependency::Git { url, .. } if url.trim().is_empty() => {
+                println!("  ERROR: Git dependency '{name}' has an empty URL");
+                issues += 1;
+            }
+            foundry::Dependency::Version(_) if env::var_os("FOUNDRY_REGISTRY").is_none() => {
+                println!("  NOTE: registry dependency '{name}' requires FOUNDRY_REGISTRY");
+            }
+            _ => {}
+        }
+    }
+
+    if env::var_os("FOUNDRY_REMOTE_CACHE").is_some() {
+        println!("  NOTE: remote cache is enabled; use only a trusted endpoint");
+    }
+    if issues == 0 {
+        println!("Doctor finished: no blocking configuration problems detected.");
+        Ok(())
+    } else {
+        Err(format!("doctor found {issues} issue(s); see diagnostics above"))
+    }
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn fetch(a: &[String], update: bool) -> Result<(), String> {
@@ -189,7 +293,7 @@ fn tree() -> Result<(), String> {
 fn clean() -> Result<(), String> {
     let p = project()?;
     foundry::clean(&p)?;
-    println!("Removed target/");
+    println!("Removed build outputs (kept cached dependencies and toolchains)");
     Ok(())
 }
 
@@ -416,6 +520,11 @@ fn doc() -> Result<(), String> {
 #[cfg(test)]
 mod cli_tests {
     use super::*;
+
+    #[test]
+    fn metadata_json_escaping_handles_control_characters() {
+        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
+    }
 
     #[test]
     fn add_inserts_into_existing_dependency_section() {
