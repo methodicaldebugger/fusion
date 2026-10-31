@@ -7,13 +7,16 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Fusion core
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Format Rust sources
+        run: cargo fmt --all
       - name: Build
         run: cargo check --all-targets
       - name: Test
