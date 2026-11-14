@@ -1,0 +1,21 @@
+//! A tiny HTTP/1.1 server and client in one program (plain HTTP only, no TLS).
+
+fn serve(listener: num, requests: num):
+    served = 0
+    while served < requests:
+        request = http_accept(listener)
+        conn = map_get_or(request, "conn", 0)
+        path = map_get_or(request, "path", "/")
+        http_respond(conn, 200, hashmap("Content-Type", "text/plain"), format("hello from {0}", [path]))
+        served = served + 1
+
+main:
+    listener = tcp_listen("127.0.0.1", 0)
+    port = tcp_local_port(listener)
+    server = task_spawn("serve", [listener, 2])
+    first = http_get(format("http://127.0.0.1:{0}/one", [port]))
+    second = http_get(format("http://127.0.0.1:{0}/two", [port]))
+    print(map_get_or(first, "body", ""))
+    print(map_get_or(second, "body", ""))
+    done = task_join(server)
+    tcp_close(listener)

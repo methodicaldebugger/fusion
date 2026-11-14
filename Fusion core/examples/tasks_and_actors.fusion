@@ -1,0 +1,29 @@
+//! Share-nothing tasks and a mailbox "actor" built from a task and a channel.
+
+fn square(x: num) -> num:
+    return x * x
+
+/// The actor: receives numbers from its mailbox until it is closed and keeps a running total.
+fn accumulator(mailbox: num, results: num):
+    total = 0
+    running = true
+    while running:
+        message = channel_recv(mailbox)
+        if option_is_some(message):
+            total = total + option_unwrap(message)
+        else:
+            running = false
+    channel_send(results, total)
+
+main:
+    print(parallel_map("square", [1, 2, 3, 4, 5, 6]))
+
+    mailbox = channel_new(0)
+    results = channel_new(0)
+    actor = task_spawn("accumulator", [mailbox, results])
+    channel_send(mailbox, 10)
+    channel_send(mailbox, 20)
+    channel_send(mailbox, 12)
+    channel_close(mailbox)
+    print(option_unwrap(channel_recv(results)))
+    done = task_join(actor)

@@ -1,0 +1,16 @@
+import model
+import consumer
+
+main:
+    let point = model.make_point(7)
+    print(consumer.read_point(point))
+
+    let outcome = consumer.make_outcome(9)
+    match outcome:
+        model.Outcome::Success(value) => print(value)
+        model.Outcome::Failure(message) => print(message)
+
+    let failed = consumer.make_failure("failed")
+    match failed:
+        model.Outcome::Success(value) => print(value)
+        model.Outcome::Failure(message) => print(message)

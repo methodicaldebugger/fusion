@@ -40,6 +40,7 @@ use crate::ast::*;
 use crate::environment::Environment;
 use crate::types::{EnumDefinition, EnumVariantDefinition, StructDefinition, Type};
 use crate::value::Value;
+use crate::wide_int::{IntKind, WideInt};
 
 #[derive(Debug)]
 enum Flow {
@@ -51,12 +52,25 @@ enum Flow {
 
 pub struct Interpreter {
     enums: HashMap<String, EnumDefinition>,
+    enums_by_id: HashMap<crate::hir::HirDefinitionId, EnumDefinition>,
     environment: Environment,
     functions: HashMap<String, Function>,
     structs: HashMap<String, StructDefinition>,
+    structs_by_id: HashMap<crate::hir::HirDefinitionId, StructDefinition>,
+    /// Stable source declaration identities for internal nominal type symbols.
+    type_definition_ids: HashMap<String, crate::hir::HirDefinitionId>,
     methods: HashMap<(String, String), Function>,
+    /// Method dispatch indexed by the receiver's stable HIR nominal identity.
+    methods_by_type_id: HashMap<(crate::hir::HirDefinitionId, String), Function>,
+    method_definition_ids: HashMap<(String, String), crate::hir::HirDefinitionId>,
+    trait_definition_ids: HashMap<String, crate::hir::HirDefinitionId>,
+    constant_definition_ids: HashMap<String, crate::hir::HirDefinitionId>,
+    struct_field_definition_ids: HashMap<(crate::hir::HirDefinitionId, String), crate::hir::HirDefinitionId>,
+    enum_variant_definition_ids: HashMap<(crate::hir::HirDefinitionId, String), crate::hir::HirDefinitionId>,
     loop_depth: usize,
     output: Vec<String>,
+    program: Option<std::sync::Arc<Program>>,
+    concurrent_async: bool,
 }
 
 #[derive(Clone)]
@@ -68,16 +82,44 @@ pub struct Function {
     pub is_async: bool,
 }
 
+fn split_top_level_type_list(input: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    for (index, ch) in input.char_indices() {
+        match ch {
+            '(' | '<' => depth += 1,
+            ')' | '>' => depth -= 1,
+            ',' if depth == 0 => { parts.push(input[start..index].trim()); start = index + 1; }
+            _ => {}
+        }
+    }
+    let last = input[start..].trim();
+    if !last.is_empty() { parts.push(last); }
+    parts
+}
+
 impl Interpreter {
     pub fn new() -> Self {
         Self {
             enums: HashMap::new(),
+            enums_by_id: HashMap::new(),
             environment: Environment::new(),
             functions: HashMap::new(),
             structs: HashMap::new(),
+            structs_by_id: HashMap::new(),
+            type_definition_ids: HashMap::new(),
             methods: HashMap::new(),
+            methods_by_type_id: HashMap::new(),
+            method_definition_ids: HashMap::new(),
+            trait_definition_ids: HashMap::new(),
+            constant_definition_ids: HashMap::new(),
+            struct_field_definition_ids: HashMap::new(),
+            enum_variant_definition_ids: HashMap::new(),
             loop_depth: 0,
             output: Vec::new(),
+            program: None,
+            concurrent_async: false,
         }
     }
 
@@ -93,10 +135,12 @@ impl Interpreter {
         match name {
             "num" => Type::Num,
             "float" => Type::Float,
+            "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize" | "f32" | "f64" => Type::Generic(name.to_string()),
             "bool" => Type::Bool,
             "string" => Type::String,
             "File" => Type::File,
             "TcpStream" => Type::TcpStream,
+            other if other.starts_with('(') && other.ends_with(')') => Type::Tuple(split_top_level_type_list(&other[1..other.len() - 1]).iter().map(|part| self.type_from_name(part)).collect()),
             other if other.ends_with("[]") => {
                 Type::Array(Box::new(self.type_from_name(&other[..other.len() - 2])))
             }
@@ -121,6 +165,15 @@ impl Interpreter {
             "string" => matches!(value, Value::String(_)),
             "File" => matches!(value, Value::File(_)),
             "TcpStream" => matches!(value, Value::TcpStream(_)),
+            integer if IntKind::from_name(integer).is_some() => fixed_integer_accepts(integer, value),
+            "f32" | "f64" => matches!(value, Value::Float(_)),
+            other if other.starts_with('(') && other.ends_with(')') => {
+                let parts = split_top_level_type_list(&other[1..other.len() - 1]);
+                match value {
+                    Value::Tuple(values) if values.len() == parts.len() => values.iter().zip(parts).all(|(v, t)| self.value_matches_type(v, t)),
+                    _ => false,
+                }
+            }
 
             // T[] syntax
             other if other.ends_with("[]") => {
@@ -169,8 +222,8 @@ impl Interpreter {
             }
 
             type_name => match value {
-                Value::Struct { name, .. } => name == type_name,
-                Value::Enum { enum_name, .. } => enum_name == type_name,
+                Value::Struct { name, .. } => self.nominal_type_symbols_match(type_name, name),
+                Value::Enum { enum_name, .. } => self.nominal_type_symbols_match(type_name, enum_name),
                 _ => false,
             },
         }
@@ -242,6 +295,7 @@ impl Interpreter {
                         name: struct_name,
                         mut fields,
                     } => {
+                        self.validate_struct_field_identity(&struct_name, name);
                         if !fields.contains_key(name) {
                             panic!("Unknown field '{}' on struct '{}'", name, struct_name);
                         }
@@ -277,11 +331,12 @@ impl Interpreter {
                         name: struct_name,
                         mut fields,
                     } => {
-                        if !fields.contains_key(name) {
-                            panic!("Unknown field '{}' on struct '{}'", name, struct_name);
+                        self.validate_struct_field_identity(&struct_name, parent_field);
+                        if !fields.contains_key(parent_field) {
+                            panic!("Unknown field '{}' on struct '{}'", parent_field, struct_name);
                         }
 
-                        fields.insert(name.to_string(), value);
+                        fields.insert(parent_field.to_string(), value);
 
                         self.assign_property(
                             parent,
@@ -332,6 +387,8 @@ impl Interpreter {
                     "float" => matches!(item, Value::Float(_)),
                     "string" => matches!(item, Value::String(_)),
                     "bool" => matches!(item, Value::Boolean(_)),
+                    integer if IntKind::from_name(integer).is_some() => fixed_integer_accepts(integer, item),
+                    "f32" | "f64" => matches!(item, Value::Float(_)),
                     _ => matches!(item, Value::Struct { name, .. } if name == element_type)
                         || matches!(item, Value::Enum { enum_name, .. } if enum_name == element_type),
                 }),
@@ -345,6 +402,8 @@ impl Interpreter {
                 "bool" => matches!(value, Value::Boolean(_)),
                 "File" => matches!(value, Value::File(_)),
                 "TcpStream" => matches!(value, Value::TcpStream(_)),
+                integer if IntKind::from_name(integer).is_some() => fixed_integer_accepts(integer, value),
+                "f32" | "f64" => matches!(value, Value::Float(_)),
                 enum_or_struct_name => match value {
                     Value::Struct { name, .. } => name == enum_or_struct_name,
                     Value::Enum { enum_name, .. } => enum_name == enum_or_struct_name,
@@ -688,7 +747,12 @@ impl Interpreter {
                 }
                 return Value::None;
             }
-            _ => {}
+            other => {
+                if !self.functions.contains_key(other) && crate::stdlib_ext::is_builtin(other) {
+                    let values: Vec<Value> = arguments.iter().map(|argument| self.evaluate(argument)).collect();
+                    return crate::stdlib_ext::call(self, other, values);
+                }
+            }
         }
 
         let function = self
@@ -714,6 +778,19 @@ impl Interpreter {
         }
         for (parameter, value) in function.parameters.iter().zip(values.iter()) {
             self.check_parameter_type(name, parameter, value, &function.generic_parameters);
+        }
+        // Optional async scheduling: preserve eager semantics by default. When enabled,
+        // copy arguments across the task boundary and execute the async function on the pool.
+        if function.is_async && self.concurrent_async {
+            if let Some(program) = self.program.clone() {
+                let copied: Result<Vec<_>, _> = values.iter().map(crate::stdlib_ext::value_to_data).collect();
+                if let Ok(args) = copied {
+                    let id = crate::conc_ext::pool_spawn(program, name.to_string(), args);
+                    let mut fields = std::collections::HashMap::new();
+                    fields.insert("id".to_string(), Value::Number(id));
+                    return Value::Task(Box::new(Value::Struct { name: "__PendingTask".to_string(), fields }));
+                }
+            }
         }
         let previous_loop_depth = self.loop_depth;
         self.loop_depth = 0;
@@ -774,7 +851,147 @@ impl Interpreter {
     // Program execution
     // =========================================================================
 
+    /// Registers declarations and runs top-level statements (including `main`).
     pub fn execute(&mut self, program: &Program) {
+        self.attach_program(std::sync::Arc::new(program.clone()));
+        self.register_declarations(program);
+        self.run_top_level(program);
+    }
+
+    /// Remembers the program so builtins such as `task_spawn` can start new interpreters.
+    pub fn attach_program(&mut self, program: std::sync::Arc<Program>) {
+        self.program = Some(program);
+    }
+
+    /// Opt in to scheduling async functions on the work-stealing pool. Disabled by default.
+    pub fn set_concurrent_async(&mut self, enabled: bool) {
+        self.concurrent_async = enabled;
+    }
+
+    pub fn program_arc(&self) -> Option<std::sync::Arc<Program>> {
+        self.program.clone()
+    }
+
+    /// Maps a user-facing function name to the registered symbol. Module lowering renames every
+    /// function to an internal symbol, so names given as strings (to `task_spawn`, `parallel_map`
+    /// or the test runner) are looked up as written, then as a function of the entry module
+    /// (`name`), then as `module.name`.
+    fn resolve_function_symbol(&self, name: &str) -> Option<String> {
+        if self.functions.contains_key(name) {
+            return Some(name.to_string());
+        }
+        let (module, local) = match name.rsplit_once('.') {
+            Some((module, local)) => (module, local),
+            None => ("crate", name),
+        };
+        let symbol = crate::module_system::mangle_function(module, local);
+        if self.functions.contains_key(&symbol) {
+            Some(symbol)
+        } else {
+            None
+        }
+    }
+
+    pub fn has_function(&self, name: &str) -> bool {
+        self.resolve_function_symbol(name).is_some()
+    }
+
+    /// Returns the stable HIR identity associated with a lowered nominal type symbol.
+    /// Standalone, single-file programs without project metadata return `None`.
+    pub fn type_definition_id(&self, backend_symbol: &str) -> Option<&crate::hir::HirDefinitionId> {
+        self.type_definition_ids.get(backend_symbol)
+    }
+
+    /// Resolves the stable nominal identity carried by a runtime struct or enum
+    /// value. Runtime values retain collision-free backend symbols for display
+    /// and compatibility; this lookup restores their source-level HIR identity.
+    pub fn value_type_definition_id(&self, value: &Value) -> Option<&crate::hir::HirDefinitionId> {
+        let symbol = match value {
+            Value::Struct { name, .. } => name,
+            Value::Enum { enum_name, .. } => enum_name,
+            _ => return None,
+        };
+        self.type_definition_ids.get(symbol)
+    }
+
+    /// Returns the stable method declaration identity selected for a lowered
+    /// receiver symbol and method name, when project metadata is available.
+    pub fn method_definition_id(&self, receiver_symbol: &str, method: &str) -> Option<&crate::hir::HirDefinitionId> {
+        self.method_definition_ids.get(&(receiver_symbol.to_string(), method.to_string()))
+    }
+
+    pub fn constant_definition_id(&self, backend_symbol: &str) -> Option<&crate::hir::HirDefinitionId> {
+        self.constant_definition_ids.get(backend_symbol)
+    }
+
+    pub fn trait_definition_id(&self, backend_symbol: &str) -> Option<&crate::hir::HirDefinitionId> {
+        self.trait_definition_ids.get(backend_symbol)
+    }
+
+    pub fn struct_field_definition_id(&self, receiver_symbol: &str, field: &str) -> Option<&crate::hir::HirDefinitionId> {
+        let type_id = self.type_definition_ids.get(receiver_symbol)?;
+        self.struct_field_definition_ids.get(&(type_id.clone(), field.to_string()))
+    }
+
+    pub fn enum_variant_hir_definition_id(&self, enum_symbol: &str, variant: &str) -> Option<&crate::hir::HirDefinitionId> {
+        let type_id = self.type_definition_ids.get(enum_symbol)?;
+        self.enum_variant_definition_ids.get(&(type_id.clone(), variant.to_string()))
+    }
+
+    /// Resolve an enum variant through its owning enum's HIR identity. Variant
+    /// names are only meaningful inside that enum's namespace.
+    pub fn enum_variant_definition_id(&self, enum_symbol: &str, variant: &str) -> Option<(crate::hir::HirDefinitionId, String)> {
+        let program = self.program.as_deref()?;
+        crate::module_system::backend_enum_variant_definition_id(program, enum_symbol, variant)
+    }
+
+    fn nominal_type_symbols_match(&self, expected: &str, actual: &str) -> bool {
+        match (self.type_definition_ids.get(expected), self.type_definition_ids.get(actual)) {
+            (Some(expected_id), Some(actual_id)) => expected_id == actual_id,
+            // Preserve standalone-source behavior and compatibility for values
+            // that do not have project module metadata.
+            _ => expected == actual,
+        }
+    }
+
+    fn validate_struct_field_identity(&self, struct_symbol: &str, field_name: &str) {
+        if let Some(type_id) = self.type_definition_ids.get(struct_symbol) {
+            if !self.struct_field_definition_ids.contains_key(&(type_id.clone(), field_name.to_string())) {
+                panic!("HIR field resolution failed for '{}.{}'", struct_symbol, field_name);
+            }
+        }
+    }
+
+    /// Calls a registered top-level function by name with already-evaluated arguments.
+    pub fn call_function_by_name(&mut self, name: &str, values: Vec<Value>) -> Value {
+        let symbol = self
+            .resolve_function_symbol(name)
+            .unwrap_or_else(|| panic!("Unknown function '{}'", name));
+        let function = self.functions.get(&symbol).cloned().unwrap_or_else(|| panic!("Unknown function '{}'", name));
+        self.invoke_function(&symbol, &function, values)
+    }
+
+    /// Takes the lines printed so far, leaving the buffer empty.
+    pub fn take_output(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.output)
+    }
+
+    /// Appends lines printed by another interpreter (for example a joined task).
+    pub fn push_output(&mut self, lines: Vec<String>) {
+        self.output.extend(lines);
+    }
+
+    /// Registers structs, enums, functions and impl methods without running any statements.
+    pub fn register_declarations(&mut self, program: &Program) {
+        self.type_definition_ids = crate::module_system::backend_type_definition_ids(program);
+        self.method_definition_ids = crate::module_system::backend_method_definition_ids(program);
+        self.trait_definition_ids = crate::module_system::backend_trait_definition_ids(program);
+        self.constant_definition_ids = crate::module_system::backend_constant_definition_ids(program);
+        self.struct_field_definition_ids.clear();
+        self.enum_variant_definition_ids.clear();
+        self.structs_by_id.clear();
+        self.enums_by_id.clear();
+        self.methods_by_type_id.clear();
         // ---------------------------------------------------------------------
         // Pass 1: register structs
         // ---------------------------------------------------------------------
@@ -796,7 +1013,18 @@ impl Interpreter {
                     }
                     field_list.push((field.name.clone(), self.type_from_name(&field.type_name)));
                 }
-                self.structs.insert(name.clone(), StructDefinition { fields: field_list });
+                let struct_definition = StructDefinition { fields: field_list };
+                self.structs.insert(name.clone(), struct_definition.clone());
+                if let Some(type_id) = self.type_definition_ids.get(name).cloned() {
+                    self.structs_by_id.insert(type_id.clone(), struct_definition);
+                    for field in fields {
+                        let field_id = crate::hir::HirDefinitionId::scoped(
+                            type_id.module.clone(), [type_id.name.clone()], field.name.clone(),
+                            crate::hir::HirDefinitionKind::Field,
+                        );
+                        self.struct_field_definition_ids.insert((type_id.clone(), field.name.clone()), field_id);
+                    }
+                }
             }
         }
 
@@ -826,12 +1054,18 @@ impl Interpreter {
                     variant_map.insert(variant.name.clone(), EnumVariantDefinition { fields });
                 }
 
-                self.enums.insert(
-                    name.clone(),
-                    EnumDefinition {
-                        variants: variant_map,
-                    },
-                );
+                let enum_definition = EnumDefinition { variants: variant_map };
+                self.enums.insert(name.clone(), enum_definition.clone());
+                if let Some(type_id) = self.type_definition_ids.get(name).cloned() {
+                    self.enums_by_id.insert(type_id.clone(), enum_definition);
+                    for variant in variants {
+                        let variant_id = crate::hir::HirDefinitionId::scoped(
+                            type_id.module.clone(), [type_id.name.clone()], variant.name.clone(),
+                            crate::hir::HirDefinitionKind::Variant,
+                        );
+                        self.enum_variant_definition_ids.insert((type_id.clone(), variant.name.clone()), variant_id);
+                    }
+                }
             }
         }
 
@@ -870,9 +1104,10 @@ impl Interpreter {
         // ---------------------------------------------------------------------
         // Pass 4: register impl methods
         // ---------------------------------------------------------------------
+        let mut method_dispatch_priorities: HashMap<(crate::hir::HirDefinitionId, String), bool> = HashMap::new();
         for statement in &program.statements {
             if let Statement::Impl {
-                type_name, methods, ..
+                trait_name, type_name, methods, ..
             } = statement
             {
                 for method in methods {
@@ -886,23 +1121,33 @@ impl Interpreter {
                         ..
                     } = method
                     {
-                        self.methods.insert(
-                            (type_name.clone(), name.clone()),
-                            Function {
-                                parameters: parameters.clone(),
-                                return_type: return_type.clone(),
-                                body: body.clone(),
-                                generic_parameters: generic_parameters.clone(),
-                                is_async: *is_async,
-                            },
-                        );
+                        let function = Function {
+                            parameters: parameters.clone(),
+                            return_type: return_type.clone(),
+                            body: body.clone(),
+                            generic_parameters: generic_parameters.clone(),
+                            is_async: *is_async,
+                        };
+                        self.methods.insert((type_name.clone(), name.clone()), function.clone());
+                        if let Some(type_id) = self.type_definition_ids.get(type_name).cloned() {
+                            let key = (type_id, name.clone());
+                            let is_inherent = trait_name.is_none();
+                            let replace = method_dispatch_priorities.get(&key).map_or(true, |existing_inherent| is_inherent && !*existing_inherent);
+                            if replace {
+                                self.methods_by_type_id.insert(key.clone(), function);
+                                method_dispatch_priorities.insert(key, is_inherent);
+                            }
+                        }
                     }
                 }
             }
         }
 
+    }
+
+    fn run_top_level(&mut self, program: &Program) {
         // ---------------------------------------------------------------------
-        // Pass 4: execute top-level declarations/statements
+        // Execute top-level statements
         // ---------------------------------------------------------------------
 
         for statement in &program.statements {
@@ -1506,27 +1751,51 @@ impl Interpreter {
                 },
             ) => {
                 let expected_name = format!("{}::{}", enum_name, variant);
-
-                if name != &expected_name {
-                    return None;
-                }
+                let identity_matches = if let Some((expected_enum, expected_variant)) = name.split_once("::") {
+                    if let (Some(expected_id), Some(actual_id)) = (self.type_definition_ids.get(expected_enum), self.type_definition_ids.get(enum_name)) {
+                        expected_id == actual_id
+                            && expected_variant == variant
+                            && self.enum_variant_definition_ids.contains_key(&(actual_id.clone(), variant.clone()))
+                    } else { name == &expected_name }
+                } else { false };
+                if !identity_matches { return None; }
 
                 if bindings.len() != values.len() {
                     return None;
                 }
 
-                Some(
-                    bindings
-                        .iter()
-                        .cloned()
-                        .zip(values.iter().cloned())
-                        .collect(),
-                )
+                let mut all = Vec::new();
+                for (nested_pattern, nested_value) in bindings.iter().zip(values) {
+                    all.extend(self.pattern_matches(nested_pattern, nested_value)?);
+                }
+                Some(all)
             }
 
             (PatternKind::Tuple(patterns), Value::Tuple(values)) if patterns.len() == values.len() => {
                 let mut all = Vec::new();
                 for (p, v) in patterns.iter().zip(values) { all.extend(self.pattern_matches(p, v)?); }
+                Some(all)
+            }
+            (PatternKind::Struct { name, fields, .. }, Value::Struct { name: actual_name, fields: actual_fields }) => {
+                let same_type = match (self.type_definition_ids.get(name), self.type_definition_ids.get(actual_name)) {
+                    (Some(expected), Some(actual)) => expected == actual,
+                    _ => name == actual_name,
+                };
+                if !same_type { return None; }
+                let type_id = self.type_definition_ids.get(actual_name);
+                let mut all = Vec::new();
+                for (field_name, nested) in fields {
+                    if let Some(type_id) = type_id {
+                        if !self.struct_field_definition_ids.contains_key(&(type_id.clone(), field_name.clone())) { return None; }
+                    }
+                    let field_value = actual_fields.get(field_name)?;
+                    all.extend(self.pattern_matches(nested, field_value)?);
+                }
+                Some(all)
+            }
+            (PatternKind::At { name, pattern: nested }, value) => {
+                let mut all = vec![(name.clone(), value.clone())];
+                all.extend(self.pattern_matches(nested, value)?);
                 Some(all)
             }
             (PatternKind::Or(patterns), value) => patterns.iter().find_map(|p| self.pattern_matches(p, value)),
@@ -1546,6 +1815,8 @@ impl Interpreter {
             // Literals
             // -----------------------------------------------------------------
             Expression::Number { value, .. } => Value::Number(*value),
+
+            Expression::WideNumber { value, .. } => Value::from_wide(WideInt::from_u128(*value)),
 
             Expression::Float { value, .. } => Value::Float(*value),
 
@@ -1582,6 +1853,16 @@ impl Interpreter {
             Expression::Index { array, index, .. } => {
                 let array_value = self.evaluate(array);
                 let index_value = self.evaluate(index);
+                if let Value::Struct { name, .. } = &array_value {
+                    let type_name = name.clone();
+                    let function = match self.type_definition_ids.get(&type_name) {
+                        Some(id) => self.methods_by_type_id.get(&(id.clone(), "index".to_string())).cloned(),
+                        None => self.methods.get(&(type_name.clone(), "index".to_string())).cloned(),
+                    };
+                    if let Some(function) = function {
+                        return self.invoke_function(&format!("{}.index", type_name), &function, vec![array_value, index_value]);
+                    }
+                }
 
                 match (array_value, index_value) {
                     (Value::Array(values), Value::Number(index)) => {
@@ -1593,6 +1874,10 @@ impl Interpreter {
                             .get(index as usize)
                             .cloned()
                             .unwrap_or_else(|| panic!("Array index out of bounds"))
+                    }
+                    (Value::Tuple(values), Value::Number(index)) => {
+                        if index < 0 { panic!("Tuple index out of bounds"); }
+                        values.get(index as usize).cloned().unwrap_or_else(|| panic!("Tuple index out of bounds"))
                     }
 
                     _ => {
@@ -1610,10 +1895,10 @@ impl Interpreter {
                 let value = self.evaluate(object);
 
                 match value {
-                    Value::Struct { fields, .. } => fields
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| panic!("Unknown field '{}'", name)),
+                    Value::Struct { name: struct_symbol, fields } => {
+                        self.validate_struct_field_identity(&struct_symbol, name);
+                        fields.get(name).cloned().unwrap_or_else(|| panic!("Unknown field '{}'", name))
+                    },
 
                     _ => {
                         panic!("Property access requires a struct");
@@ -1640,7 +1925,18 @@ impl Interpreter {
             // expression and returns its value. The real Task<T> runtime
             // behavior will be introduced with async/await support.
             Expression::Await { expression, .. } => match self.evaluate(expression) {
-                Value::Task(value) => *value,
+                Value::Task(value) => match *value {
+                    Value::Struct { name, fields } if name == "__PendingTask" => {
+                        let id = match fields.get("id") {
+                            Some(Value::Number(id)) => *id,
+                            _ => panic!("await: corrupt pending task"),
+                        };
+                        let (data, lines) = crate::conc_ext::join(id).unwrap_or_else(|e| panic!("await: {}", e));
+                        self.push_output(lines);
+                        crate::stdlib_ext::data_to_value(data)
+                    }
+                    other => other,
+                },
                 other => panic!("await expects Task<T>, got {}", other),
             },
 
@@ -1660,8 +1956,13 @@ impl Interpreter {
                     let right = self.evaluate(&arguments[1]);
                     return Value::Boolean(values_equal(&left, &right));
                 }
-                // Struct constructor.
-                if let Some(struct_definition) = self.structs.get(name).cloned() {
+                // Struct constructor: project programs use the HIR-keyed table;
+                // the string-keyed map remains only for standalone source execution.
+                let struct_definition = match self.type_definition_ids.get(name) {
+                    Some(id) => self.structs_by_id.get(id).cloned(),
+                    None => self.structs.get(name).cloned(),
+                };
+                if let Some(struct_definition) = struct_definition {
                     if arguments.len() != struct_definition.fields.len() {
                         panic!(
                             "Struct '{}' expects {} arguments, got {}",
@@ -1676,6 +1977,7 @@ impl Interpreter {
                     for ((field_name, expected_type), argument) in
                         struct_definition.fields.iter().zip(arguments.iter())
                     {
+                        self.validate_struct_field_identity(name, field_name);
                         let value = self.evaluate(argument);
 
                         if !self.value_matches_type_value(&value, expected_type) {
@@ -1701,7 +2003,10 @@ impl Interpreter {
             // Struct constructor
             // -----------------------------------------------------------------
             Expression::StructConstructor { name, fields, .. } => {
-                let definition = self.structs.get(name).cloned();
+                let definition = match self.type_definition_ids.get(name) {
+                    Some(id) => self.structs_by_id.get(id).cloned(),
+                    None => self.structs.get(name).cloned(),
+                };
 
                 if definition.is_none() {
                     panic!("Unknown struct '{}'", name);
@@ -1712,6 +2017,7 @@ impl Interpreter {
                 let mut result = HashMap::new();
 
                 for (field_name, expression) in fields {
+                    self.validate_struct_field_identity(name, field_name);
                     let expected_type = definition
                         .fields
                         .iter()
@@ -1760,7 +2066,10 @@ impl Interpreter {
                 arguments,
                 ..
             } => {
-                let enum_definition = self.enums.get(enum_name).cloned();
+                let enum_definition = match self.type_definition_ids.get(enum_name) {
+                    Some(id) => self.enums_by_id.get(id).cloned(),
+                    None => self.enums.get(enum_name).cloned(),
+                };
 
                 let Some(enum_definition) = enum_definition else {
                     panic!("Unknown enum '{}'", enum_name);
@@ -1771,6 +2080,10 @@ impl Interpreter {
                 let Some(variant_definition) = variant_definition else {
                     panic!("Unknown variant '{}::{}'", enum_name, variant);
                 };
+                if self.type_definition_ids.contains_key(enum_name)
+                    && self.enum_variant_hir_definition_id(enum_name, variant).is_none() {
+                    panic!("enum variant '{}::{}' has no matching HIR declaration identity", enum_name, variant);
+                }
 
                 if arguments.len() != variant_definition.fields.len() {
                     panic!(
@@ -1847,7 +2160,20 @@ impl Interpreter {
 
                 match operator {
                     UnaryOperator::Negate => match value {
-                        Value::Number(value) => Value::Number(-value),
+                        Value::Number(value) => match value.checked_neg() {
+                            Some(negated) => Value::Number(negated),
+                            None => Value::from_wide(
+                                WideInt::from_i64(value)
+                                    .checked_neg()
+                                    .expect("the negation of an i64 always fits the wide range"),
+                            ),
+                        },
+
+                        Value::Wide(value) => Value::from_wide(
+                            value
+                                .checked_neg()
+                                .unwrap_or_else(|| panic!("Integer overflow in negation")),
+                        ),
 
                         Value::Float(value) => Value::Float(-value),
 
@@ -1856,6 +2182,17 @@ impl Interpreter {
                         }
                     },
 
+                    UnaryOperator::Deref => match &value {
+                        Value::Struct { name, .. } => {
+                            let type_name = name.clone();
+                            let function = match self.type_definition_ids.get(&type_name) {
+                                Some(id) => self.methods_by_type_id.get(&(id.clone(), "deref".to_string())).cloned(),
+                                None => self.methods.get(&(type_name.clone(), "deref".to_string())).cloned(),
+                            }.unwrap_or_else(|| panic!("Type '{}' does not implement Deref", type_name));
+                            self.invoke_function(&format!("{}.deref", type_name), &function, vec![value])
+                        }
+                        _ => panic!("Deref requires a type implementing deref()"),
+                    },
                     UnaryOperator::Not => match value {
                         Value::Boolean(value) => Value::Boolean(!value),
 
@@ -1878,6 +2215,12 @@ impl Interpreter {
             Type::Float => matches!(value, Value::Float(_)),
             Type::Bool => matches!(value, Value::Boolean(_)),
             Type::String => matches!(value, Value::String(_)),
+            Type::Tuple(types) => match value {
+                Value::Tuple(values) if values.len() == types.len() => values.iter().zip(types).all(|(v, t)| self.value_matches_type_value(v, t)),
+                _ => false,
+            },
+            Type::Generic(name) if IntKind::from_name(name).is_some() => fixed_integer_accepts(name, value),
+            Type::Generic(name) if matches!(name.as_str(), "f32" | "f64") => matches!(value, Value::Float(_)),
             Type::File => matches!(value, Value::File(_)),
             Type::Array(inner) => match value {
                 Value::Array(values) => values
@@ -1898,12 +2241,9 @@ impl Interpreter {
                 _ => false,
             },
 
-            Type::Struct(expected_name) => {
-                matches!(
-                    value,
-                    Value::Struct { name, .. }
-                        if name == expected_name
-                )
+            Type::Struct(expected_name) => match value {
+                Value::Struct { name, .. } => self.nominal_type_symbols_match(expected_name, name),
+                _ => false,
             }
 
             _ => false,
@@ -1917,15 +2257,36 @@ impl Interpreter {
     fn convert_value(&mut self, value: Value, kind: &ConversionKind, target: &str) -> Value {
         let explicit = |value: Value, target: &str| -> Result<Value, String> {
             match (value, target) {
-                (Value::Number(v), "float") => Ok(Value::Float(v as f64)),
+                (Value::Number(v), "float" | "f64") => Ok(Value::Float(v as f64)),
+                (Value::Number(v), "f32") => Ok(Value::Float((v as f32) as f64)),
+                (Value::Wide(w), "float" | "f64") => Ok(Value::Float(w.to_f64())),
+                (Value::Wide(w), "f32") => Ok(Value::Float(w.to_f32() as f64)),
+                (Value::Float(v), "f32") => Ok(Value::Float((v as f32) as f64)),
+                (Value::Float(v), "f64") => Ok(Value::Float(v)),
                 (Value::Float(v), "num") => Ok(Value::Number(v as i64)),
+                (Value::Float(v), t) if IntKind::from_name(t).is_some() => {
+                    let kind = IntKind::from_name(t).expect("checked by the guard");
+                    let wide = WideInt::from_f64(v).ok_or_else(|| format!("value cannot be represented by {}", t))?;
+                    if kind.contains(wide) { Ok(Value::from_wide(wide)) } else { Err(format!("value is outside the range of {}", t)) }
+                }
+                (integer @ (Value::Number(_) | Value::Wide(_)), t) if IntKind::from_name(t).is_some() => {
+                    let kind = IntKind::from_name(t).expect("checked by the guard");
+                    let wide = integer.as_wide().expect("number and wide values are integers");
+                    if kind.contains(wide) { Ok(integer) } else { Err(format!("value is outside the range of {}", t)) }
+                }
                 (Value::Number(v), "string") => Ok(Value::String(v.to_string())),
+                (Value::Wide(w), "string") => Ok(Value::String(w.to_string())),
                 (Value::Float(v), "string") => Ok(Value::String(v.to_string())),
                 (Value::Boolean(v), "string") => Ok(Value::String(v.to_string())),
                 (Value::String(v), "num") => v
                     .parse::<i64>()
                     .map(Value::Number)
                     .map_err(|e| e.to_string()),
+                (Value::String(v), t) if IntKind::from_name(t).is_some() => {
+                    let kind = IntKind::from_name(t).expect("checked by the guard");
+                    let wide = WideInt::parse(&v).ok_or_else(|| format!("invalid integer literal '{}'", v))?;
+                    if kind.contains(wide) { Ok(Value::from_wide(wide)) } else { Err(format!("value is outside the range of {}", t)) }
+                }
                 (Value::String(v), "float") => v
                     .parse::<f64>()
                     .map(Value::Float)
@@ -1937,6 +2298,7 @@ impl Interpreter {
                 },
                 (Value::Boolean(v), "num") => Ok(Value::Number(if v { 1 } else { 0 })),
                 (Value::Number(v), "bool") => Ok(Value::Boolean(v != 0)),
+                (Value::Wide(_), "bool") => Ok(Value::Boolean(true)),
                 (Value::Float(v), "bool") => Ok(Value::Boolean(v != 0.0)),
                 (v, t) if self.value_matches_type(&v, t) => Ok(v),
                 (_, t) => Err(format!("cannot convert to {}", t)),
@@ -2082,9 +2444,11 @@ impl Interpreter {
                 self.evaluate_hashmap_method(object, entries, method, arguments)
             }
             Value::String(text) => self.evaluate_string_method(text, method, arguments),
-            Value::Struct { name, .. } => {
-                let function = self.methods.get(&(name.clone(), method.to_string())).cloned()
-                    .unwrap_or_else(|| panic!("Unknown method '{}.{}'", name, method));
+            Value::Struct { name, .. } | Value::Enum { enum_name: name, .. } => {
+                let function = match self.type_definition_ids.get(&name) {
+                    Some(type_id) => self.methods_by_type_id.get(&(type_id.clone(), method.to_string())).cloned(),
+                    None => self.methods.get(&(name.clone(), method.to_string())).cloned(),
+                }.unwrap_or_else(|| panic!("Unknown method '{}.{}'", name, method));
                 let mut values = Vec::with_capacity(arguments.len() + 1);
                 values.push(object_value);
                 values.extend(arguments.iter().map(|a| self.evaluate(a)));
@@ -2748,24 +3112,59 @@ impl Interpreter {
     // Binary operations
     // =========================================================================
 
-    fn evaluate_binary(&self, left: Value, operator: &Operator, right: Value) -> Value {
+    fn evaluate_binary(&mut self, left: Value, operator: &Operator, right: Value) -> Value {
+        let method_name = match operator {
+            Operator::Plus => Some("add"), Operator::Minus => Some("sub"), Operator::Multiply => Some("mul"),
+            Operator::Divide => Some("div"), Operator::Equal => Some("eq"), Operator::NotEqual => Some("ne"),
+            Operator::Less => Some("lt"), Operator::LessEqual => Some("le"), Operator::Greater => Some("gt"),
+            Operator::GreaterEqual => Some("ge"), Operator::And | Operator::Or => None,
+        };
+        if let (Value::Struct { name, .. } | Value::Enum { enum_name: name, .. }, Some(method)) = (&left, method_name) {
+            let type_name = name.clone();
+            let type_id = self.type_definition_ids.get(&type_name);
+            let by_identity = |name: &str| match type_id {
+                Some(id) => self.methods_by_type_id.get(&(id.clone(), name.to_string())).cloned(),
+                None => self.methods.get(&(type_name.clone(), name.to_string())).cloned(),
+            };
+            let selected = by_identity(method).map(|f| (method, f))
+                .or_else(|| if matches!(operator, Operator::NotEqual) { by_identity("eq").map(|f| ("eq", f)) } else { None });
+            if let Some((selected_method, function)) = selected {
+                let result = self.invoke_function(&format!("{}.{}", type_name, selected_method), &function, vec![left, right]);
+                if matches!(operator, Operator::NotEqual) && selected_method == "eq" {
+                    return match result { Value::Boolean(value) => Value::Boolean(!value), other => panic!("PartialEq::eq must return bool, got {}", other) };
+                }
+                return result;
+            }
+        }
         match (left, right) {
             // -----------------------------------------------------------------
             // Numbers
             // -----------------------------------------------------------------
             (Value::Number(a), Value::Number(b)) => match operator {
-                Operator::Plus => Value::Number(a + b),
+                Operator::Plus => match a.checked_add(b) {
+                    Some(sum) => Value::Number(sum),
+                    None => wide_binary(WideInt::from_i64(a), operator, WideInt::from_i64(b)),
+                },
 
-                Operator::Minus => Value::Number(a - b),
+                Operator::Minus => match a.checked_sub(b) {
+                    Some(difference) => Value::Number(difference),
+                    None => wide_binary(WideInt::from_i64(a), operator, WideInt::from_i64(b)),
+                },
 
-                Operator::Multiply => Value::Number(a * b),
+                Operator::Multiply => match a.checked_mul(b) {
+                    Some(product) => Value::Number(product),
+                    None => wide_binary(WideInt::from_i64(a), operator, WideInt::from_i64(b)),
+                },
 
                 Operator::Divide => {
                     if b == 0 {
                         panic!("Division by zero");
                     }
 
-                    Value::Number(a / b)
+                    match a.checked_div(b) {
+                        Some(quotient) => Value::Number(quotient),
+                        None => wide_binary(WideInt::from_i64(a), operator, WideInt::from_i64(b)),
+                    }
                 }
 
                 Operator::Equal => Value::Boolean(a == b),
@@ -2784,6 +3183,15 @@ impl Interpreter {
                     panic!("Logical operators require boolean operands");
                 }
             },
+
+            // -----------------------------------------------------------------
+            // Wide integers (at least one operand is outside the i64 range)
+            // -----------------------------------------------------------------
+            (left @ (Value::Number(_) | Value::Wide(_)), right @ (Value::Number(_) | Value::Wide(_))) => {
+                let a = left.as_wide().expect("integer operand");
+                let b = right.as_wide().expect("integer operand");
+                wide_binary(a, operator, b)
+            }
 
             // -----------------------------------------------------------------
             // Floats
@@ -2924,6 +3332,8 @@ fn serialize_value(v: &Value) -> String {
         }
         Value::Number(n) => n.to_string(),
 
+        Value::Wide(n) => n.to_string(),
+
         Value::Float(x) => x.to_string(),
 
         Value::Boolean(b) => b.to_string(),
@@ -3002,6 +3412,9 @@ fn parse_serialized(s: &str) -> Option<Value> {
     }
     if let Ok(n) = s.parse::<i64>() {
         return Some(Value::Number(n));
+    }
+    if let Some(wide) = WideInt::parse(s) {
+        return Some(Value::from_wide(wide));
     }
     if let Ok(f) = s.parse::<f64>() {
         if s.contains('.') {
@@ -3125,6 +3538,7 @@ fn base64_decode(s: &str) -> String {
 fn values_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => a == b,
+        (Value::Wide(a), Value::Wide(b)) => a == b,
         (Value::Float(a), Value::Float(b)) => a == b,
         (Value::String(a), Value::String(b)) => a == b,
         (Value::Boolean(a), Value::Boolean(b)) => a == b,
@@ -3134,5 +3548,48 @@ fn values_equal(left: &Value, right: &Value) -> bool {
         (Value::Enum { enum_name: an, variant: av, values: ax }, Value::Enum { enum_name: bn, variant: bv, values: bx }) => an == bn && av == bv && ax.len() == bx.len() && ax.iter().zip(bx).all(|(x, y)| values_equal(x, y)),
         (Value::Option(a), Value::Option(b)) => match (a, b) { (None, None) => true, (Some(a), Some(b)) => values_equal(a, b), _ => false },
         _ => false,
+    }
+}
+
+/// True when `value` is an integer that fits the fixed-width integer type `name`.
+fn fixed_integer_accepts(name: &str, value: &Value) -> bool {
+    match (IntKind::from_name(name), value.as_wide()) {
+        (Some(kind), Some(wide)) => kind.contains(wide),
+        _ => false,
+    }
+}
+
+/// Exact integer arithmetic and comparison over the full `i128::MIN ..= u128::MAX`
+/// range. Used whenever an `i64` operation overflows or an operand is `Value::Wide`.
+fn wide_binary(a: WideInt, operator: &Operator, b: WideInt) -> Value {
+    match operator {
+        Operator::Plus => Value::from_wide(
+            a.checked_add(b)
+                .unwrap_or_else(|| panic!("Integer overflow in addition: {} + {}", a, b)),
+        ),
+        Operator::Minus => Value::from_wide(
+            a.checked_sub(b)
+                .unwrap_or_else(|| panic!("Integer overflow in subtraction: {} - {}", a, b)),
+        ),
+        Operator::Multiply => Value::from_wide(
+            a.checked_mul(b)
+                .unwrap_or_else(|| panic!("Integer overflow in multiplication: {} * {}", a, b)),
+        ),
+        Operator::Divide => {
+            if b.is_zero() {
+                panic!("Division by zero");
+            }
+            Value::from_wide(
+                a.checked_div(b)
+                    .unwrap_or_else(|| panic!("Integer overflow in division: {} / {}", a, b)),
+            )
+        }
+        Operator::Equal => Value::Boolean(a == b),
+        Operator::NotEqual => Value::Boolean(a != b),
+        Operator::Greater => Value::Boolean(a > b),
+        Operator::Less => Value::Boolean(a < b),
+        Operator::GreaterEqual => Value::Boolean(a >= b),
+        Operator::LessEqual => Value::Boolean(a <= b),
+        Operator::And | Operator::Or => panic!("Logical operators require boolean operands"),
     }
 }

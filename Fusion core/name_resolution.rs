@@ -53,6 +53,24 @@ impl Resolver {
         }
     }
 
+
+    fn define_pattern_bindings(&mut self, pattern: &crate::ast::Pattern) -> Result<(), FusionError> {
+        use crate::ast::PatternKind;
+        match &pattern.kind {
+            PatternKind::Identifier(name) => { self.define(name, pattern.span, DefinitionKind::Variable)?; }
+            PatternKind::At { name, pattern: nested } => {
+                self.define(name, pattern.span, DefinitionKind::Variable)?;
+                self.define_pattern_bindings(nested)?;
+            }
+            PatternKind::Tuple(items) => for item in items { self.define_pattern_bindings(item)?; },
+            PatternKind::Struct { fields, .. } => for (_, item) in fields { self.define_pattern_bindings(item)?; },
+            PatternKind::Variant { bindings, .. } => for nested in bindings { self.define_pattern_bindings(nested)?; },
+            PatternKind::Or(items) => if let Some(first) = items.first() { self.define_pattern_bindings(first)?; },
+            PatternKind::Wildcard | PatternKind::Number(_) | PatternKind::Float(_) | PatternKind::String(_) | PatternKind::Boolean(_) | PatternKind::Range { .. } => {}
+        }
+        Ok(())
+    }
+
     fn define(
         &mut self,
         name: &str,
@@ -235,9 +253,7 @@ impl Resolver {
                 self.resolve_expression(expression)?;
                 for arm in arms {
                     self.push();
-                    if let crate::ast::PatternKind::Identifier(n) = &arm.pattern.kind {
-                        self.define(n, arm.pattern.span, DefinitionKind::Variable)?;
-                    }
+                    self.define_pattern_bindings(&arm.pattern)?;
                     for s in &arm.body {
                         self.resolve_statement(s)?;
                     }
@@ -315,6 +331,7 @@ impl Resolver {
             Expression::Unary { expression, .. } => self.resolve_expression(expression)?,
             Expression::Conversion { expression, .. } => self.resolve_expression(expression)?,
             Expression::Number { .. }
+            | Expression::WideNumber { .. }
             | Expression::Float { .. }
             | Expression::Boolean { .. }
             | Expression::String { .. } => {}

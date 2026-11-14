@@ -36,6 +36,7 @@ pub struct Parser {
     position: usize,
     block_style: BlockStyle,
     seen_main: bool,
+    require_main: bool,
     pending_block_styles: Vec<BlockStyle>,
     current_function_return_type: Option<Option<String>>,
     function_depth: usize,
@@ -50,10 +51,18 @@ impl Parser {
             block_style: BlockStyle::Unknown,
             pending_block_styles: Vec::new(),
             seen_main: false,
+            require_main: true,
             current_function_return_type: None,
             function_depth: 0,
             loop_depth: 0,
         }
+    }
+
+    /// Construct a parser for an imported module, where a `main` declaration is optional.
+    pub fn new_module(tokens: Vec<Spanned<Token>>) -> Self {
+        let mut parser = Self::new(tokens);
+        parser.require_main = false;
+        parser
     }
 
     // ------------------------------------------------------------
@@ -206,6 +215,25 @@ impl Parser {
     // Type helpers
     // ------------------------------------------------------------
 
+    fn parse_qualified_identifier(&mut self, expected: &str) -> Result<String, ParseError> {
+        let mut name = match self.current() {
+            Token::Identifier(name) => name.clone(),
+            _ => return self.error(expected),
+        };
+        self.advance();
+        while self.consume(&Token::Dot) {
+            match self.current() {
+                Token::Identifier(part) => {
+                    name.push('.');
+                    name.push_str(part);
+                    self.advance();
+                }
+                _ => return self.error("Expected an identifier after '.'"),
+            }
+        }
+        Ok(name)
+    }
+
     fn parse_type(&mut self) -> Result<String, ParseError> {
         if self.consume(&Token::LeftParen) {
             let mut items = Vec::new();
@@ -238,8 +266,20 @@ impl Parser {
                 "string".to_string()
             }
             Token::Identifier(name) => {
-                let name = name.clone();
+                let mut name = name.clone();
                 self.advance();
+                // Qualified user-defined types use the same dotted module path
+                // spelling as qualified value/function access (e.g. geometry.Point).
+                while self.consume(&Token::Dot) {
+                    match self.current() {
+                        Token::Identifier(part) => {
+                            name.push('.');
+                            name.push_str(part);
+                            self.advance();
+                        }
+                        _ => return self.error("Expected a type name after '.'"),
+                    }
+                }
                 name
             }
             _ => return self.error("Expected type"),
@@ -279,6 +319,16 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Result<Option<Statement>, ParseError> {
         match self.current() {
+            Token::Pub => {
+                self.advance();
+                match self.parse_statement()? {
+                    Some(statement @ (Statement::Function { .. } | Statement::Struct { .. }
+                        | Statement::Enum { .. } | Statement::Trait { .. }
+                        | Statement::ConstDeclaration { .. } | Statement::Import { .. })) => Ok(Some(statement)),
+                    Some(_) => self.error("'pub' can only be applied to a top-level declaration or import"),
+                    None => self.error("Expected a declaration after 'pub'"),
+                }
+            }
             Token::NewLine => {
                 self.advance();
 
@@ -301,6 +351,36 @@ impl Parser {
             Token::Hash => {
                 self.advance();
                 if !self.consume(&Token::LeftBracket) { return self.error("Expected '[' after '#'"); }
+                // Test attributes (`#[test]`, `#[bench]`, `#[ignore]`, `#[should_panic]`) decorate the
+                // next declaration; the test runner discovers them from source text.
+                let test_attribute = match self.current() {
+                    Token::Identifier(name) if matches!(name.as_str(), "test" | "bench" | "ignore" | "should_panic") => true,
+                    _ => false,
+                };
+                if test_attribute {
+                    self.advance();
+                    if self.current() == &Token::LeftParen {
+                        let mut depth = 0i32;
+                        loop {
+                            match self.current() {
+                                Token::LeftParen => depth += 1,
+                                Token::RightParen => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        self.advance();
+                                        break;
+                                    }
+                                }
+                                Token::Eof => return self.error("Unterminated attribute arguments"),
+                                _ => {}
+                            }
+                            self.advance();
+                        }
+                    }
+                    if !self.consume(&Token::RightBracket) { return self.error("Expected ']' after attribute"); }
+                    self.skip_newlines();
+                    return self.parse_statement();
+                }
                 match self.current() { Token::Identifier(name) if name == "derive" => self.advance(), _ => return self.error("Expected derive attribute") }
                 if !self.consume(&Token::LeftParen) { return self.error("Expected '(' after derive"); }
                 let mut derives = Vec::new();
@@ -390,7 +470,7 @@ impl Parser {
 
             Token::Async => Ok(Some(self.parse_async_function()?)),
 
-            Token::From => self.error("'from' is only valid in a conversion"),
+            Token::From => Ok(Some(self.parse_selective_import()?)),
 
             Token::Await => self.error("'await' must be used as an expression"),
 
@@ -748,10 +828,52 @@ impl Parser {
                 _ => return self.error("Expected module name after '.'"),
             }
         }
+        let alias = if self.current() == &Token::As {
+            self.advance();
+            match self.current() {
+                Token::Identifier(name) => {
+                    let alias = name.clone();
+                    self.advance();
+                    Some(alias)
+                }
+                _ => return self.error("Expected import alias after 'as'"),
+            }
+        } else {
+            None
+        };
         Ok(Statement::Import {
             path: parts.join("."),
+            alias,
+            selected: Vec::new(),
             span: self.span_from(start),
         })
+    }
+
+    /// Parse `from module.path import name, other` selective imports.
+    fn parse_selective_import(&mut self) -> Result<Statement, ParseError> {
+        let start = self.current_span().start;
+        self.advance(); // from
+        let mut parts = Vec::new();
+        match self.current() {
+            Token::Identifier(name) => { parts.push(name.clone()); self.advance(); }
+            _ => return self.error("Expected module name after 'from'"),
+        }
+        while self.consume(&Token::Dot) {
+            match self.current() {
+                Token::Identifier(name) => { parts.push(name.clone()); self.advance(); }
+                _ => return self.error("Expected module name after '.'"),
+            }
+        }
+        if !self.consume(&Token::Import) { return self.error("Expected 'import' in selective import"); }
+        let mut selected = Vec::new();
+        loop {
+            match self.current() {
+                Token::Identifier(name) => { selected.push(name.clone()); self.advance(); }
+                _ => return self.error("Expected imported symbol name"),
+            }
+            if !self.consume(&Token::Comma) { break; }
+        }
+        Ok(Statement::Import { path: parts.join("."), alias: None, selected, span: self.span_from(start) })
     }
 
     // ------------------------------------------------------------
@@ -1173,14 +1295,7 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         let start = self.current_span().start;
-        let mut first = self.parse_pattern_atom()?;
-        if let PatternKind::Number(low) = first.kind.clone() {
-            if self.consume(&Token::DotDot) {
-                let inclusive = false;
-                let high = match self.current() { Token::Num(n) => { let n=*n; self.advance(); n }, _ => return self.error("Expected integer at end of range pattern") };
-                first = Pattern { kind: PatternKind::Range { start: low, end: high, inclusive }, span: self.span_from(start) };
-            }
-        }
+        let first = self.parse_pattern_atom()?;
         let mut alternatives = vec![first];
         while self.consume(&Token::Pipe) { alternatives.push(self.parse_pattern_atom()?); }
         if alternatives.len() > 1 { Ok(Pattern { kind: PatternKind::Or(alternatives), span: self.span_from(start) }) } else { Ok(alternatives.remove(0)) }
@@ -1189,7 +1304,7 @@ impl Parser {
     fn parse_pattern_atom(&mut self) -> Result<Pattern, ParseError> {
         let start = self.current_span().start;
 
-        let kind = match self.current() {
+        let mut kind = match self.current() {
             Token::LeftParen => {
                 self.advance();
                 let mut patterns = Vec::new();
@@ -1206,6 +1321,15 @@ impl Parser {
             Token::Identifier(name) => {
                 let first = name.clone();
                 self.advance();
+                // Patterns have no value-property semantics, so a dotted path
+                // before `::` or `{` is unambiguously a qualified type path.
+                let mut qualified = first.clone();
+                while self.consume(&Token::Dot) {
+                    match self.current() {
+                        Token::Identifier(part) => { qualified.push('.'); qualified.push_str(part); self.advance(); }
+                        _ => return self.error("Expected identifier after '.' in qualified pattern"),
+                    }
+                }
 
                 if first == "_" {
                     PatternKind::Wildcard
@@ -1227,37 +1351,47 @@ impl Parser {
                     if self.consume(&Token::LeftParen) {
                         if self.current() != &Token::RightParen {
                             loop {
-                                match self.current() {
-                                    Token::Identifier(name) => {
-                                        bindings.push(name.clone());
-                                        self.advance();
-                                    }
-
-                                    _ => {
-                                        return self
-                                            .error("Expected identifier in pattern binding");
-                                    }
-                                }
-
+                                bindings.push(self.parse_pattern()?);
                                 if self.consume(&Token::Comma) {
-                                    if self.current() == &Token::RightParen {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
+                                    if self.current() == &Token::RightParen { break; }
+                                } else { break; }
                             }
                         }
-
                         if !self.consume(&Token::RightParen) {
-                            return self.error("Expected ')' after pattern bindings");
+                            return self.error("Expected ')' after variant pattern arguments");
                         }
                     }
 
                     PatternKind::Variant {
-                        name: format!("{}::{}", first, variant),
+                        name: format!("{}::{}", qualified, variant),
                         bindings,
                     }
+                } else if self.consume(&Token::LeftBrace) {
+                    let mut fields = Vec::new();
+                    let mut has_rest = false;
+                    while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
+                        if self.consume(&Token::DotDot) {
+                            has_rest = true;
+                            if self.current() == &Token::Comma { self.advance(); }
+                            break;
+                        }
+                        let field_name = match self.current() {
+                            Token::Identifier(field) => { let field = field.clone(); self.advance(); field }
+                            _ => return self.error("Expected field name in struct pattern"),
+                        };
+                        let field_pattern = if self.consume(&Token::Colon) {
+                            self.parse_pattern()?
+                        } else {
+                            Pattern { kind: PatternKind::Identifier(field_name.clone()), span: self.previous_span() }
+                        };
+                        fields.push((field_name, field_pattern));
+                        if !self.consume(&Token::Comma) { break; }
+                    }
+                    if !self.consume(&Token::RightBrace) { return self.error("Expected '}' after struct pattern"); }
+                    PatternKind::Struct { name: qualified, fields, has_rest }
+                } else if self.consume(&Token::At) {
+                    let nested = self.parse_pattern_atom()?;
+                    PatternKind::At { name: first, pattern: Box::new(nested) }
                 } else {
                     PatternKind::Identifier(first)
                 }
@@ -1292,10 +1426,26 @@ impl Parser {
             }
         };
 
-        Ok(Pattern {
-            kind,
-            span: self.span_from(start),
-        })
+        if let PatternKind::Number(low) = kind.clone() {
+            let inclusive = if self.consume(&Token::DotDotEq) {
+                Some(true)
+            } else if self.consume(&Token::DotDot) {
+                Some(false)
+            } else {
+                None
+            };
+            if let Some(inclusive) = inclusive {
+                let high = match self.current() {
+                    Token::Num(n) => { let n = *n; self.advance(); n },
+                    _ => return self.error("Expected integer at end of range pattern"),
+                };
+                kind = PatternKind::Range { start: low, end: high, inclusive };
+            } else {
+                kind = PatternKind::Number(low);
+            }
+        }
+
+        Ok(Pattern { kind, span: self.span_from(start) })
     }
 
     fn parse_match(&mut self) -> Result<Statement, ParseError> {
@@ -1908,31 +2058,14 @@ impl Parser {
         let start = self.current_span().start;
         self.advance();
 
-        let first_name = match self.current() {
-            Token::Identifier(name) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-
-            _ => {
-                return self.error("Expected type or trait name after 'impl'");
-            }
-        };
+        let first_name = self.parse_qualified_identifier(
+            "Expected type or trait name after 'impl'",
+        )?;
 
         let (trait_name, type_name) = if self.consume(&Token::For) {
-            let type_name = match self.current() {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-
-                _ => {
-                    return self.error("Expected type name after 'for'");
-                }
-            };
-
+            let type_name = self.parse_qualified_identifier(
+                "Expected type name after 'for'",
+            )?;
             (Some(first_name), type_name)
         } else {
             (None, first_name)
@@ -2055,6 +2188,22 @@ impl Parser {
             ),
             (Some(Token::Identifier(_)), Some(Token::Colon))
         )
+    }
+
+    fn parse_named_struct_fields_braced(&mut self) -> Result<Vec<(String, Expression)>, ParseError> {
+        if !self.consume(&Token::LeftBrace) { return self.error("Expected '{'"); }
+        let mut fields = Vec::new();
+        while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
+            let name = match self.current() {
+                Token::Identifier(name) => { let name = name.clone(); self.advance(); name }
+                _ => return self.error("Expected field name in struct constructor"),
+            };
+            if !self.consume(&Token::Colon) { return self.error("Expected ':' after struct constructor field name"); }
+            fields.push((name, self.parse_expression()?));
+            if !self.consume(&Token::Comma) { break; }
+        }
+        if !self.consume(&Token::RightBrace) { return self.error("Expected '}' after struct constructor fields"); }
+        Ok(fields)
     }
 
     fn parse_named_struct_fields(&mut self) -> Result<Vec<(String, Expression)>, ParseError> {
@@ -2311,6 +2460,14 @@ impl Parser {
                 })
             }
 
+            Token::Star => {
+                let start = self.current_span().start;
+                self.advance();
+                let expression = self.parse_unary()?;
+                let end = expression.span().end;
+                Ok(Expression::Unary { operator: UnaryOperator::Deref, expression: Box::new(expression), span: Span::new(start, end) })
+            }
+
             Token::Bang | Token::Not => {
                 let start = self.current_span().start;
                 self.advance();
@@ -2351,7 +2508,43 @@ impl Parser {
                 let name = name.clone();
                 self.advance();
 
-                if self.current() == &Token::DoubleColon {
+                // A dotted path followed by `::` denotes a qualified enum
+                // constructor (for example `g.Color::Red`). Otherwise leave
+                // dots to the ordinary property/method-call parser.
+                let saved_position = self.position;
+                let mut qualified_enum = name.clone();
+                let mut had_dot = false;
+                while self.consume(&Token::Dot) {
+                    had_dot = true;
+                    match self.current() {
+                        Token::Identifier(part) => { qualified_enum.push('.'); qualified_enum.push_str(part); self.advance(); }
+                        _ => { self.position = saved_position; break; }
+                    }
+                }
+                if had_dot
+                    && self.current() != &Token::DoubleColon
+                    && self.current() != &Token::LeftBrace
+                    && !(self.current() == &Token::LeftParen && self.looks_like_named_struct_constructor())
+                {
+                    self.position = saved_position;
+                }
+
+                if had_dot && self.current() == &Token::LeftBrace {
+                    let fields = self.parse_named_struct_fields_braced()?;
+                    Expression::StructConstructor {
+                        name: qualified_enum,
+                        fields,
+                        span: self.span_from(start),
+                    }
+                } else if had_dot && self.current() == &Token::LeftParen && self.looks_like_named_struct_constructor() {
+                    let fields = self.parse_named_struct_fields()?;
+                    Expression::StructConstructor {
+                        name: qualified_enum,
+                        fields,
+                        span: self.span_from(start),
+                    }
+                } else if self.current() == &Token::DoubleColon {
+                    let enum_name = if had_dot { qualified_enum } else { name.clone() };
                     self.advance();
 
                     if matches!(self.current(), Token::From | Token::Try) {
@@ -2389,7 +2582,7 @@ impl Parser {
                     };
 
                     Expression::EnumConstructor {
-                        enum_name: name,
+                        enum_name,
                         variant,
                         arguments,
                         span: self.span_from(start),
@@ -2468,6 +2661,14 @@ impl Parser {
                 self.advance();
 
                 Expression::Number { value, span }
+            }
+
+            Token::WideNum(value) => {
+                let span = self.current_span();
+                let value = *value;
+                self.advance();
+
+                Expression::WideNumber { value, span }
             }
 
             Token::Float(value) => {
@@ -2648,7 +2849,7 @@ impl Parser {
             self.skip_newlines();
         }
 
-        if !self.seen_main {
+        if self.require_main && !self.seen_main {
             return self.error("Program must contain a 'main' declaration");
         }
 
@@ -2661,6 +2862,7 @@ impl Parser {
         let program = Program {
             statements,
             span: Span::new(program_start, program_end),
+            modules: Vec::new(),
         };
         Ok(crate::derive_expansion::expand_derives(program))
     }

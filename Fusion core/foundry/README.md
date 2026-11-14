@@ -250,3 +250,53 @@ The source archive was updated with tests for TOML manifest edge cases, JSON esc
 preservation. This environment did not have `cargo`, `rustc`, or `rustfmt` installed, so the Rust
 test suite could not be executed here; run `cargo test` in a Rust development environment before
 merging this iteration into a release.
+
+## Package dependency graph
+
+`foundry::package_graph::resolve_package_graph` builds a deterministic graph of the current package and its resolved dependencies. It distinguishes package roots from the Fusion compiler's per-package module graph, records dependency aliases, and returns dependency-first build order. Path dependencies are traversed directly; Git and registry dependencies are read from `target/foundry/deps/<dependency-alias>` after dependency resolution. The build fingerprint includes Fusion sources from every package in this graph.
+
+This is the package-discovery foundation, not yet cross-package compiler import support. Compiler module search roots and package-qualified import semantics remain a separate integration milestone.
+
+### Reproducible dependency resolution
+
+`foundry.lock` pins registry dependencies to exact versions and archive SHA-256 checksums, and Git dependencies to resolved commit IDs. A normal build reuses those pins; it does not advance a branch or tag just because the remote moved. Run `foundry update` to fetch current registry/Git metadata and deliberately refresh the selected versions/commits. `foundry fetch --offline` requires dependencies to be cached and pinned in the lockfile; it does not resolve an unpinned Git selector or registry requirement from a cached moving version index. Exact registry pins use the lockfile version directly and do not require the versions index to be cached. `foundry update --offline` (or `FOUNDRY_OFFLINE=1 foundry update`) is rejected because an update must consult current remote metadata.
+
+Dependency-free projects may have a header-only lockfile. Lockfile records are checked for required fields, supported source kinds, exact registry versions/checksums, duplicate aliases, and aliases no longer declared by the manifest. A single dependency alias cannot be declared in more than one of `[dependencies]`, `[dev-dependencies]`, or `[plugins]`, because Foundry's lockfile and package graph identify dependencies by alias. Git branch selectors are resolved through fetched remote-tracking refs, while an omitted selector uses the remote's advertised default branch; both are converted to immutable commit IDs before checkout. SHA-1 and SHA-256 Git object IDs are accepted.
+
+
+### Per-package LLVM artifact cache
+
+Foundry emits each resolved package independently through the Fusion compiler's `emit-package-llvm` command, in dependency-first order, and stores the resulting package-scoped LLVM module in the profile/target package-artifact store. Cache records bind the package fingerprint, artifact kind, interface path, and SHA-256 digests; corrupted or incompatible outputs are rebuilt. The final application links the cached package modules with a separate entrypoint/shared-runtime module. Link-time checks compare package function signatures and scalar data globals against the package interface before invoking Clang.
+
+
+### Package-owned scalar data linking (Phase 3 continuation)
+
+Package interfaces are now version 4. Public and private scalar literal constants receive deterministic module-qualified LLVM data symbols; public constants use `abi-data` records and package-private constants use `abi-internal-data` records. The LLVM backend emits each supported constant as a package-owned `constant` global, and package functions load from those globals by stable symbol. String constants use private literal byte storage plus a pointer-valued constant global.
+
+Package LLVM units retain their own data definitions and emit `external constant` declarations only for referenced globals owned by other modules. The application entrypoint similarly declares referenced package globals rather than defining duplicate copies. Foundry validates data symbol ownership, provider uniqueness, scalar LLVM types, public/private visibility, and root-entrypoint access to root-private constants before linking. Package artifact records use `llvm-package-ir-v4`, forcing older cache entries to be regenerated.
+
+Supported initial data ABI: `i64`, `double`, `i1`, and `ptr` scalar literals. Non-literal constants and aggregate/static data are not yet linkable across package boundaries.
+
+## Phase 3 dependency lockfile contract
+
+Foundry's current `foundry.lock` format is version 3. It binds the lockfile to the exact manifest bytes and records each dependency alias, requested constraint, resolved version or Git commit, source identity, registry origin where applicable, and integrity digest. Registry archives are pinned by SHA-256; local path dependencies are pinned by canonical path and a deterministic source-tree digest; Git dependencies are pinned by immutable commit ID.
+
+Normal builds reject a stale manifest, a changed path dependency, or a changed registry origin and direct the developer to run `foundry update`. Offline builds require existing lock entries for path and Git dependencies, and exact version/checksum pins plus cached verified registry metadata and archives for registry dependencies. Lockfile updates are staged and published with a unique temporary sibling file so failed writes do not leave a partial lockfile.
+
+Build provenance format 5 records a SHA-256 for every package lockfile. The package and root build fingerprints also include lockfile bytes, so changing dependency resolution invalidates the affected cached build artifacts.
+
+### Registry extracted-cache integrity
+
+Registry archives are checksum-verified before extraction. Foundry separately fingerprints each extracted package tree and stores a local tree-manifest record bound to the archive checksum. Every resolution checks the extracted tree; modified or incomplete cache directories are restored from the verified archive, including offline. Archive downloads and extracted-directory replacement are staged so failed transfers/extractions do not publish partial cache objects. Archive preflight rejects traversal paths, absolute paths, symlinks, hard links, and special files; see [`docs/registry-cache-integrity.md`](docs/registry-cache-integrity.md) for the integrity model and archive restrictions. The tree manifest detects ordinary local cache corruption but is not a signature against an attacker able to modify both the package directory and its manifest.
+
+Registry cache writers are serialized by a per-package process lock, stale locks are reclaimed only when the recorded process is confirmed gone, and interrupted extraction siblings are cleaned after a verified package is available. The cache is workspace-local under `target/foundry/deps`; `foundry cache prune` removes registry versions not referenced by that workspace's validated `foundry.lock` and leaves other workspaces untouched.
+
+
+### Registry cache diagnostics
+
+Use `foundry cache inspect` for a read-only report of cached registry package metadata, archive checksums, extracted directories, and extracted-tree integrity sidecars. `foundry cache inspect --json` emits the same per-package statuses as JSON for scripts. Typical statuses include `healthy`, `archive-missing`, `archive-corrupt`, `extracted-missing`, `tree-corrupt`, and `tree-manifest-missing-or-invalid`. Inspection does not repair or delete entries; run `foundry fetch` to re-verify and repair an extracted-tree mismatch. If the archive itself is corrupt, the resolver removes it and reports the checksum failure; run `foundry fetch` again to download a fresh copy. Use `foundry cache prune` to remove unreferenced versions.
+
+
+### Registry protocol hardening
+
+Registry package metadata now requires `format_version = 1` and exact package identity fields. Remote registry and archive traffic is HTTPS-only (including redirects); local absolute paths and `file://` locations remain available for local registries. URL credentials, fragments, unsupported schemes, and relative archive locations are rejected. Registry index and metadata cache records are written through staged atomic publication, and malformed metadata is rejected before it can replace a previously cached valid record. See `docs/registry-protocol.md` for the format contract and compatibility rules.

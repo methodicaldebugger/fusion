@@ -5,9 +5,14 @@ use std::fs::File as StdFile;
 use std::net::TcpStream;
 use std::rc::Rc;
 
+use crate::wide_int::WideInt;
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Number(i64),
+    /// Integer outside the `i64` range (for example a `u64` above `i64::MAX`, or a
+    /// 128-bit value). Canonical form: values that fit `i64` are always `Number`.
+    Wide(WideInt),
     Float(f64),
     String(String),
     Boolean(bool),
@@ -36,10 +41,33 @@ pub enum Value {
     None,
 }
 
+impl Value {
+    /// Canonical integer constructor: values that fit `i64` become `Number`,
+    /// everything else becomes `Wide`. Always use this when building an integer
+    /// from a `WideInt` so equal integers have equal representations.
+    pub fn from_wide(value: WideInt) -> Value {
+        match value.to_i64() {
+            Some(number) => Value::Number(number),
+            None => Value::Wide(value),
+        }
+    }
+
+    /// Returns the exact integer value of `Number` and `Wide`, `None` otherwise.
+    pub fn as_wide(&self) -> Option<WideInt> {
+        match self {
+            Value::Number(number) => Some(WideInt::from_i64(*number)),
+            Value::Wide(wide) => Some(*wide),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Number(v) => write!(f, "{}", v),
+
+            Value::Wide(v) => write!(f, "{}", v),
 
             Value::Float(v) => write!(f, "{}", v),
 
@@ -147,6 +175,7 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Wide(a), Value::Wide(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,

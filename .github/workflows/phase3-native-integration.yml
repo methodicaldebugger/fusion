@@ -1,0 +1,86 @@
+name: Phase 3 native integration
+
+on:
+  push:
+    paths:
+      - 'Fusion core/**'
+      - '.github/workflows/phase3-native-integration.yml'
+  pull_request:
+    paths:
+      - 'Fusion core/**'
+      - '.github/workflows/phase3-native-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase3-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  required-phase3-gate:
+    name: required-phase3-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang curl python3
+          mkdir -p "$GITHUB_WORKSPACE/phase3-evidence"
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            Fusion core -> target
+            Fusion core/foundry -> target
+
+      - name: Record CI toolchain
+        run: |
+          {
+            rustc --version --verbose
+            cargo --version
+            clang --version | head -n 1
+            clang -dumpmachine
+            python3 --version
+          } | tee phase3-evidence/ci-toolchain.txt
+
+      - name: Check Rust formatting
+        working-directory: Fusion core
+        run: |
+          cargo fmt --manifest-path Cargo.toml -- --check
+          cargo fmt --manifest-path foundry/Cargo.toml -- --check
+
+      - name: Run Fusion compiler test suite
+        working-directory: Fusion core
+        run: cargo test --manifest-path Cargo.toml --all-targets
+
+      - name: Run Foundry test suite
+        working-directory: Fusion core
+        run: cargo test --manifest-path foundry/Cargo.toml --all-targets
+
+      - name: Run real compiler, Foundry, native execution, and provenance gate
+        working-directory: Fusion core
+        env:
+          PHASE3_ARTIFACT_DIR: ${{ github.workspace }}/phase3-evidence
+          PHASE3_KEEP_WORKSPACE: '1'
+        run: |
+          set -o pipefail
+          bash scripts/phase3-real-toolchain-smoke.sh 2>&1 | tee "$PHASE3_ARTIFACT_DIR/real-toolchain-smoke.log"
+
+      - name: Publish Phase 3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-native-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: phase3-evidence/
+          if-no-files-found: warn
+          retention-days: 30

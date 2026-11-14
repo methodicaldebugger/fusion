@@ -1,0 +1,9 @@
+pub struct Point:
+    x: num
+
+pub enum Outcome:
+    Success(num)
+    Failure(string)
+
+pub fn make_point(value: num) -> Point:
+    return Point { x: value }

@@ -54,6 +54,8 @@ impl std::error::Error for LexError {}
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Num(i64),
+    /// Integer literal that does not fit `i64` (up to `u128::MAX`).
+    WideNum(u128),
     Float(f64),
     Boolean(bool),
     String(String),
@@ -92,6 +94,7 @@ pub enum Token {
     OrOr,
     Pipe,
     Bang,
+    At,
     LeftParen,
     RightParen,
     LeftBracket,
@@ -101,6 +104,7 @@ pub enum Token {
     Colon,
     Dot,
     DotDot,
+    DotDotEq,
     Arrow,
     Indent,
     Dedent,
@@ -113,6 +117,7 @@ pub enum Token {
     Impl,
     Match,
     Import,
+    Pub,
     From,
     As,
     Try,
@@ -156,40 +161,67 @@ impl Lexer {
         )
     }
 
+    /// Determine the file's block syntax from its first block declaration.
+    ///
+    /// `main` is required only in the executable entry module, not in imported
+    /// modules. Therefore it must not be the lexer’s source of truth for block
+    /// style. Imported files can establish their style with `fn`, `struct`,
+    /// `enum`, etc. Files without any block declarations default to indentation
+    /// mode (the choice is immaterial until a block is introduced).
     fn detect_block_mode(source: &str) -> Result<BlockMode, LexError> {
         for (line_no, line) in source.lines().enumerate() {
             let trimmed = line.trim();
-
             if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
                 continue;
             }
 
-            if let Some(rest) = trimmed.strip_prefix("main") {
-                let rest = rest.trim_start();
+            let declaration = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+            let is_block_declaration = declaration.starts_with("main")
+                || declaration.starts_with("fn ")
+                || declaration.starts_with("async fn ")
+                || declaration.starts_with("struct ")
+                || declaration.starts_with("enum ")
+                || declaration.starts_with("trait ")
+                || declaration.starts_with("impl ");
 
-                if rest.starts_with(':') {
-                    return Ok(BlockMode::Indentation);
-                }
-
-                if rest.starts_with('{') {
-                    return Ok(BlockMode::Braces);
-                }
-
-                return Err(LexError {
-                    message: "invalid main declaration; use `main:` or `main {`".into(),
-                    position: 0,
-                    line: line_no + 1,
-                    column: 1,
-                });
+            if !is_block_declaration {
+                continue;
             }
+
+            // Avoid treating identifiers such as `mainly` as the main keyword.
+            let rest = if let Some(rest) = declaration.strip_prefix("main") {
+                if rest.is_empty() || rest.starts_with(':') || rest.starts_with('{') || rest.chars().next().map(char::is_whitespace).unwrap_or(false) {
+                    rest.trim_start()
+                } else {
+                    continue;
+                }
+            } else {
+                declaration
+            };
+
+            // Indentation-style declarations place the block colon at the
+            // end of the declaration (`fn name(...):`, `struct Name:`).
+            // The old check only looked for a colon at the beginning of
+            // `rest`, which works for `main:` but rejects every ordinary
+            // function/type declaration in indentation mode.
+            if rest.starts_with(':') || declaration.trim_end().ends_with(':') {
+                return Ok(BlockMode::Indentation);
+            }
+
+            // Brace-style declarations end with the opening brace. Keep the
+            // `main {` special case above, where `rest` starts with `{`.
+            if rest.starts_with('{') || declaration.trim_end().ends_with('{') {
+                return Ok(BlockMode::Braces);
+            }
+            return Err(LexError {
+                message: "expected ':' or '{' to establish this file's block style".into(),
+                position: 0,
+                line: line_no + 1,
+                column: 1,
+            });
         }
 
-        Err(LexError {
-            message: "missing main block; expected `main:` or `main {`".into(),
-            position: 0,
-            line: 1,
-            column: 1,
-        })
+        Ok(BlockMode::Indentation)
     }
 
     pub fn new(source: &str, block_mode: BlockMode) -> Self {
@@ -322,12 +354,18 @@ impl Lexer {
                     column: self.column,
                 })
         } else {
-            value.parse::<i64>().map(Token::Num).map_err(|_| LexError {
-                message: "invalid integer literal".into(),
-                position: start,
-                line: self.line,
-                column: self.column,
-            })
+            match value.parse::<i64>() {
+                Ok(number) => Ok(Token::Num(number)),
+                Err(_) => value
+                    .parse::<u128>()
+                    .map(Token::WideNum)
+                    .map_err(|_| LexError {
+                        message: "integer literal is too large (maximum is 340282366920938463463374607431768211455)".into(),
+                        position: start,
+                        line: self.line,
+                        column: self.column,
+                    }),
+            }
         }
     }
 
@@ -414,6 +452,7 @@ impl Lexer {
             "impl" => Token::Impl,
             "match" => Token::Match,
             "import" => Token::Import,
+            "pub" => Token::Pub,
             "from" => Token::From,
             "as" => Token::As,
             "try" => Token::Try,
@@ -496,9 +535,8 @@ impl Lexer {
                 '/' if self.peek_next() == Some('/') => {
                     self.advance();
                     self.advance();
-                    if self.peek() == Some('/') {
-                        return self.error("triple-slash comments are not supported");
-                    }
+                    // `///` doc comments are ordinary comments to the lexer; `fusion doc` reads them
+                    // from the source text.
                     while let Some(c) = self.peek() {
                         self.advance();
                         if c == '\n' {
@@ -636,7 +674,12 @@ impl Lexer {
                     self.advance();
                     let token = if self.peek() == Some('.') {
                         self.advance();
-                        Token::DotDot
+                        if self.peek() == Some('=') {
+                            self.advance();
+                            Token::DotDotEq
+                        } else {
+                            Token::DotDot
+                        }
                     } else {
                         Token::Dot
                     };
@@ -714,6 +757,10 @@ impl Lexer {
                         return Ok(Spanned::new(Token::AndAnd, start, self.position));
                     }
                     return self.error("expected `&&`");
+                }
+                '@' => {
+                    self.advance();
+                    return Ok(Spanned::new(Token::At, start, self.position));
                 }
                 '|' => {
                     self.advance();

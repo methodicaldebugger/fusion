@@ -1,0 +1,22 @@
+//! A tour of the 0.3 standard library.
+
+main:
+    // Text
+    print(regex_replace("[0-9]+", "order 66, item 7", "#"))
+    print(str_join(regex_find_all("[a-z]+", "ab 12 cd"), "-"))
+
+    // Data formats
+    config = toml_parse("name = 'demo'\nport = 8080")
+    print(json_pretty(config))
+
+    // Crypto and time
+    print(sha256("fusion"))
+    print(date_format(unix_time(), "%Y-%m-%d %H:%M:%S %Z", "UTC"))
+    print(date_format(unix_time(), "%F %T %z", "+02:00"))
+
+    // Files and processes
+    write_file("tour.txt", "hello")
+    print(file_size("tour.txt"))
+    remove_file("tour.txt")
+    result = process_output("cmd", ["/C", "echo from a child process"])
+    print(map_get_or(result, "stdout", ""))

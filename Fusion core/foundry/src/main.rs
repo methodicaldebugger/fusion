@@ -3,7 +3,7 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 fn usage() {
-    println!("Foundry 0.1.0 - Fusion project/package/toolchain manager\n\nCommands:\n  foundry new <name>\n  foundry init\n  foundry build [--release] [--target <triple> ...]\n  foundry run [-- <args...>]\n  foundry check\n  foundry test\n  foundry fetch [--offline]\n  foundry update\n  foundry tree\n  foundry metadata\n  foundry doctor\n  foundry clean\n  foundry add <name> [version | --path PATH | --git URL]\n  foundry remove <name>\n  foundry fmt [--check]\n  foundry clippy\n  foundry doc\n  foundry version\n\nSet FUSION_COMPILER to select the Fusion executable.")
+    println!("Foundry 0.1.0 - Fusion project/package/toolchain manager\n\nCommands:\n  foundry new <name>\n  foundry init\n  foundry build [--release] [--target <triple> ...]\n  foundry run [-- <args...>]\n  foundry check\n  foundry test [--filter TEXT] [--ignored]\n  foundry fetch [--offline]\n  foundry update [--offline]\n  foundry tree\n  foundry metadata\n  foundry doctor\n  foundry clean\n  foundry cache inspect [--json]\n  foundry cache prune\n  foundry add <name> [version | --path PATH | --git URL]\n  foundry remove <name>\n  foundry fmt [--check]\n  foundry clippy\n  foundry doc  (also writes API docs from /// comments)\n  foundry version\n\nSet FUSION_COMPILER to select the Fusion executable.")
 }
 
 fn cwd() -> Result<PathBuf, String> {
@@ -34,13 +34,14 @@ fn main() -> ExitCode {
         "build" => build(&a),
         "run" => run(&a),
         "check" => check(),
-        "test" => test(),
+        "test" => test(&a),
         "fetch" => fetch(&a, false),
         "update" => fetch(&a, true),
         "tree" => tree(),
         "metadata" => metadata(),
         "doctor" => doctor(),
         "clean" => clean(),
+        "cache" => cache_command(&a),
         "add" => add(&a),
         "remove" => remove(&a),
         "fmt" => fmt(&a),
@@ -55,6 +56,46 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn cache_command(args: &[String]) -> Result<(), String> {
+    let project = project()?;
+    match args {
+        [command] if command == "prune" => {
+            let removed = foundry::prune_registry_cache(&project)?;
+            println!("Pruned {removed} unreferenced registry package cache entr(y/ies)");
+            Ok(())
+        }
+        [command] if command == "inspect" => print_cache_inspection(&project, false),
+        [command, flag] if command == "inspect" && flag == "--json" => print_cache_inspection(&project, true),
+        _ => Err("usage: foundry cache inspect [--json] | foundry cache prune".into()),
+    }
+}
+
+fn print_cache_inspection(project: &foundry::Project, json: bool) -> Result<(), String> {
+    let entries = foundry::inspect_registry_cache(project)?;
+    if json {
+        println!("[
+{}
+]", entries.iter().map(|entry| format!(
+            "  {{\"name\":\"{}\",\"version\":\"{}\",\"status\":\"{}\",\"archive_bytes\":{},\"detail\":\"{}\"}}",
+            json_escape(&entry.name), json_escape(&entry.version), json_escape(&entry.status),
+            entry.archive_bytes.map(|value| value.to_string()).unwrap_or_else(|| "null".into()), json_escape(&entry.detail)
+        )).collect::<Vec<_>>().join(",
+"));
+    } else if entries.is_empty() {
+        println!("No registry package cache entries found.");
+    } else {
+        println!("{:<24} {:<14} {:<34} {:>12}  DETAIL", "PACKAGE", "VERSION", "STATUS", "ARCHIVE BYTES");
+        for entry in &entries {
+            println!("{:<24} {:<14} {:<34} {:>12}  {}", entry.name, entry.version, entry.status,
+                entry.archive_bytes.map(|value| value.to_string()).unwrap_or_else(|| "-".into()), entry.detail);
+        }
+        let healthy = entries.iter().filter(|entry| entry.status == "healthy").count();
+        println!("
+{} package record(s): {healthy} healthy, {} need attention", entries.len(), entries.len() - healthy);
+    }
+    Ok(())
 }
 
 fn new_pkg(args: &[String]) -> Result<(), String> {
@@ -163,9 +204,9 @@ fn check() -> Result<(), String> {
     Ok(())
 }
 
-fn test() -> Result<(), String> {
+fn test(args: &[String]) -> Result<(), String> {
     let p = project()?;
-    foundry::test(&p, None)
+    foundry::test_with_args(&p, None, args)
 }
 
 fn metadata() -> Result<(), String> {
@@ -279,7 +320,8 @@ fn json_escape(value: &str) -> String {
 
 fn fetch(a: &[String], update: bool) -> Result<(), String> {
     let p = project()?;
-    foundry::resolve_dependencies_with_update(&p, a.iter().any(|x| x == "--offline"), update)?;
+    let offline = a.iter().any(|x| x == "--offline") || env::var_os("FOUNDRY_OFFLINE").is_some();
+    foundry::resolve_dependencies_with_update(&p, offline, update)?;
     println!("Dependencies resolved");
     Ok(())
 }
@@ -514,6 +556,10 @@ fn doc() -> Result<(), String> {
     }
     fs::write(docs.join("README.md"), out).map_err(|e| format!("write docs: {e}"))?;
     println!("Generated {}", docs.join("README.md").display());
+    match foundry::api_docs(&p, None, &docs) {
+        Ok(()) => println!("Generated {} and {}", docs.join("api.md").display(), docs.join("api.html").display()),
+        Err(e) => eprintln!("warning: API documentation from doc comments was skipped: {e}"),
+    }
     Ok(())
 }
 

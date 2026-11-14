@@ -18,3 +18,20 @@ path = "lib.rs"
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[features]
+default = []
+# HTTPS (client and server) through rustls. Off by default so the core build has no dependencies.
+tls = ["dep:rustls", "dep:webpki-roots", "dep:rustls-pemfile"]
+# HTTP/2 header compression (HPACK) through the `hpack` crate; frames and flow control are Fusion's own.
+http2 = ["dep:hpack"]
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+hpack = { version = "0.3", optional = true }
+
+# Package-interface fingerprints and deterministic string encoding.
+sha2 = "0.10"
+hex = "0.4"

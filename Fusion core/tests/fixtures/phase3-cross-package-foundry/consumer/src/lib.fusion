@@ -1,0 +1,10 @@
+import model
+
+pub fn read_point(point: model.Point) -> num:
+    return point.x
+
+pub fn make_outcome(value: num) -> model.Outcome:
+    return model.Outcome::Success(value)
+
+pub fn make_failure(message: string) -> model.Outcome:
+    return model.Outcome::Failure(message)

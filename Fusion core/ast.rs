@@ -16,6 +16,29 @@ use crate::span::Span;
 pub struct Program {
     pub statements: Vec<Statement>,
     pub span: Span,
+    /// Project module metadata retained alongside the compatibility flattened AST.
+    /// Ranges refer to `statements[start..end]`; standalone source has no module entries.
+    pub modules: Vec<ModuleInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleImportInfo {
+    pub path: String,
+    pub alias: Option<String>,
+    /// Empty means the whole module is imported; otherwise these are selective imports.
+    pub selected: Vec<String>,
+    pub re_exported: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleInfo {
+    pub name: String,
+    pub path: String,
+    pub statement_start: usize,
+    pub statement_end: usize,
+    pub imports: Vec<ModuleImportInfo>,
+    pub public_symbols: Vec<String>,
+    pub private_symbols: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,8 +104,10 @@ pub enum PatternKind {
     Float(f64),
     String(String),
     Boolean(bool),
-    Variant { name: String, bindings: Vec<String> },
+    Variant { name: String, bindings: Vec<Pattern> },
     Tuple(Vec<Pattern>),
+    Struct { name: String, fields: Vec<(String, Pattern)>, has_rest: bool },
+    At { name: String, pattern: Box<Pattern> },
     Or(Vec<Pattern>),
     Range { start: i64, end: i64, inclusive: bool },
 }
@@ -138,6 +163,8 @@ pub enum Statement {
 
     Import {
         path: String,
+        alias: Option<String>,
+        selected: Vec<String>,
         span: Span,
     },
 
@@ -221,6 +248,13 @@ pub enum Statement {
 pub enum Expression {
     Number {
         value: i64,
+        span: Span,
+    },
+
+    /// Integer literal above `i64::MAX` (up to `u128::MAX`). Negative literals are
+    /// written with unary minus, so the stored magnitude is never negative.
+    WideNumber {
+        value: u128,
         span: Span,
     },
 
@@ -321,6 +355,7 @@ impl Expression {
     pub fn span(&self) -> Span {
         match self {
             Expression::Number { span, .. }
+            | Expression::WideNumber { span, .. }
             | Expression::Float { span, .. }
             | Expression::Boolean { span, .. }
             | Expression::String { span, .. }
@@ -402,4 +437,5 @@ pub enum Operator {
 pub enum UnaryOperator {
     Negate,
     Not,
+    Deref,
 }
