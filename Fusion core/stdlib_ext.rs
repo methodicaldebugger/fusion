@@ -12,8 +12,8 @@ use crate::net_ext;
 use crate::os_ext;
 use crate::text_ext::{self, Regex};
 use crate::time_ext;
-use crate::tz_ext::{self, Zone};
 use crate::types::Type;
+use crate::tz_ext::{self, Zone};
 use crate::value::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -193,7 +193,15 @@ fn kind_type(code: char) -> Type {
 
 /// Signatures for the type checker.
 pub fn signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
-    SIGS.iter().map(|(name, params, ret)| (*name, params.chars().map(kind_type).collect(), kind_type(*ret))).collect()
+    SIGS.iter()
+        .map(|(name, params, ret)| {
+            (
+                *name,
+                params.chars().map(kind_type).collect(),
+                kind_type(*ret),
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -207,9 +215,12 @@ pub fn value_to_data(value: &Value) -> Result<Data, String> {
         Value::Float(f) => Data::Float(*f),
         Value::String(s) => Data::Str(s.clone()),
         Value::Boolean(b) => Data::Bool(*b),
-        Value::Array(items) | Value::Tuple(items) | Value::Iterator(items) => {
-            Data::List(items.iter().map(value_to_data).collect::<Result<Vec<_>, _>>()?)
-        }
+        Value::Array(items) | Value::Tuple(items) | Value::Iterator(items) => Data::List(
+            items
+                .iter()
+                .map(value_to_data)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         Value::HashMap(entries) => {
             let mut out = Vec::new();
             for (k, v) in entries {
@@ -226,14 +237,26 @@ pub fn value_to_data(value: &Value) -> Result<Data, String> {
             }
             Data::Map(out)
         }
-        Value::Enum { variant, values, .. } => Data::Map(vec![
+        Value::Enum {
+            variant, values, ..
+        } => Data::Map(vec![
             ("variant".to_string(), Data::Str(variant.clone())),
-            ("values".to_string(), Data::List(values.iter().map(value_to_data).collect::<Result<Vec<_>, _>>()?)),
+            (
+                "values".to_string(),
+                Data::List(
+                    values
+                        .iter()
+                        .map(value_to_data)
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            ),
         ]),
         Value::Option(Some(inner)) => value_to_data(inner)?,
         Value::Option(None) | Value::None => Data::Null,
         Value::Task(inner) => value_to_data(inner)?,
-        Value::File(_) | Value::TcpStream(_) => return Err("files and streams cannot be copied".to_string()),
+        Value::File(_) | Value::TcpStream(_) => {
+            return Err("files and streams cannot be copied".to_string())
+        }
     })
 }
 
@@ -245,7 +268,12 @@ pub fn data_to_value(data: Data) -> Value {
         Data::Float(f) => Value::Float(f),
         Data::Str(s) => Value::String(s),
         Data::List(items) => Value::Array(items.into_iter().map(data_to_value).collect()),
-        Data::Map(entries) => Value::HashMap(entries.into_iter().map(|(k, v)| (Value::String(k), data_to_value(v))).collect()),
+        Data::Map(entries) => Value::HashMap(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Value::String(k), data_to_value(v)))
+                .collect(),
+        ),
     }
 }
 
@@ -293,7 +321,10 @@ fn strings(a: &[Value], i: usize, f: &str) -> Vec<String> {
 
 fn header_pairs(a: &[Value], i: usize, f: &str) -> Vec<(String, String)> {
     match a.get(i) {
-        Some(Value::HashMap(entries)) => entries.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        Some(Value::HashMap(entries)) => entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         _ => panic!("{}() expects argument {} to be a map of headers", f, i + 1),
     }
 }
@@ -343,7 +374,10 @@ fn process_value(r: os_ext::ProcessResult) -> Value {
 }
 
 fn regex(f: &str, pattern: &str) -> Regex {
-    ok(f, Regex::new(pattern).map_err(|e| format!("invalid pattern '{}': {}", pattern, e)))
+    ok(
+        f,
+        Regex::new(pattern).map_err(|e| format!("invalid pattern '{}': {}", pattern, e)),
+    )
 }
 
 fn http_value(f: &str, r: Result<Data, String>) -> Value {
@@ -354,7 +388,10 @@ fn char_slice(text: &str, start: i64, end: i64) -> String {
     let len = text.chars().count() as i64;
     let lo = start.clamp(0, len);
     let hi = end.clamp(lo, len);
-    text.chars().skip(lo as usize).take((hi - lo) as usize).collect()
+    text.chars()
+        .skip(lo as usize)
+        .take((hi - lo) as usize)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +401,12 @@ fn char_slice(text: &str, start: i64, end: i64) -> String {
 pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
     let (params, _) = table().get(name).copied().unwrap_or(("", 'v'));
     if a.len() != params.len() {
-        panic!("{}() expects {} argument(s), got {}", name, params.len(), a.len());
+        panic!(
+            "{}() expects {} argument(s), got {}",
+            name,
+            params.len(),
+            a.len()
+        );
     }
     let f = name;
     match name {
@@ -376,10 +418,17 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
             Some(groups) => some(Value::Array(groups.into_iter().map(opt_string).collect())),
             None => none(),
         },
-        "regex_replace" => Value::String(regex(f, &s(&a, 0, f)).replace_all(&s(&a, 1, f), &s(&a, 2, f))),
+        "regex_replace" => {
+            Value::String(regex(f, &s(&a, 0, f)).replace_all(&s(&a, 1, f), &s(&a, 2, f)))
+        }
         "regex_split" => str_array(regex(f, &s(&a, 0, f)).split(&s(&a, 1, f))),
         "utf8_valid" => Value::Boolean(text_ext::utf8_valid(&byte_array(&a, 0, f))),
-        "utf8_encode" => Value::Array(text_ext::utf8_encode(&s(&a, 0, f)).into_iter().map(|x| Value::Number(x as i64)).collect()),
+        "utf8_encode" => Value::Array(
+            text_ext::utf8_encode(&s(&a, 0, f))
+                .into_iter()
+                .map(|x| Value::Number(x as i64))
+                .collect(),
+        ),
         "utf8_decode" => match text_ext::utf8_decode(&byte_array(&a, 0, f)) {
             Ok(text) => some(Value::String(text)),
             Err(_) => none(),
@@ -414,31 +463,67 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
             Ok(d) => some(data_to_value(d)),
             Err(_) => none(),
         },
-        "json_stringify" => Value::String(data_ext::json_stringify(&ok(f, value_to_data(&a[0])), false)),
-        "json_pretty" => Value::String(data_ext::json_stringify(&ok(f, value_to_data(&a[0])), true)),
+        "json_stringify" => Value::String(data_ext::json_stringify(
+            &ok(f, value_to_data(&a[0])),
+            false,
+        )),
+        "json_pretty" => {
+            Value::String(data_ext::json_stringify(&ok(f, value_to_data(&a[0])), true))
+        }
         "toml_parse" => data_to_value(ok(f, data_ext::toml_parse(&s(&a, 0, f)))),
-        "toml_stringify" => Value::String(ok(f, data_ext::toml_stringify(&ok(f, value_to_data(&a[0]))))),
+        "toml_stringify" => Value::String(ok(
+            f,
+            data_ext::toml_stringify(&ok(f, value_to_data(&a[0]))),
+        )),
 
         // ---- crypto ----
-        "sha256" => Value::String(crypto_ext::to_hex(&crypto_ext::sha256(s(&a, 0, f).as_bytes()))),
-        "hmac_sha256" => Value::String(crypto_ext::to_hex(&crypto_ext::hmac_sha256(s(&a, 0, f).as_bytes(), s(&a, 1, f).as_bytes()))),
-        "constant_time_eq" => Value::Boolean(crypto_ext::constant_time_eq(s(&a, 0, f).as_bytes(), s(&a, 1, f).as_bytes())),
-        "random_bytes_hex" => Value::String(crypto_ext::to_hex(&ok(f, crypto_ext::secure_random_bytes(n(&a, 0, f).clamp(0, 1 << 20) as usize)))),
-        "secure_random_int" => Value::Number(ok(f, crypto_ext::secure_random_range(n(&a, 0, f), n(&a, 1, f)))),
-        "secure_random_float" => Value::Float((ok(f, crypto_ext::secure_random_u64()) >> 11) as f64 / (1u64 << 53) as f64),
+        "sha256" => Value::String(crypto_ext::to_hex(&crypto_ext::sha256(
+            s(&a, 0, f).as_bytes(),
+        ))),
+        "hmac_sha256" => Value::String(crypto_ext::to_hex(&crypto_ext::hmac_sha256(
+            s(&a, 0, f).as_bytes(),
+            s(&a, 1, f).as_bytes(),
+        ))),
+        "constant_time_eq" => Value::Boolean(crypto_ext::constant_time_eq(
+            s(&a, 0, f).as_bytes(),
+            s(&a, 1, f).as_bytes(),
+        )),
+        "random_bytes_hex" => Value::String(crypto_ext::to_hex(&ok(
+            f,
+            crypto_ext::secure_random_bytes(n(&a, 0, f).clamp(0, 1 << 20) as usize),
+        ))),
+        "secure_random_int" => Value::Number(ok(
+            f,
+            crypto_ext::secure_random_range(n(&a, 0, f), n(&a, 1, f)),
+        )),
+        "secure_random_float" => Value::Float(
+            (ok(f, crypto_ext::secure_random_u64()) >> 11) as f64 / (1u64 << 53) as f64,
+        ),
         "uuid4" => {
             let mut x = ok(f, crypto_ext::secure_random_bytes(16));
             x[6] = (x[6] & 0x0f) | 0x40;
             x[8] = (x[8] & 0x3f) | 0x80;
             let h = crypto_ext::to_hex(&x);
-            Value::String(format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32]))
+            Value::String(format!(
+                "{}-{}-{}-{}-{}",
+                &h[0..8],
+                &h[8..12],
+                &h[12..16],
+                &h[16..20],
+                &h[20..32]
+            ))
         }
 
         // ---- time ----
         "date_format" => {
             let t = n(&a, 0, f);
             let local = ok(f, Zone::parse(&s(&a, 2, f))).at(t);
-            Value::String(time_ext::format_with(t, &s(&a, 1, f), local.offset_seconds.div_euclid(60), Some(&local.abbreviation)))
+            Value::String(time_ext::format_with(
+                t,
+                &s(&a, 1, f),
+                local.offset_seconds.div_euclid(60),
+                Some(&local.abbreviation),
+            ))
         }
         "date_parse" => match time_ext::parse(&s(&a, 0, f)) {
             Ok(t) => some(Value::Number(t)),
@@ -446,13 +531,34 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         },
         "date_parts" => {
             let t = n(&a, 0, f);
-            let off = ok(f, Zone::parse(&s(&a, 1, f))).at(t).offset_seconds.div_euclid(60);
+            let off = ok(f, Zone::parse(&s(&a, 1, f)))
+                .at(t)
+                .offset_seconds
+                .div_euclid(60);
             let p = time_ext::parts(t, off);
-            Value::Array([p.year, p.month, p.day, p.hour, p.minute, p.second, p.weekday, p.yday].iter().map(|v| Value::Number(*v)).collect())
+            Value::Array(
+                [
+                    p.year, p.month, p.day, p.hour, p.minute, p.second, p.weekday, p.yday,
+                ]
+                .iter()
+                .map(|v| Value::Number(*v))
+                .collect(),
+            )
         }
         "date_from_parts" => {
             let zone = ok(f, Zone::parse(&s(&a, 6, f)));
-            let naive = ok(f, time_ext::from_parts(n(&a, 0, f), n(&a, 1, f), n(&a, 2, f), n(&a, 3, f), n(&a, 4, f), n(&a, 5, f), 0));
+            let naive = ok(
+                f,
+                time_ext::from_parts(
+                    n(&a, 0, f),
+                    n(&a, 1, f),
+                    n(&a, 2, f),
+                    n(&a, 3, f),
+                    n(&a, 4, f),
+                    n(&a, 5, f),
+                    0,
+                ),
+            );
             Value::Number(zone.local_to_unix(naive))
         }
         "date_add_months" => {
@@ -463,8 +569,17 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
             let naive = time_ext::add_months(t, n(&a, 1, f), off) + off * 60;
             Value::Number(zone.local_to_unix(naive))
         }
-        "tz_offset" => Value::Number(ok(f, Zone::parse(&s(&a, 1, f))).at(n(&a, 0, f)).offset_seconds.div_euclid(60)),
-        "tz_abbrev" => Value::String(ok(f, Zone::parse(&s(&a, 1, f))).at(n(&a, 0, f)).abbreviation),
+        "tz_offset" => Value::Number(
+            ok(f, Zone::parse(&s(&a, 1, f)))
+                .at(n(&a, 0, f))
+                .offset_seconds
+                .div_euclid(60),
+        ),
+        "tz_abbrev" => Value::String(
+            ok(f, Zone::parse(&s(&a, 1, f)))
+                .at(n(&a, 0, f))
+                .abbreviation,
+        ),
         "tz_is_valid" => Value::Boolean(Zone::parse(&s(&a, 0, f)).is_ok()),
         "tz_names" => str_array(tz_ext::builtin_names()),
         "days_in_month" => {
@@ -476,7 +591,10 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         }
         "is_leap_year" => Value::Boolean(time_ext::is_leap(n(&a, 0, f))),
         "now_iso" => {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
             Value::String(time_ext::format(now, "%Y-%m-%dT%H:%M:%SZ", 0))
         }
 
@@ -530,13 +648,26 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         "env_vars" => {
             let mut vars: Vec<(String, String)> = std::env::vars().collect();
             vars.sort();
-            Value::HashMap(vars.into_iter().map(|(k, v)| (Value::String(k), Value::String(v))).collect())
+            Value::HashMap(
+                vars.into_iter()
+                    .map(|(k, v)| (Value::String(k), Value::String(v)))
+                    .collect(),
+            )
         }
 
         // ---- processes ----
-        "process_output" => process_value(ok(f, os_ext::process_output(&s(&a, 0, f), &strings(&a, 1, f), None))),
-        "process_output_input" => process_value(ok(f, os_ext::process_output(&s(&a, 0, f), &strings(&a, 1, f), Some(&s(&a, 2, f))))),
-        "process_spawn" => Value::Number(ok(f, os_ext::process_spawn(&s(&a, 0, f), &strings(&a, 1, f)))),
+        "process_output" => process_value(ok(
+            f,
+            os_ext::process_output(&s(&a, 0, f), &strings(&a, 1, f), None),
+        )),
+        "process_output_input" => process_value(ok(
+            f,
+            os_ext::process_output(&s(&a, 0, f), &strings(&a, 1, f), Some(&s(&a, 2, f))),
+        )),
+        "process_spawn" => Value::Number(ok(
+            f,
+            os_ext::process_spawn(&s(&a, 0, f), &strings(&a, 1, f)),
+        )),
         "process_write" => {
             ok(f, os_ext::process_write(n(&a, 0, f), &s(&a, 1, f)));
             Value::None
@@ -572,22 +703,64 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         "tcp_local_port" => Value::Number(ok(f, net_ext::local_port(n(&a, 0, f)))),
         "tcp_peer_addr" => Value::String(ok(f, net_ext::peer_address(n(&a, 0, f)))),
         "udp_bind" => Value::Number(ok(f, net_ext::udp_bind(&s(&a, 0, f), n(&a, 1, f)))),
-        "udp_send_to" => Value::Number(ok(f, net_ext::udp_send_to(n(&a, 0, f), &s(&a, 1, f), n(&a, 2, f), &s(&a, 3, f)))),
+        "udp_send_to" => Value::Number(ok(
+            f,
+            net_ext::udp_send_to(n(&a, 0, f), &s(&a, 1, f), n(&a, 2, f), &s(&a, 3, f)),
+        )),
         "udp_recv_from" => {
             let (text, from) = ok(f, net_ext::udp_recv_from(n(&a, 0, f), n(&a, 1, f)));
             Value::Array(vec![Value::String(text), Value::String(from)])
         }
-        "http_request" => http_value(f, net_ext::http_request(&s(&a, 0, f), &s(&a, 1, f), &header_pairs(&a, 2, f), &s(&a, 3, f), 0)),
+        "http_request" => http_value(
+            f,
+            net_ext::http_request(
+                &s(&a, 0, f),
+                &s(&a, 1, f),
+                &header_pairs(&a, 2, f),
+                &s(&a, 3, f),
+                0,
+            ),
+        ),
         "http_get" => http_value(f, net_ext::http_request("GET", &s(&a, 0, f), &[], "", 0)),
-        "http_post" => http_value(f, net_ext::http_request("POST", &s(&a, 0, f), &[], &s(&a, 1, f), 0)),
-        "http_client_open" => Value::Number(ok(f, net_ext::http_client_open(&s(&a, 0, f), n(&a, 1, f)))),
-        "http_client_request" => http_value(f, net_ext::http_client_request(n(&a, 0, f), &s(&a, 1, f), &s(&a, 2, f), &header_pairs(&a, 3, f), &s(&a, 4, f))),
-        "http_client_close" => { ok(f, net_ext::http_client_close(n(&a, 0, f))); Value::None },
-        "http_listen" => Value::Number(ok(f, net_ext::http_listen(&s(&a, 0, f), n(&a, 1, f), None))),
-        "https_listen" => Value::Number(ok(f, net_ext::https_listen(&s(&a, 0, f), n(&a, 1, f), &s(&a, 2, f), &s(&a, 3, f)))),
+        "http_post" => http_value(
+            f,
+            net_ext::http_request("POST", &s(&a, 0, f), &[], &s(&a, 1, f), 0),
+        ),
+        "http_client_open" => {
+            Value::Number(ok(f, net_ext::http_client_open(&s(&a, 0, f), n(&a, 1, f))))
+        }
+        "http_client_request" => http_value(
+            f,
+            net_ext::http_client_request(
+                n(&a, 0, f),
+                &s(&a, 1, f),
+                &s(&a, 2, f),
+                &header_pairs(&a, 3, f),
+                &s(&a, 4, f),
+            ),
+        ),
+        "http_client_close" => {
+            ok(f, net_ext::http_client_close(n(&a, 0, f)));
+            Value::None
+        }
+        "http_listen" => {
+            Value::Number(ok(f, net_ext::http_listen(&s(&a, 0, f), n(&a, 1, f), None)))
+        }
+        "https_listen" => Value::Number(ok(
+            f,
+            net_ext::https_listen(&s(&a, 0, f), n(&a, 1, f), &s(&a, 2, f), &s(&a, 3, f)),
+        )),
         "http_accept" => http_value(f, net_ext::http_accept(n(&a, 0, f))),
         "http_respond" => {
-            ok(f, net_ext::http_respond(n(&a, 0, f), n(&a, 1, f), &header_pairs(&a, 2, f), &s(&a, 3, f)));
+            ok(
+                f,
+                net_ext::http_respond(
+                    n(&a, 0, f),
+                    n(&a, 1, f),
+                    &header_pairs(&a, 2, f),
+                    &s(&a, 3, f),
+                ),
+            );
             Value::None
         }
         "url_parse_query" => data_to_value(net_ext::parse_query(&s(&a, 0, f))),
@@ -596,8 +769,13 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
 
         // ---- concurrency ----
         "task_spawn" => {
-            let program = interp.program_arc().unwrap_or_else(|| panic!("task_spawn() needs a running program"));
-            let args: Vec<Data> = arr(&a, 1, f).iter().map(|v| ok(f, value_to_data(v))).collect();
+            let program = interp
+                .program_arc()
+                .unwrap_or_else(|| panic!("task_spawn() needs a running program"));
+            let args: Vec<Data> = arr(&a, 1, f)
+                .iter()
+                .map(|v| ok(f, value_to_data(v)))
+                .collect();
             Value::Number(ok(f, conc_ext::spawn(program, s(&a, 0, f), args)))
         }
         "task_join" => {
@@ -608,7 +786,9 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         "task_join_all" => {
             let mut results = Vec::new();
             for id in arr(&a, 0, f) {
-                let Value::Number(id) = id else { panic!("task_join_all() expects an array of task ids") };
+                let Value::Number(id) = id else {
+                    panic!("task_join_all() expects an array of task ids")
+                };
                 let (data, lines) = ok(f, conc_ext::join(id));
                 interp.push_output(lines);
                 results.push(data_to_value(data));
@@ -617,15 +797,28 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         }
         "task_is_finished" => Value::Boolean(ok(f, conc_ext::is_finished(n(&a, 0, f)))),
         "pool_spawn" => {
-            let program = interp.program_arc().unwrap_or_else(|| panic!("pool_spawn() needs a running program"));
-            let args: Vec<Data> = arr(&a, 1, f).iter().map(|v| ok(f, value_to_data(v))).collect();
+            let program = interp
+                .program_arc()
+                .unwrap_or_else(|| panic!("pool_spawn() needs a running program"));
+            let args: Vec<Data> = arr(&a, 1, f)
+                .iter()
+                .map(|v| ok(f, value_to_data(v)))
+                .collect();
             Value::Number(conc_ext::pool_spawn(program, s(&a, 0, f), args))
         }
         "scope_new" => Value::Number(conc_ext::scope_new()),
         "scope_spawn" => {
-            let program = interp.program_arc().unwrap_or_else(|| panic!("scope_spawn() needs a running program"));
-            let args: Vec<Data> = arr(&a, 2, f).iter().map(|v| ok(f, value_to_data(v))).collect();
-            Value::Number(ok(f, conc_ext::scope_spawn(program, n(&a, 0, f), s(&a, 1, f), args)))
+            let program = interp
+                .program_arc()
+                .unwrap_or_else(|| panic!("scope_spawn() needs a running program"));
+            let args: Vec<Data> = arr(&a, 2, f)
+                .iter()
+                .map(|v| ok(f, value_to_data(v)))
+                .collect();
+            Value::Number(ok(
+                f,
+                conc_ext::scope_spawn(program, n(&a, 0, f), s(&a, 1, f), args),
+            ))
         }
         "scope_join" => {
             let (values, lines) = ok(f, conc_ext::scope_join(n(&a, 0, f)));
@@ -638,8 +831,13 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         }
         "scope_is_cancelled" => Value::Boolean(ok(f, conc_ext::scope_is_cancelled(n(&a, 0, f)))),
         "parallel_map" => {
-            let program = interp.program_arc().unwrap_or_else(|| panic!("parallel_map() needs a running program"));
-            let items: Vec<Data> = arr(&a, 1, f).iter().map(|v| ok(f, value_to_data(v))).collect();
+            let program = interp
+                .program_arc()
+                .unwrap_or_else(|| panic!("parallel_map() needs a running program"));
+            let items: Vec<Data> = arr(&a, 1, f)
+                .iter()
+                .map(|v| ok(f, value_to_data(v)))
+                .collect();
             let (values, lines) = ok(f, conc_ext::parallel_map(&program, &s(&a, 0, f), items));
             interp.push_output(lines);
             Value::Array(values.into_iter().map(data_to_value).collect())
@@ -647,7 +845,10 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         "cpu_count" => Value::Number(conc_ext::cpu_count() as i64),
         "channel_new" => Value::Number(conc_ext::channel_new(n(&a, 0, f))),
         "channel_send" => {
-            ok(f, conc_ext::channel_send(n(&a, 0, f), ok(f, value_to_data(&a[1]))));
+            ok(
+                f,
+                conc_ext::channel_send(n(&a, 0, f), ok(f, value_to_data(&a[1]))),
+            );
             Value::None
         }
         "channel_recv" => match ok(f, conc_ext::channel_recv(n(&a, 0, f), None)) {
@@ -660,7 +861,10 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         },
         "channel_recv_timeout" => {
             let ms = n(&a, 1, f).max(0) as u64;
-            match ok(f, conc_ext::channel_recv(n(&a, 0, f), Some(Duration::from_millis(ms)))) {
+            match ok(
+                f,
+                conc_ext::channel_recv(n(&a, 0, f), Some(Duration::from_millis(ms))),
+            ) {
                 Some(d) => some(data_to_value(d)),
                 None => none(),
             }
@@ -685,7 +889,11 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
             _ => a[1].clone(),
         },
         "map_get_or" => match &a[0] {
-            Value::HashMap(entries) => entries.iter().find(|(k, _)| *k == a[1]).map(|(_, v)| v.clone()).unwrap_or_else(|| a[2].clone()),
+            Value::HashMap(entries) => entries
+                .iter()
+                .find(|(k, _)| *k == a[1])
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| a[2].clone()),
             _ => panic!("map_get_or() expects a map"),
         },
 
@@ -704,7 +912,10 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
         }
         "assert_eq" => {
             if a[0] != a[1] {
-                panic!("assertion failed: left == right\n  left: {}\n right: {}", a[0], a[1]);
+                panic!(
+                    "assertion failed: left == right\n  left: {}\n right: {}",
+                    a[0], a[1]
+                );
             }
             Value::None
         }
@@ -715,7 +926,10 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
             Value::None
         }
         "test_fail" => panic!("{}", s(&a, 0, f)),
-        _ => panic!("internal error: builtin '{}' has a signature but no implementation", name),
+        _ => panic!(
+            "internal error: builtin '{}' has a signature but no implementation",
+            name
+        ),
     }
 }
 
@@ -728,7 +942,11 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for (name, params, ret) in SIGS {
             assert!(seen.insert(*name), "duplicate builtin {}", name);
-            assert!(params.chars().all(|c| "snfbaSumo".contains(c)), "bad param code in {}", name);
+            assert!(
+                params.chars().all(|c| "snfbaSumo".contains(c)),
+                "bad param code in {}",
+                name
+            );
             assert!("snfbaSumov".contains(*ret), "bad return code in {}", name);
         }
         assert_eq!(signatures().len(), SIGS.len());
@@ -736,7 +954,12 @@ mod tests {
 
     #[test]
     fn value_data_round_trip() {
-        let v = Value::Array(vec![Value::Number(1), Value::String("x".into()), Value::Boolean(true), Value::Float(2.5)]);
+        let v = Value::Array(vec![
+            Value::Number(1),
+            Value::String("x".into()),
+            Value::Boolean(true),
+            Value::Float(2.5),
+        ]);
         let d = value_to_data(&v).unwrap();
         assert_eq!(data_to_value(d), v);
         assert!(value_to_data(&Value::File(Default::default())).is_err());

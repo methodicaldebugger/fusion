@@ -77,8 +77,15 @@ impl std::fmt::Display for Value {
 
             Value::Tuple(values) => {
                 write!(f, "(")?;
-                for (i, value) in values.iter().enumerate() { if i > 0 { write!(f, ", ")?; } write!(f, "{}", value)?; }
-                if values.len() == 1 { write!(f, ",")?; }
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", value)?;
+                }
+                if values.len() == 1 {
+                    write!(f, ",")?;
+                }
                 write!(f, ")")
             }
 

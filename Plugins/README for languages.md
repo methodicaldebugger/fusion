@@ -12,10 +12,7 @@ write new software in Fusion while consuming those existing systems.
 For example:
 
 - Existing C libraries remain C.
-- Existing C++ libraries remain C++.
 - Existing C# applications remain C#/.NET.
-- Existing Java applications remain Java/JVM.
-- Existing Rust libraries remain Rust.
 - New application code can be written in Fusion.
 - Fusion can consume selected capabilities from those ecosystems through
   explicit interoperability boundaries.
@@ -119,14 +116,9 @@ interoperability.
 
 After those, Fusion can expand into:
 
-- C++
-- Rust
-- Zig
-- Nim
-- Go
+- C#
+- python
 - Swift
-- Java
-- Dart
 - Kotlin
 
 Each ecosystem should be implemented incrementally rather than claiming

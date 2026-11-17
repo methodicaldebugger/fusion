@@ -42,7 +42,9 @@ pub fn panic_message(payload: Box<dyn Any + Send>) -> String {
 }
 
 pub fn cpu_count() -> usize {
-    thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 fn run_function(interp: &mut Interpreter, name: &str, args: Vec<Data>) -> TaskOutcome {
@@ -57,7 +59,10 @@ fn run_function(interp: &mut Interpreter, name: &str, args: Vec<Data>) -> TaskOu
     let lines = interp.take_output();
     match result {
         Ok(Ok(data)) => Ok((data, lines)),
-        Ok(Err(e)) => Err(format!("task '{}' returned a value that cannot cross a task boundary: {}", name, e)),
+        Ok(Err(e)) => Err(format!(
+            "task '{}' returned a value that cannot cross a task boundary: {}",
+            name, e
+        )),
         Err(payload) => Err(panic_message(payload)),
     }
 }
@@ -122,18 +127,25 @@ fn pool() -> &'static Pool {
             wake: (Mutex::new(()), Condvar::new()),
         }));
         for index in 0..workers {
-            let _ = thread::Builder::new().name(format!("fusion-worker-{}", index)).stack_size(STACK_SIZE).spawn(move || {
-                WORKER_INDEX.with(|w| w.set(Some(index)));
-                loop {
-                    match pool.find_job(Some(index)) {
-                        Some(job) => run_job(job),
-                        None => {
-                            let guard = pool.wake.0.lock().unwrap();
-                            let _ = pool.wake.1.wait_timeout(guard, Duration::from_millis(5)).unwrap();
+            let _ = thread::Builder::new()
+                .name(format!("fusion-worker-{}", index))
+                .stack_size(STACK_SIZE)
+                .spawn(move || {
+                    WORKER_INDEX.with(|w| w.set(Some(index)));
+                    loop {
+                        match pool.find_job(Some(index)) {
+                            Some(job) => run_job(job),
+                            None => {
+                                let guard = pool.wake.0.lock().unwrap();
+                                let _ = pool
+                                    .wake
+                                    .1
+                                    .wait_timeout(guard, Duration::from_millis(5))
+                                    .unwrap();
+                            }
                         }
                     }
-                }
-            });
+                });
         }
         pool
     })
@@ -190,7 +202,10 @@ pub struct Slot {
 
 impl Slot {
     fn new() -> Arc<Slot> {
-        Arc::new(Slot { result: Mutex::new(None), done: Condvar::new() })
+        Arc::new(Slot {
+            result: Mutex::new(None),
+            done: Condvar::new(),
+        })
     }
 
     fn complete(&self, outcome: TaskOutcome) {
@@ -219,7 +234,10 @@ impl Slot {
             if guard.is_some() {
                 continue;
             }
-            let _ = self.done.wait_timeout(guard, Duration::from_millis(2)).unwrap();
+            let _ = self
+                .done
+                .wait_timeout(guard, Duration::from_millis(2))
+                .unwrap();
         }
     }
 }
@@ -255,7 +273,9 @@ pub fn join(id: i64) -> Result<(Data, Vec<String>), String> {
     }
     let slot = pool_tasks().lock().unwrap().remove(&id);
     match slot {
-        Some(slot) => slot.wait().map_err(|e| format!("task {} failed: {}", id, e)),
+        Some(slot) => slot
+            .wait()
+            .map_err(|e| format!("task {} failed: {}", id, e)),
         None => Err(format!("task {} does not exist or was already joined", id)),
     }
 }
@@ -272,7 +292,11 @@ pub fn is_finished(id: i64) -> Result<bool, String> {
 
 /// Applies `name` to every item on the work-stealing pool; results keep input order.
 /// Items are processed in chunks (several chunks per worker) so that idle workers can steal.
-pub fn parallel_map(program: &Arc<Program>, name: &str, items: Vec<Data>) -> Result<(Vec<Data>, Vec<String>), String> {
+pub fn parallel_map(
+    program: &Arc<Program>,
+    name: &str,
+    items: Vec<Data>,
+) -> Result<(Vec<Data>, Vec<String>), String> {
     let n = items.len();
     if n == 0 {
         return Ok((Vec::new(), Vec::new()));
@@ -348,17 +372,33 @@ fn scopes() -> &'static Mutex<HashMap<i64, Arc<Scope>>> {
 }
 
 fn scope(id: i64) -> Result<Arc<Scope>, String> {
-    scopes().lock().unwrap().get(&id).cloned().ok_or_else(|| format!("scope {} does not exist or was already joined", id))
+    scopes()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| format!("scope {} does not exist or was already joined", id))
 }
 
 pub fn scope_new() -> i64 {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    scopes().lock().unwrap().insert(id, Arc::new(Scope { children: Mutex::new(Vec::new()), cancelled: AtomicBool::new(false) }));
+    scopes().lock().unwrap().insert(
+        id,
+        Arc::new(Scope {
+            children: Mutex::new(Vec::new()),
+            cancelled: AtomicBool::new(false),
+        }),
+    );
     id
 }
 
 /// Spawns a child task into the scope; returns the child's index (its position in `scope_join`'s result).
-pub fn scope_spawn(program: Arc<Program>, id: i64, name: String, args: Vec<Data>) -> Result<i64, String> {
+pub fn scope_spawn(
+    program: Arc<Program>,
+    id: i64,
+    name: String,
+    args: Vec<Data>,
+) -> Result<i64, String> {
     let sc = scope(id)?;
     if sc.cancelled.load(Ordering::SeqCst) {
         return Err(format!("scope {} is cancelled", id));
@@ -380,7 +420,11 @@ pub fn scope_is_cancelled(id: i64) -> Result<bool, String> {
 
 /// Waits for every child, then returns their results in spawn order (or the first error).
 pub fn scope_join(id: i64) -> Result<(Vec<Data>, Vec<String>), String> {
-    let sc = scopes().lock().unwrap().remove(&id).ok_or_else(|| format!("scope {} does not exist or was already joined", id))?;
+    let sc = scopes()
+        .lock()
+        .unwrap()
+        .remove(&id)
+        .ok_or_else(|| format!("scope {} does not exist or was already joined", id))?;
     let children: Vec<Arc<Slot>> = std::mem::take(&mut *sc.children.lock().unwrap());
     let mut values = Vec::new();
     let mut output = Vec::new();
@@ -426,14 +470,22 @@ fn channels() -> &'static Mutex<HashMap<i64, Arc<Channel>>> {
 }
 
 fn channel(id: i64) -> Result<Arc<Channel>, String> {
-    channels().lock().unwrap().get(&id).cloned().ok_or_else(|| format!("channel {} does not exist", id))
+    channels()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| format!("channel {} does not exist", id))
 }
 
 /// Creates a channel. `capacity == 0` means unbounded; otherwise `send` blocks while full.
 pub fn channel_new(capacity: i64) -> i64 {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let ch = Channel {
-        state: Mutex::new(ChannelState { items: VecDeque::new(), closed: false }),
+        state: Mutex::new(ChannelState {
+            items: VecDeque::new(),
+            closed: false,
+        }),
         changed: Condvar::new(),
         capacity: capacity.max(0) as usize,
     };
@@ -518,17 +570,27 @@ fn counters() -> &'static Mutex<HashMap<i64, Arc<AtomicI64>>> {
 }
 
 fn counter(id: i64) -> Result<Arc<AtomicI64>, String> {
-    counters().lock().unwrap().get(&id).cloned().ok_or_else(|| format!("counter {} does not exist", id))
+    counters()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| format!("counter {} does not exist", id))
 }
 
 pub fn counter_new(initial: i64) -> i64 {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    counters().lock().unwrap().insert(id, Arc::new(AtomicI64::new(initial)));
+    counters()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(AtomicI64::new(initial)));
     id
 }
 
 pub fn counter_add(id: i64, delta: i64) -> Result<i64, String> {
-    Ok(counter(id)?.fetch_add(delta, Ordering::SeqCst).wrapping_add(delta))
+    Ok(counter(id)?
+        .fetch_add(delta, Ordering::SeqCst)
+        .wrapping_add(delta))
 }
 
 pub fn counter_get(id: i64) -> Result<i64, String> {
@@ -548,14 +610,20 @@ mod tests {
         assert_eq!(channel_recv(ch, None).unwrap(), Some(Data::Int(1)));
         channel_close(ch).unwrap();
         assert!(channel_send(ch, Data::Null).is_err());
-        assert_eq!(channel_recv(ch, None).unwrap(), Some(Data::Str("two".into())));
+        assert_eq!(
+            channel_recv(ch, None).unwrap(),
+            Some(Data::Str("two".into()))
+        );
         assert_eq!(channel_recv(ch, None).unwrap(), None);
     }
 
     #[test]
     fn channel_timeout_and_cross_thread() {
         let ch = channel_new(1);
-        assert_eq!(channel_recv(ch, Some(Duration::from_millis(20))).unwrap(), None);
+        assert_eq!(
+            channel_recv(ch, Some(Duration::from_millis(20))).unwrap(),
+            None
+        );
         let producer = thread::spawn(move || {
             for i in 0..5 {
                 channel_send(ch, Data::Int(i)).unwrap();
@@ -573,11 +641,15 @@ mod tests {
     #[test]
     fn counters_are_atomic() {
         let c = counter_new(0);
-        let threads: Vec<_> = (0..8).map(|_| thread::spawn(move || {
-            for _ in 0..1000 {
-                counter_add(c, 1).unwrap();
-            }
-        })).collect();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                thread::spawn(move || {
+                    for _ in 0..1000 {
+                        counter_add(c, 1).unwrap();
+                    }
+                })
+            })
+            .collect();
         for t in threads {
             t.join().unwrap();
         }
@@ -664,7 +736,10 @@ mod pool_tests {
             while fin.load(Ordering::SeqCst) < 16 && start.elapsed() < Duration::from_secs(5) {
                 thread::sleep(Duration::from_millis(1));
             }
-            done.complete(Ok((Data::Int(fin.load(Ordering::SeqCst) as i64), Vec::new())));
+            done.complete(Ok((
+                Data::Int(fin.load(Ordering::SeqCst) as i64),
+                Vec::new(),
+            )));
         });
         let (result, _) = parent.wait().unwrap();
         assert_eq!(result, Data::Int(16));

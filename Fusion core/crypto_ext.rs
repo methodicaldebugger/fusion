@@ -18,18 +18,30 @@ const H0: [u32; 8] = [
 fn compress(state: &mut [u32; 8], block: &[u8]) {
     let mut w = [0u32; 64];
     for i in 0..16 {
-        w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
+        w[i] = u32::from_be_bytes([
+            block[4 * i],
+            block[4 * i + 1],
+            block[4 * i + 2],
+            block[4 * i + 3],
+        ]);
     }
     for i in 16..64 {
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
         let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
     }
     let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
     for i in 0..64 {
         let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
         let ch = (e & f) ^ ((!e) & g);
-        let t1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+        let t1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(K[i])
+            .wrapping_add(w[i]);
         let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
         let maj = (a & b) ^ (a & c) ^ (b & c);
         let t2 = s0.wrapping_add(maj);
@@ -94,7 +106,10 @@ pub fn from_hex(text: &str) -> Result<Vec<u8>, String> {
         return Err("hex string must have an even number of ASCII digits".to_string());
     }
     (0..t.len() / 2)
-        .map(|i| u8::from_str_radix(&t[2 * i..2 * i + 2], 16).map_err(|_| "invalid hex digit".to_string()))
+        .map(|i| {
+            u8::from_str_radix(&t[2 * i..2 * i + 2], 16)
+                .map_err(|_| "invalid hex digit".to_string())
+        })
         .collect()
 }
 
@@ -135,8 +150,10 @@ fn fill_secure(buf: &mut [u8]) -> Result<(), String> {
 #[cfg(unix)]
 fn fill_secure(buf: &mut [u8]) -> Result<(), String> {
     use std::io::Read;
-    let mut file = std::fs::File::open("/dev/urandom").map_err(|e| format!("open /dev/urandom: {}", e))?;
-    file.read_exact(buf).map_err(|e| format!("read /dev/urandom: {}", e))
+    let mut file =
+        std::fs::File::open("/dev/urandom").map_err(|e| format!("open /dev/urandom: {}", e))?;
+    file.read_exact(buf)
+        .map_err(|e| format!("read /dev/urandom: {}", e))
 }
 
 #[cfg(not(any(windows, unix)))]
@@ -182,16 +199,28 @@ mod tests {
 
     #[test]
     fn sha256_known_vectors() {
-        assert_eq!(to_hex(&sha256(b"")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(to_hex(&sha256(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            to_hex(&sha256(b"")),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            to_hex(&sha256(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         let long = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
-        assert_eq!(to_hex(&sha256(long.as_bytes())), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+        assert_eq!(
+            to_hex(&sha256(long.as_bytes())),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
     }
 
     #[test]
     fn hmac_rfc4231_case_2() {
         let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
-        assert_eq!(to_hex(&mac), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        assert_eq!(
+            to_hex(&mac),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 /*
 Type checker — verifies that operations are type-correct
-The type checker determines whether the program uses values in ways allowed 
+The type checker determines whether the program uses values in ways allowed
 by the language's type rules.
 
 For example:
@@ -168,7 +168,11 @@ impl TypeChecker {
             ),
             ("serialize", vec![Type::Unknown], Type::String),
             ("__fusion_derive_debug", vec![Type::Unknown], Type::String),
-            ("__fusion_derive_eq", vec![Type::Unknown, Type::Unknown], Type::Bool),
+            (
+                "__fusion_derive_eq",
+                vec![Type::Unknown, Type::Unknown],
+                Type::Bool,
+            ),
             ("deserialize", vec![Type::String], Type::Unknown),
             (
                 "format",
@@ -331,9 +335,14 @@ impl TypeChecker {
         if let Some(identity) = self.environment.nominal_type_ids.get(receiver_symbol) {
             // Project code must not fall back to a flat method-name table: a
             // missing identity-keyed entry is a genuine unresolved method.
-            return self.environment.methods_by_id.get(&(identity.clone(), method_name.to_string()));
+            return self
+                .environment
+                .methods_by_id
+                .get(&(identity.clone(), method_name.to_string()));
         }
-        self.environment.methods.get(&(receiver_symbol.to_string(), method_name.to_string()))
+        self.environment
+            .methods
+            .get(&(receiver_symbol.to_string(), method_name.to_string()))
     }
 
     fn trait_methods(&self, trait_symbol: &str) -> Option<&Vec<TraitMethod>> {
@@ -379,15 +388,27 @@ impl TypeChecker {
             // Fixed-width numeric annotations share the interpreter's integer / float
             // runtime representation, but retain their declared type for checking.
             (Type::Num, Type::Generic(name)) | (Type::Generic(name), Type::Num)
-                if Self::is_fixed_integer_name(name) => true,
+                if Self::is_fixed_integer_name(name) =>
+            {
+                true
+            }
             (Type::Float, Type::Generic(name)) | (Type::Generic(name), Type::Float)
-                if matches!(name.as_str(), "f32" | "f64") => true,
+                if matches!(name.as_str(), "f32" | "f64") =>
+            {
+                true
+            }
             (Type::Generic(a), Type::Generic(b))
                 if (Self::is_fixed_integer_name(a) && Self::is_fixed_integer_name(b))
-                    || (matches!(a.as_str(), "f32" | "f64") && matches!(b.as_str(), "f32" | "f64")) => true,
+                    || (matches!(a.as_str(), "f32" | "f64")
+                        && matches!(b.as_str(), "f32" | "f64")) =>
+            {
+                true
+            }
 
             // Array element types must be compatible.
-            (Type::Tuple(a), Type::Tuple(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x,y)| self.types_compatible(x,y)),
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| self.types_compatible(x, y))
+            }
             (Type::Array(expected_inner), Type::Array(found_inner)) => {
                 self.types_compatible(expected_inner, found_inner)
             }
@@ -432,28 +453,57 @@ impl TypeChecker {
     }
 
     fn is_fixed_integer_name(name: &str) -> bool {
-        matches!(name, "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize")
+        matches!(
+            name,
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "isize"
+                | "usize"
+        )
     }
 
     fn integer_type(ty: &Type) -> bool {
-        matches!(ty, Type::Num | Type::Unknown) || matches!(ty, Type::Generic(name) if Self::is_fixed_integer_name(name))
+        matches!(ty, Type::Num | Type::Unknown)
+            || matches!(ty, Type::Generic(name) if Self::is_fixed_integer_name(name))
     }
 
     fn float_type(ty: &Type) -> bool {
-        match ty { Type::Float => true, Type::Generic(name) => matches!(name.as_str(), "f32" | "f64"), _ => false }
+        match ty {
+            Type::Float => true,
+            Type::Generic(name) => matches!(name.as_str(), "f32" | "f64"),
+            _ => false,
+        }
     }
 
     fn convert_type(&self, name: &str, span: Span) -> Result<Type, FusionError> {
         if name.starts_with('(') && name.ends_with(')') {
-            let inner = &name[1..name.len()-1];
+            let inner = &name[1..name.len() - 1];
             let parts = Self::split_generic_arguments(inner);
-            if parts.len() < 2 { return Err(FusionError::Syntax { message: "Tuple types require at least two elements".into(), span }); }
-            return Ok(Type::Tuple(parts.iter().map(|p| self.convert_type(p, span)).collect::<Result<Vec<_>, _>>()?));
+            if parts.len() < 2 {
+                return Err(FusionError::Syntax {
+                    message: "Tuple types require at least two elements".into(),
+                    span,
+                });
+            }
+            return Ok(Type::Tuple(
+                parts
+                    .iter()
+                    .map(|p| self.convert_type(p, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ));
         }
         match name {
             "num" => Ok(Type::Num),
             "float" => Ok(Type::Float),
-            "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize" | "f32" | "f64" => Ok(Type::Generic(name.to_string())),
+            "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128"
+            | "isize" | "usize" | "f32" | "f64" => Ok(Type::Generic(name.to_string())),
             "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
             "void" => Ok(Type::Void),
@@ -723,19 +773,42 @@ impl TypeChecker {
         use Operator::*;
 
         let overload_name = match operator {
-            Plus => Some("add"), Minus => Some("sub"), Multiply => Some("mul"), Divide => Some("div"),
-            Equal => Some("eq"), NotEqual => Some("ne"), Less => Some("lt"), LessEqual => Some("le"),
-            Greater => Some("gt"), GreaterEqual => Some("ge"), And | Or => None,
+            Plus => Some("add"),
+            Minus => Some("sub"),
+            Multiply => Some("mul"),
+            Divide => Some("div"),
+            Equal => Some("eq"),
+            NotEqual => Some("ne"),
+            Less => Some("lt"),
+            LessEqual => Some("le"),
+            Greater => Some("gt"),
+            GreaterEqual => Some("ge"),
+            And | Or => None,
         };
         if let (Type::Struct(type_name), Some(method_name)) = (&left, overload_name) {
-            let signature = self.method_signature(type_name, method_name)
-                .or_else(|| if matches!(operator, NotEqual) { self.method_signature(type_name, "eq") } else { None });
+            let signature = self.method_signature(type_name, method_name).or_else(|| {
+                if matches!(operator, NotEqual) {
+                    self.method_signature(type_name, "eq")
+                } else {
+                    None
+                }
+            });
             if let Some(signature) = signature {
                 if signature.parameters.len() != 2 {
-                    return Err(FusionError::Syntax { message: format!("operator method '{}.{}' must take self and one operand", type_name, method_name), span });
+                    return Err(FusionError::Syntax {
+                        message: format!(
+                            "operator method '{}.{}' must take self and one operand",
+                            type_name, method_name
+                        ),
+                        span,
+                    });
                 }
                 if !self.types_compatible(&signature.parameters[1], &right) {
-                    return Err(self.type_mismatch(signature.parameters[1].name(), right.name(), span));
+                    return Err(self.type_mismatch(
+                        signature.parameters[1].name(),
+                        right.name(),
+                        span,
+                    ));
                 }
                 return Ok(signature.return_type.clone());
             }
@@ -886,13 +959,12 @@ impl TypeChecker {
 
                 match object_type {
                     Type::Struct(struct_name) => {
-                        let definition =
-                            self.struct_definition(struct_name).ok_or_else(|| {
-                                FusionError::Syntax {
-                                    message: format!("Unknown struct '{}'", struct_name),
-                                    span,
-                                }
-                            })?;
+                        let definition = self.struct_definition(struct_name).ok_or_else(|| {
+                            FusionError::Syntax {
+                                message: format!("Unknown struct '{}'", struct_name),
+                                span,
+                            }
+                        })?;
 
                         if definition.fields.iter().any(|(name, _)| name == property) {
                             Ok(true)
@@ -934,50 +1006,101 @@ impl TypeChecker {
         match &pattern.kind {
             PatternKind::Wildcard => {}
 
-            PatternKind::At { name, pattern: nested } => {
+            PatternKind::At {
+                name,
+                pattern: nested,
+            } => {
                 bindings.push((name.clone(), expected.clone()));
                 bindings.extend(self.check_pattern(nested, expected)?);
             }
-            PatternKind::Struct { name, fields, has_rest } => {
-                match expected {
-                    Type::Struct(expected_name) if expected_name == name => {
-                        let definition = self.struct_definition(name).ok_or_else(|| FusionError::Syntax { message: format!("Unknown struct '{}' in pattern", name), span: pattern.span })?;
-                        if !has_rest && fields.len() != definition.fields.len() {
-                            return Err(FusionError::Syntax { message: format!("Struct pattern '{}' must mention every field or include '..'", name), span: pattern.span });
-                        }
-                        let mut seen_fields = HashSet::new();
-                        for (field_name, nested) in fields {
-                            if !seen_fields.insert(field_name) {
-                                return Err(FusionError::Syntax { message: format!("Duplicate field '{}' in struct pattern", field_name), span: nested.span });
-                            }
-                            let (_, field_type) = definition.fields.iter().find(|(n, _)| n == field_name).ok_or_else(|| FusionError::Syntax { message: format!("Struct '{}' has no field '{}'", name, field_name), span: nested.span })?;
-                            bindings.extend(self.check_pattern(nested, field_type)?);
-                        }
+            PatternKind::Struct {
+                name,
+                fields,
+                has_rest,
+            } => match expected {
+                Type::Struct(expected_name) if expected_name == name => {
+                    let definition =
+                        self.struct_definition(name)
+                            .ok_or_else(|| FusionError::Syntax {
+                                message: format!("Unknown struct '{}' in pattern", name),
+                                span: pattern.span,
+                            })?;
+                    if !has_rest && fields.len() != definition.fields.len() {
+                        return Err(FusionError::Syntax {
+                            message: format!(
+                                "Struct pattern '{}' must mention every field or include '..'",
+                                name
+                            ),
+                            span: pattern.span,
+                        });
                     }
-                    Type::Unknown => { for (_, nested) in fields { bindings.extend(self.check_pattern(nested, &Type::Unknown)?); } }
-                    other => return Err(self.type_mismatch(name, other.name(), pattern.span)),
-                }
-            }
-            PatternKind::Tuple(patterns) => {
-                match expected {
-                    Type::Tuple(types) if types.len() == patterns.len() => {
-                        for (p, ty) in patterns.iter().zip(types) { bindings.extend(self.check_pattern(p, ty)?); }
+                    let mut seen_fields = HashSet::new();
+                    for (field_name, nested) in fields {
+                        if !seen_fields.insert(field_name) {
+                            return Err(FusionError::Syntax {
+                                message: format!(
+                                    "Duplicate field '{}' in struct pattern",
+                                    field_name
+                                ),
+                                span: nested.span,
+                            });
+                        }
+                        let (_, field_type) = definition
+                            .fields
+                            .iter()
+                            .find(|(n, _)| n == field_name)
+                            .ok_or_else(|| FusionError::Syntax {
+                                message: format!("Struct '{}' has no field '{}'", name, field_name),
+                                span: nested.span,
+                            })?;
+                        bindings.extend(self.check_pattern(nested, field_type)?);
                     }
-                    Type::Unknown => { for p in patterns { bindings.extend(self.check_pattern(p, &Type::Unknown)?); } }
-                    other => return Err(self.type_mismatch("tuple", other.name(), pattern.span)),
                 }
-            }
+                Type::Unknown => {
+                    for (_, nested) in fields {
+                        bindings.extend(self.check_pattern(nested, &Type::Unknown)?);
+                    }
+                }
+                other => return Err(self.type_mismatch(name, other.name(), pattern.span)),
+            },
+            PatternKind::Tuple(patterns) => match expected {
+                Type::Tuple(types) if types.len() == patterns.len() => {
+                    for (p, ty) in patterns.iter().zip(types) {
+                        bindings.extend(self.check_pattern(p, ty)?);
+                    }
+                }
+                Type::Unknown => {
+                    for p in patterns {
+                        bindings.extend(self.check_pattern(p, &Type::Unknown)?);
+                    }
+                }
+                other => return Err(self.type_mismatch("tuple", other.name(), pattern.span)),
+            },
             PatternKind::Or(alternatives) => {
-                if let Some(first) = alternatives.first() { bindings.extend(self.check_pattern(first, expected)?); }
+                if let Some(first) = alternatives.first() {
+                    bindings.extend(self.check_pattern(first, expected)?);
+                }
                 for alternative in alternatives.iter().skip(1) {
                     let other = self.check_pattern(alternative, expected)?;
                     let a: Vec<_> = bindings.iter().map(|(n, _)| n).collect();
                     let b: Vec<_> = other.iter().map(|(n, _)| n).collect();
-                    let incompatible_types = bindings.iter().zip(&other).any(|((_, left_ty), (_, right_ty))| !self.types_compatible(left_ty, right_ty));
-                    if a != b || incompatible_types { return Err(FusionError::Syntax { message: "Every alternative in an or-pattern must bind the same names in the same order with compatible types".into(), span: alternative.span }); }
+                    let incompatible_types =
+                        bindings
+                            .iter()
+                            .zip(&other)
+                            .any(|((_, left_ty), (_, right_ty))| {
+                                !self.types_compatible(left_ty, right_ty)
+                            });
+                    if a != b || incompatible_types {
+                        return Err(FusionError::Syntax { message: "Every alternative in an or-pattern must bind the same names in the same order with compatible types".into(), span: alternative.span });
+                    }
                 }
             }
-            PatternKind::Range { .. } => if !Self::integer_type(expected) { return Err(self.type_mismatch("integer", expected.name(), pattern.span)); },
+            PatternKind::Range { .. } => {
+                if !Self::integer_type(expected) {
+                    return Err(self.type_mismatch("integer", expected.name(), pattern.span));
+                }
+            }
 
             PatternKind::Identifier(name) => {
                 bindings.push((name.clone(), expected.clone()));
@@ -990,7 +1113,9 @@ impl TypeChecker {
             }
 
             PatternKind::Float(_) => {
-                if !matches!(expected, Type::Float | Type::Unknown) && !matches!(expected, Type::Generic(name) if matches!(name.as_str(), "f32" | "f64")) {
+                if !matches!(expected, Type::Float | Type::Unknown)
+                    && !matches!(expected, Type::Generic(name) if matches!(name.as_str(), "f32" | "f64"))
+                {
                     return Err(self.type_mismatch("float", expected.name(), pattern.span));
                 }
             }
@@ -1014,7 +1139,9 @@ impl TypeChecker {
                 let enum_name = match expected {
                     Type::Enum(name) => name,
                     Type::Unknown => {
-                        for nested in names { bindings.extend(self.check_pattern(nested, &Type::Unknown)?); }
+                        for nested in names {
+                            bindings.extend(self.check_pattern(nested, &Type::Unknown)?);
+                        }
                         return Ok(bindings);
                     }
                     other => {
@@ -1109,7 +1236,11 @@ impl TypeChecker {
             // Literals above i64::MAX need a wider type. i128 can also hold the
             // negation of any literal up to 2^127; larger ones are u128.
             Expression::WideNumber { value, .. } => {
-                let name = if *value <= i128::MAX as u128 { "i128" } else { "u128" };
+                let name = if *value <= i128::MAX as u128 {
+                    "i128"
+                } else {
+                    "u128"
+                };
                 Ok(Type::Generic(name.to_string()))
             }
 
@@ -1126,8 +1257,15 @@ impl TypeChecker {
 
             Expression::Tuple { elements, .. } => {
                 let mut types = Vec::new();
-                for element in elements { types.push(self.infer_expression(element)?); }
-                if types.len() < 2 { return Err(FusionError::Syntax { message: "Tuple expressions require at least two elements".into(), span: expression.span() }); }
+                for element in elements {
+                    types.push(self.infer_expression(element)?);
+                }
+                if types.len() < 2 {
+                    return Err(FusionError::Syntax {
+                        message: "Tuple expressions require at least two elements".into(),
+                        span: expression.span(),
+                    });
+                }
                 Ok(Type::Tuple(types))
             }
 
@@ -1173,15 +1311,41 @@ impl TypeChecker {
                             return Err(FusionError::Syntax { message: "Tuple indices must be integer literals because tuple elements may have different types".into(), span: *span });
                         };
                         if *value < 0 || (*value as usize) >= items.len() {
-                            return Err(FusionError::Syntax { message: format!("Tuple index {} is out of bounds for a tuple of length {}", value, items.len()), span: *span });
+                            return Err(FusionError::Syntax {
+                                message: format!(
+                                    "Tuple index {} is out of bounds for a tuple of length {}",
+                                    value,
+                                    items.len()
+                                ),
+                                span: *span,
+                            });
                         }
                         Ok(items[*value as usize].clone())
                     }
 
                     Type::Struct(type_name) => {
-                        let signature = self.method_signature(&type_name, "index").ok_or_else(|| FusionError::Syntax { message: format!("Type '{}' does not implement Index", type_name), span: *span })?;
-                        if signature.parameters.len() != 2 || !self.types_compatible(&signature.parameters[1], &index_type) {
-                            return Err(self.type_mismatch(signature.parameters.get(1).map(Type::name).unwrap_or_else(|| "index argument".into()), index_type.name(), index.span()));
+                        let signature =
+                            self.method_signature(&type_name, "index").ok_or_else(|| {
+                                FusionError::Syntax {
+                                    message: format!(
+                                        "Type '{}' does not implement Index",
+                                        type_name
+                                    ),
+                                    span: *span,
+                                }
+                            })?;
+                        if signature.parameters.len() != 2
+                            || !self.types_compatible(&signature.parameters[1], &index_type)
+                        {
+                            return Err(self.type_mismatch(
+                                signature
+                                    .parameters
+                                    .get(1)
+                                    .map(Type::name)
+                                    .unwrap_or_else(|| "index argument".into()),
+                                index_type.name(),
+                                index.span(),
+                            ));
                         }
                         Ok(signature.return_type.clone())
                     }
@@ -1233,9 +1397,18 @@ impl TypeChecker {
                     }
 
                     UnaryOperator::Deref => match operand {
-                        Type::Struct(type_name) => self.method_signature(&type_name, "deref").map(|signature| signature.return_type.clone()).ok_or_else(|| FusionError::Syntax { message: format!("Type '{}' does not implement Deref", type_name), span: *span }),
+                        Type::Struct(type_name) => self
+                            .method_signature(&type_name, "deref")
+                            .map(|signature| signature.return_type.clone())
+                            .ok_or_else(|| FusionError::Syntax {
+                                message: format!("Type '{}' does not implement Deref", type_name),
+                                span: *span,
+                            }),
                         Type::Unknown => Ok(Type::Unknown),
-                        other => Err(FusionError::Syntax { message: format!("Cannot dereference value of type '{}'", other.name()), span: *span }),
+                        other => Err(FusionError::Syntax {
+                            message: format!("Cannot dereference value of type '{}'", other.name()),
+                            span: *span,
+                        }),
                     },
                     UnaryOperator::Not => {
                         if matches!(operand, Type::Bool | Type::Unknown) {
@@ -1276,7 +1449,9 @@ impl TypeChecker {
                     | (Type::Float, Type::Float)
                     | (Type::Bool, Type::Bool)
                     | (Type::String, Type::String) => true,
-                    (source, target) if self.numeric_type(source) && self.numeric_type(target) => true,
+                    (source, target) if self.numeric_type(source) && self.numeric_type(target) => {
+                        true
+                    }
                     (Type::String, target) if self.numeric_type(target) => true,
                     (source, Type::String) if self.numeric_type(source) => true,
                     (Type::Unknown, Type::Num | Type::Float | Type::Bool | Type::String) => true,
@@ -1425,12 +1600,26 @@ impl TypeChecker {
                 span,
             })?;
 
-        if arguments.len() != function.parameters.len() {
+        // Collection constructors use their parameter list only to describe
+        // the resulting collection type; it is not a fixed-arity signature.
+        // `hashmap` accepts key/value pairs and `array` accepts any number of
+        // elements. Keep the hashmap pair invariant here as well as in HIR
+        // call collection, otherwise the HIR-aware checker rejects valid calls.
+        let variadic_builtin_arity_is_valid = match name {
+            "hashmap" => arguments.len() % 2 == 0,
+            "array" => true,
+            _ => arguments.len() == function.parameters.len(),
+        };
+        if !variadic_builtin_arity_is_valid {
+            let expected = match name {
+                "hashmap" => "an even number of key/value arguments".to_string(),
+                _ => function.parameters.len().to_string(),
+            };
             return Err(FusionError::Syntax {
                 message: format!(
-                    "Function '{}' expects {} arguments, found {}",
+                    "Function '{}' expects {}, found {}",
                     name,
-                    function.parameters.len(),
+                    expected,
                     arguments.len()
                 ),
                 span,
@@ -1657,13 +1846,19 @@ impl TypeChecker {
                 "first" | "last" => Ok(Type::Option(inner.clone())),
                 "dedup" => {
                     if !arguments.is_empty() {
-                        return Err(FusionError::Syntax { message: "dedup expects no arguments".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "dedup expects no arguments".into(),
+                            span,
+                        });
                     }
                     Ok(Type::Void)
                 }
                 "truncate" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: "truncate expects a length".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "truncate expects a length".into(),
+                            span,
+                        });
                     }
                     let t = self.infer_expression(&arguments[0])?;
                     if !Self::integer_type(&t) {
@@ -1673,13 +1868,24 @@ impl TypeChecker {
                 }
                 "extend" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: "extend expects an array or iterator".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "extend expects an array or iterator".into(),
+                            span,
+                        });
                     }
                     let t = self.infer_expression(&arguments[0])?;
                     match t {
-                        Type::Array(other) | Type::Iterator(other) if self.types_compatible(&inner, &other) => Ok(Type::Void),
+                        Type::Array(other) | Type::Iterator(other)
+                            if self.types_compatible(&inner, &other) =>
+                        {
+                            Ok(Type::Void)
+                        }
                         Type::Unknown => Ok(Type::Void),
-                        other => Err(self.type_mismatch("array or iterator", other.name(), arguments[0].span())),
+                        other => Err(self.type_mismatch(
+                            "array or iterator",
+                            other.name(),
+                            arguments[0].span(),
+                        )),
                     }
                 }
                 "clear" | "sort" | "reverse" => {
@@ -1785,37 +1991,58 @@ impl TypeChecker {
                 }
                 "reduce" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: "reduce expects callback".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "reduce expects callback".into(),
+                            span,
+                        });
                     }
                     check_callback(self, &arguments[0])?;
                     Ok(Type::Option(inner))
                 }
                 "count" => {
                     if !arguments.is_empty() {
-                        return Err(FusionError::Syntax { message: "count expects no arguments".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "count expects no arguments".into(),
+                            span,
+                        });
                     }
                     Ok(Type::Num)
                 }
                 "take" | "skip" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: format!("{} expects a count", method), span });
+                        return Err(FusionError::Syntax {
+                            message: format!("{} expects a count", method),
+                            span,
+                        });
                     }
                     let count_ty = self.infer_expression(&arguments[0])?;
                     if !self.types_compatible(&Type::Num, &count_ty) {
-                        return Err(self.type_mismatch("num", count_ty.name(), arguments[0].span()));
+                        return Err(self.type_mismatch(
+                            "num",
+                            count_ty.name(),
+                            arguments[0].span(),
+                        ));
                     }
                     Ok(Type::Iterator(inner))
                 }
                 "zip" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: "zip expects one array or iterator".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "zip expects one array or iterator".into(),
+                            span,
+                        });
                     }
                     let _ = self.infer_expression(&arguments[0])?;
-                    Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown)))))
+                    Ok(Type::Iterator(Box::new(Type::Array(Box::new(
+                        Type::Unknown,
+                    )))))
                 }
                 "flatten" => {
                     if !arguments.is_empty() {
-                        return Err(FusionError::Syntax { message: "flatten expects no arguments".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "flatten expects no arguments".into(),
+                            span,
+                        });
                     }
                     Ok(Type::Iterator(Box::new(Type::Unknown)))
                 }
@@ -1882,37 +2109,58 @@ impl TypeChecker {
                 }
                 "reduce" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: "reduce expects callback".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "reduce expects callback".into(),
+                            span,
+                        });
                     }
                     check_callback(self, &arguments[0])?;
                     Ok(Type::Option(inner))
                 }
                 "count" => {
                     if !arguments.is_empty() {
-                        return Err(FusionError::Syntax { message: "count expects no arguments".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "count expects no arguments".into(),
+                            span,
+                        });
                     }
                     Ok(Type::Num)
                 }
                 "take" | "skip" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: format!("{} expects a count", method), span });
+                        return Err(FusionError::Syntax {
+                            message: format!("{} expects a count", method),
+                            span,
+                        });
                     }
                     let count_ty = self.infer_expression(&arguments[0])?;
                     if !self.types_compatible(&Type::Num, &count_ty) {
-                        return Err(self.type_mismatch("num", count_ty.name(), arguments[0].span()));
+                        return Err(self.type_mismatch(
+                            "num",
+                            count_ty.name(),
+                            arguments[0].span(),
+                        ));
                     }
                     Ok(Type::Iterator(inner))
                 }
                 "zip" => {
                     if arguments.len() != 1 {
-                        return Err(FusionError::Syntax { message: "zip expects one array or iterator".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "zip expects one array or iterator".into(),
+                            span,
+                        });
                     }
                     let _ = self.infer_expression(&arguments[0])?;
-                    Ok(Type::Iterator(Box::new(Type::Array(Box::new(Type::Unknown)))))
+                    Ok(Type::Iterator(Box::new(Type::Array(Box::new(
+                        Type::Unknown,
+                    )))))
                 }
                 "flatten" => {
                     if !arguments.is_empty() {
-                        return Err(FusionError::Syntax { message: "flatten expects no arguments".into(), span });
+                        return Err(FusionError::Syntax {
+                            message: "flatten expects no arguments".into(),
+                            span,
+                        });
                     }
                     Ok(Type::Iterator(Box::new(Type::Unknown)))
                 }
@@ -2124,13 +2372,13 @@ impl TypeChecker {
         arguments: &[Expression],
         span: Span,
     ) -> Result<Type, FusionError> {
-        let definition = self
-            .enum_definition(enum_name)
-            .cloned()
-            .ok_or_else(|| FusionError::Syntax {
-                message: format!("Unknown enum '{}'", enum_name),
-                span,
-            })?;
+        let definition =
+            self.enum_definition(enum_name)
+                .cloned()
+                .ok_or_else(|| FusionError::Syntax {
+                    message: format!("Unknown enum '{}'", enum_name),
+                    span,
+                })?;
 
         let variant_definition =
             definition
@@ -2281,13 +2529,24 @@ impl TypeChecker {
         }
     }
 
-    fn check_fixed_literal_range(&self, target: &Type, expression: &Expression, span: Span) -> Result<(), FusionError> {
+    fn check_fixed_literal_range(
+        &self,
+        target: &Type,
+        expression: &Expression,
+        span: Span,
+    ) -> Result<(), FusionError> {
         // (is_negative, magnitude) of an integer literal, if the expression is one.
         let literal: Option<(bool, u128)> = match expression {
             Expression::Number { value, .. } => Some((*value < 0, value.unsigned_abs() as u128)),
             Expression::WideNumber { value, .. } => Some((false, *value)),
-            Expression::Unary { operator: UnaryOperator::Negate, expression, .. } => match expression.as_ref() {
-                Expression::Number { value, .. } => Some((*value > 0, value.unsigned_abs() as u128)),
+            Expression::Unary {
+                operator: UnaryOperator::Negate,
+                expression,
+                ..
+            } => match expression.as_ref() {
+                Expression::Number { value, .. } => {
+                    Some((*value > 0, value.unsigned_abs() as u128))
+                }
                 Expression::WideNumber { value, .. } => Some((true, *value)),
                 _ => None,
             },
@@ -2300,8 +2559,18 @@ impl TypeChecker {
                     None => false,
                 };
                 if !fits {
-                    let text = if negative { format!("-{}", magnitude) } else { magnitude.to_string() };
-                    return Err(FusionError::Syntax { message: format!("Integer literal {} is outside the range of {}", text, name), span });
+                    let text = if negative {
+                        format!("-{}", magnitude)
+                    } else {
+                        magnitude.to_string()
+                    };
+                    return Err(FusionError::Syntax {
+                        message: format!(
+                            "Integer literal {} is outside the range of {}",
+                            text, name
+                        ),
+                        span,
+                    });
                 }
             }
         }
@@ -2329,7 +2598,11 @@ impl TypeChecker {
                     let final_type = match (declared_type, value_type) {
                         (Some(declared), Some(found)) => {
                             if let Some(initializer) = &declaration.value {
-                                self.check_fixed_literal_range(&declared, initializer, declaration.span)?;
+                                self.check_fixed_literal_range(
+                                    &declared,
+                                    initializer,
+                                    declaration.span,
+                                )?;
                             }
                             if !self.types_compatible(&declared, &found) {
                                 return Err(self.type_mismatch(
@@ -2669,7 +2942,9 @@ impl TypeChecker {
             PatternKind::Wildcard | PatternKind::Identifier(_) => true,
             PatternKind::At { pattern, .. } => Self::pattern_is_irrefutable(pattern),
             PatternKind::Tuple(items) => items.iter().all(Self::pattern_is_irrefutable),
-            PatternKind::Struct { fields, .. } => fields.iter().all(|(_, item)| Self::pattern_is_irrefutable(item)),
+            PatternKind::Struct { fields, .. } => fields
+                .iter()
+                .all(|(_, item)| Self::pattern_is_irrefutable(item)),
             PatternKind::Or(items) => items.iter().any(Self::pattern_is_irrefutable),
             _ => false,
         }
@@ -2677,21 +2952,33 @@ impl TypeChecker {
 
     fn collect_variant_coverage(pattern: &Pattern, covered: &mut HashSet<String>) {
         match &pattern.kind {
-            PatternKind::Variant { name, bindings } if bindings.iter().all(Self::pattern_is_irrefutable) => {
+            PatternKind::Variant { name, bindings }
+                if bindings.iter().all(Self::pattern_is_irrefutable) =>
+            {
                 let variant = name.rsplit_once("::").map(|(_, v)| v).unwrap_or(name);
                 covered.insert(variant.to_string());
             }
             PatternKind::At { pattern, .. } => Self::collect_variant_coverage(pattern, covered),
-            PatternKind::Or(items) => for item in items { Self::collect_variant_coverage(item, covered); },
+            PatternKind::Or(items) => {
+                for item in items {
+                    Self::collect_variant_coverage(item, covered);
+                }
+            }
             _ => {}
         }
     }
 
     fn collect_bool_coverage(pattern: &Pattern, covered: &mut HashSet<bool>) {
         match &pattern.kind {
-            PatternKind::Boolean(value) => { covered.insert(*value); }
+            PatternKind::Boolean(value) => {
+                covered.insert(*value);
+            }
             PatternKind::At { pattern, .. } => Self::collect_bool_coverage(pattern, covered),
-            PatternKind::Or(items) => for item in items { Self::collect_bool_coverage(item, covered); },
+            PatternKind::Or(items) => {
+                for item in items {
+                    Self::collect_bool_coverage(item, covered);
+                }
+            }
             _ => {}
         }
     }
@@ -2699,12 +2986,20 @@ impl TypeChecker {
     fn collect_integer_ranges(pattern: &Pattern, ranges: &mut Vec<(i128, i128)>) {
         match &pattern.kind {
             PatternKind::Number(value) => ranges.push((*value as i128, *value as i128 + 1)),
-            PatternKind::Range { start, end, inclusive } => {
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 let exclusive_end = *end as i128 + if *inclusive { 1 } else { 0 };
                 ranges.push((*start as i128, exclusive_end));
             }
             PatternKind::At { pattern, .. } => Self::collect_integer_ranges(pattern, ranges),
-            PatternKind::Or(items) => for item in items { Self::collect_integer_ranges(item, ranges); },
+            PatternKind::Or(items) => {
+                for item in items {
+                    Self::collect_integer_ranges(item, ranges);
+                }
+            }
             _ => {}
         }
     }
@@ -2737,8 +3032,14 @@ impl TypeChecker {
                 } else {
                     let mut arm_variants = HashSet::new();
                     Self::collect_variant_coverage(&arm.pattern, &mut arm_variants);
-                    if arm_variants.iter().any(|variant| covered_variants.contains(variant)) {
-                        return Err(FusionError::Syntax { message: "Duplicate or unreachable enum variant pattern".into(), span: arm.pattern.span });
+                    if arm_variants
+                        .iter()
+                        .any(|variant| covered_variants.contains(variant))
+                    {
+                        return Err(FusionError::Syntax {
+                            message: "Duplicate or unreachable enum variant pattern".into(),
+                            span: arm.pattern.span,
+                        });
                     }
                     covered_variants.extend(arm_variants);
                     let mut bools_in_arm = HashSet::new();
@@ -2746,7 +3047,10 @@ impl TypeChecker {
                     for value in bools_in_arm {
                         let key = format!("bool:{}", value);
                         if !seen_literals.insert(key) {
-                            return Err(FusionError::Syntax { message: "Duplicate boolean match pattern".into(), span: arm.pattern.span });
+                            return Err(FusionError::Syntax {
+                                message: "Duplicate boolean match pattern".into(),
+                                span: arm.pattern.span,
+                            });
                         }
                         covered_booleans.insert(value);
                     }
@@ -2755,10 +3059,20 @@ impl TypeChecker {
                     Self::collect_integer_ranges(&arm.pattern, &mut arm_ranges);
                     for (start, end) in arm_ranges {
                         if start >= end {
-                            return Err(FusionError::Syntax { message: "Integer match range is empty or reversed".into(), span: arm.pattern.span });
+                            return Err(FusionError::Syntax {
+                                message: "Integer match range is empty or reversed".into(),
+                                span: arm.pattern.span,
+                            });
                         }
-                        if integer_ranges.iter().any(|(old_start, old_end)| start < *old_end && *old_start < end) {
-                            return Err(FusionError::Syntax { message: "Overlapping integer match patterns are unreachable".into(), span: arm.pattern.span });
+                        if integer_ranges
+                            .iter()
+                            .any(|(old_start, old_end)| start < *old_end && *old_start < end)
+                        {
+                            return Err(FusionError::Syntax {
+                                message: "Overlapping integer match patterns are unreachable"
+                                    .into(),
+                                span: arm.pattern.span,
+                            });
                         }
                         integer_ranges.push((start, end));
                     }
@@ -2767,7 +3081,10 @@ impl TypeChecker {
                     Self::collect_non_integer_literal_keys(&arm.pattern, &mut literal_keys);
                     for key in literal_keys {
                         if !seen_literals.insert(key.clone()) {
-                            return Err(FusionError::Syntax { message: format!("Duplicate match pattern '{}'", key), span: arm.pattern.span });
+                            return Err(FusionError::Syntax {
+                                message: format!("Duplicate match pattern '{}'", key),
+                                span: arm.pattern.span,
+                            });
                         }
                     }
 
@@ -2776,12 +3093,21 @@ impl TypeChecker {
                     // as covering an entire enum variant.
                     let finite_domain_covered = match &expression_type {
                         Type::Bool => covered_booleans.len() == 2,
-                        Type::Enum(enum_name) => self.enum_definition(enum_name)
-                            .map(|definition| !definition.variants.is_empty() && definition.variants.keys().all(|name| covered_variants.contains(name)))
+                        Type::Enum(enum_name) => self
+                            .enum_definition(enum_name)
+                            .map(|definition| {
+                                !definition.variants.is_empty()
+                                    && definition
+                                        .variants
+                                        .keys()
+                                        .all(|name| covered_variants.contains(name))
+                            })
                             .unwrap_or(false),
                         _ => false,
                     };
-                    if finite_domain_covered { has_catch_all = true; }
+                    if finite_domain_covered {
+                        has_catch_all = true;
+                    }
                 }
             }
 
@@ -2802,29 +3128,44 @@ impl TypeChecker {
             result?;
         }
 
-        if has_catch_all { return Ok(()); }
+        if has_catch_all {
+            return Ok(());
+        }
         match expression_type {
             Type::Enum(enum_name) => {
-                let definition = self.enum_definition(&enum_name).ok_or_else(|| FusionError::Syntax {
-                    message: format!("Unknown enum '{}'", enum_name), span,
-                })?;
+                let definition =
+                    self.enum_definition(&enum_name)
+                        .ok_or_else(|| FusionError::Syntax {
+                            message: format!("Unknown enum '{}'", enum_name),
+                            span,
+                        })?;
                 for variant_name in definition.variants.keys() {
                     if !covered_variants.contains(variant_name) {
                         return Err(FusionError::Syntax {
-                            message: format!("Non-exhaustive match: missing variant '{}'", variant_name), span,
+                            message: format!(
+                                "Non-exhaustive match: missing variant '{}'",
+                                variant_name
+                            ),
+                            span,
                         });
                     }
                 }
             }
             Type::Bool => {
                 if covered_booleans.len() != 2 {
-                    return Err(FusionError::Syntax { message: "Non-exhaustive boolean match".into(), span });
+                    return Err(FusionError::Syntax {
+                        message: "Non-exhaustive boolean match".into(),
+                        span,
+                    });
                 }
             }
             Type::Unknown => {}
-            _ => return Err(FusionError::Syntax {
-                message: "Match over this type requires a wildcard or irrefutable arm".into(), span,
-            }),
+            _ => {
+                return Err(FusionError::Syntax {
+                    message: "Match over this type requires a wildcard or irrefutable arm".into(),
+                    span,
+                })
+            }
         }
         Ok(())
     }
@@ -2833,8 +3174,14 @@ impl TypeChecker {
         match &pattern.kind {
             PatternKind::Float(value) => keys.push(format!("float:{:?}", value)),
             PatternKind::String(value) => keys.push(format!("string:{}", value)),
-            PatternKind::At { pattern, .. } => Self::collect_non_integer_literal_keys(pattern, keys),
-            PatternKind::Or(items) => for item in items { Self::collect_non_integer_literal_keys(item, keys); },
+            PatternKind::At { pattern, .. } => {
+                Self::collect_non_integer_literal_keys(pattern, keys)
+            }
+            PatternKind::Or(items) => {
+                for item in items {
+                    Self::collect_non_integer_literal_keys(item, keys);
+                }
+            }
             _ => {}
         }
     }
@@ -2847,31 +3194,58 @@ impl TypeChecker {
         for statement in statements {
             match statement {
                 Statement::Return { .. } => return true,
-                Statement::If { body, else_body: Some(else_body), .. } => {
-                    if self.block_returns(body) && self.block_returns(else_body) { return true; }
+                Statement::If {
+                    body,
+                    else_body: Some(else_body),
+                    ..
+                } => {
+                    if self.block_returns(body) && self.block_returns(else_body) {
+                        return true;
+                    }
                 }
-                Statement::Match { expression, arms, .. } => {
-                    if arms.is_empty() || !arms.iter().all(|arm| self.block_returns(&arm.body)) { continue; }
-                    let has_catch_all = arms.iter().any(|arm| arm.guard.is_none() && Self::pattern_is_irrefutable(&arm.pattern));
-                    let expression_type = self.infer_expression(expression).unwrap_or(Type::Unknown);
+                Statement::Match {
+                    expression, arms, ..
+                } => {
+                    if arms.is_empty() || !arms.iter().all(|arm| self.block_returns(&arm.body)) {
+                        continue;
+                    }
+                    let has_catch_all = arms.iter().any(|arm| {
+                        arm.guard.is_none() && Self::pattern_is_irrefutable(&arm.pattern)
+                    });
+                    let expression_type =
+                        self.infer_expression(expression).unwrap_or(Type::Unknown);
                     let exhaustive = if has_catch_all {
                         true
                     } else {
                         match expression_type {
                             Type::Bool => {
                                 let mut covered = HashSet::new();
-                                for arm in arms.iter().filter(|arm| arm.guard.is_none()) { Self::collect_bool_coverage(&arm.pattern, &mut covered); }
+                                for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
+                                    Self::collect_bool_coverage(&arm.pattern, &mut covered);
+                                }
                                 covered.len() == 2
                             }
                             Type::Enum(ref name) => {
                                 let mut covered = HashSet::new();
-                                for arm in arms.iter().filter(|arm| arm.guard.is_none()) { Self::collect_variant_coverage(&arm.pattern, &mut covered); }
-                                self.enum_definition(name).map(|definition| !definition.variants.is_empty() && definition.variants.keys().all(|variant| covered.contains(variant))).unwrap_or(false)
+                                for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
+                                    Self::collect_variant_coverage(&arm.pattern, &mut covered);
+                                }
+                                self.enum_definition(name)
+                                    .map(|definition| {
+                                        !definition.variants.is_empty()
+                                            && definition
+                                                .variants
+                                                .keys()
+                                                .all(|variant| covered.contains(variant))
+                                    })
+                                    .unwrap_or(false)
                             }
                             _ => false,
                         }
                     };
-                    if exhaustive { return true; }
+                    if exhaustive {
+                        return true;
+                    }
                 }
                 _ => {}
             }
@@ -3043,9 +3417,7 @@ impl TypeChecker {
         methods: &[Statement],
         span: Span,
     ) -> Result<(), FusionError> {
-        if !self.has_struct_definition(type_name)
-            && !self.has_enum_definition(type_name)
-        {
+        if !self.has_struct_definition(type_name) && !self.has_enum_definition(type_name) {
             return Err(FusionError::Syntax {
                 message: format!("Cannot implement methods for unknown type '{}'", type_name),
                 span,
@@ -3104,24 +3476,38 @@ impl TypeChecker {
                     };
                     let signature = FunctionType {
                         parameters: parameter_types,
-                        return_type: if *is_async { Type::Task(Box::new(ret)) } else { ret },
+                        return_type: if *is_async {
+                            Type::Task(Box::new(ret))
+                        } else {
+                            ret
+                        },
                         generic_parameters: generic_parameters.clone(),
                     };
-                    self.environment.methods.insert(
-                        (type_name.to_string(), name.clone()),
-                        signature.clone(),
-                    );
-                    if let Some(receiver_id) = self.environment.nominal_type_ids.get(type_name).cloned() {
-                        let preferred = self.environment.method_definition_ids.get(&(type_name.to_string(), name.clone()));
+                    self.environment
+                        .methods
+                        .insert((type_name.to_string(), name.clone()), signature.clone());
+                    if let Some(receiver_id) =
+                        self.environment.nominal_type_ids.get(type_name).cloned()
+                    {
+                        let preferred = self
+                            .environment
+                            .method_definition_ids
+                            .get(&(type_name.to_string(), name.clone()));
                         let current_scope = match trait_name {
                             None => Some("inherent".to_string()),
-                            Some(trait_symbol) => self.environment.trait_definition_ids.get(trait_symbol)
+                            Some(trait_symbol) => self
+                                .environment
+                                .trait_definition_ids
+                                .get(trait_symbol)
                                 .map(|id| format!("{}::{}", id.module, id.name)),
                         };
-                        let is_selected = preferred.map(|id| id.scope.first().cloned() == current_scope)
+                        let is_selected = preferred
+                            .map(|id| id.scope.first().cloned() == current_scope)
                             .unwrap_or(true);
                         if is_selected {
-                            self.environment.methods_by_id.insert((receiver_id, name.clone()), signature);
+                            self.environment
+                                .methods_by_id
+                                .insert((receiver_id, name.clone()), signature);
                         }
                     }
                     self.check_function_body(
@@ -3177,7 +3563,10 @@ impl TypeChecker {
             );
             if !kind_matches {
                 return Err(FusionError::Syntax {
-                    message: format!("HIR type identity kind mismatch for '{}::{}'", identity.module, identity.name),
+                    message: format!(
+                        "HIR type identity kind mismatch for '{}::{}'",
+                        identity.module, identity.name
+                    ),
                     span: Span::default(),
                 });
             }
@@ -3198,7 +3587,10 @@ impl TypeChecker {
                 })?;
                 if identity.kind != expected_kind {
                     return Err(FusionError::Syntax {
-                        message: format!("project type '{}' has an incorrect HIR identity kind", name),
+                        message: format!(
+                            "project type '{}' has an incorrect HIR identity kind",
+                            name
+                        ),
                         span,
                     });
                 }
@@ -3206,15 +3598,23 @@ impl TypeChecker {
         }
 
         self.environment.nominal_type_ids = identities;
-        self.environment.trait_definition_ids = crate::module_system::backend_trait_definition_ids(program);
-        self.environment.method_definition_ids = crate::module_system::backend_method_definition_ids(program);
+        self.environment.trait_definition_ids =
+            crate::module_system::backend_trait_definition_ids(program);
+        self.environment.method_definition_ids =
+            crate::module_system::backend_method_definition_ids(program);
         self.check(program)
     }
 
     pub fn check(&mut self, program: &Program) -> Result<(), FusionError> {
         // Pass 1: register struct names.
         for statement in &program.statements {
-            if let Statement::Struct { name, derives, span, .. } = statement {
+            if let Statement::Struct {
+                name,
+                derives,
+                span,
+                ..
+            } = statement
+            {
                 let mut requested = HashSet::new();
                 for trait_name in derives {
                     if !matches!(trait_name.as_str(), "Debug" | "Clone" | "PartialEq") {
@@ -3224,10 +3624,15 @@ impl TypeChecker {
                         });
                     }
                     if !requested.insert(trait_name.clone()) {
-                        return Err(FusionError::Syntax { message: format!("Duplicate derive '{}'", trait_name), span: *span });
+                        return Err(FusionError::Syntax {
+                            message: format!("Duplicate derive '{}'", trait_name),
+                            span: *span,
+                        });
                     }
                 }
-                self.environment.derived_traits.insert(name.clone(), requested);
+                self.environment
+                    .derived_traits
+                    .insert(name.clone(), requested);
                 if self.environment.structs.contains_key(name) {
                     return Err(FusionError::Syntax {
                         message: format!("Duplicate struct '{}'", name),
@@ -3262,7 +3667,10 @@ impl TypeChecker {
 
         // Pass 3: resolve struct fields.
         for statement in &program.statements {
-            if let Statement::Struct { name, fields, span, .. } = statement {
+            if let Statement::Struct {
+                name, fields, span, ..
+            } = statement
+            {
                 let mut seen = HashSet::new();
                 let mut resolved_fields = Vec::new();
 
@@ -3289,7 +3697,6 @@ impl TypeChecker {
                         })?;
 
                 definition.fields = resolved_fields;
-
             }
         }
 
@@ -3344,12 +3751,16 @@ impl TypeChecker {
         // registration, but project body lookups now prefer these identity maps.
         for (symbol, definition) in self.environment.structs.clone() {
             if let Some(identity) = self.environment.nominal_type_ids.get(&symbol) {
-                self.environment.structs_by_id.insert(identity.clone(), definition);
+                self.environment
+                    .structs_by_id
+                    .insert(identity.clone(), definition);
             }
         }
         for (symbol, definition) in self.environment.enums.clone() {
             if let Some(identity) = self.environment.nominal_type_ids.get(&symbol) {
-                self.environment.enums_by_id.insert(identity.clone(), definition);
+                self.environment
+                    .enums_by_id
+                    .insert(identity.clone(), definition);
             }
         }
 
@@ -3358,20 +3769,44 @@ impl TypeChecker {
         // are exposed only across an import edge and only for public symbols.
         for importer in &program.modules {
             for import in &importer.imports {
-                let target = program.modules.iter().find(|candidate| candidate.name == import.path)
-                    .or_else(|| program.modules.iter().find(|candidate| candidate.name.ends_with(&format!(".{}", import.path))));
-                let Some(target) = target else { continue; };
-                let alias = import.alias.clone().unwrap_or_else(|| import.path.rsplit('.').next().unwrap_or(&import.path).to_string());
+                let target = program
+                    .modules
+                    .iter()
+                    .find(|candidate| candidate.name == import.path)
+                    .or_else(|| {
+                        program.modules.iter().find(|candidate| {
+                            candidate.name.ends_with(&format!(".{}", import.path))
+                        })
+                    });
+                let Some(target) = target else {
+                    continue;
+                };
+                let alias = import.alias.clone().unwrap_or_else(|| {
+                    import
+                        .path
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(&import.path)
+                        .to_string()
+                });
                 for statement in &program.statements[target.statement_start..target.statement_end] {
                     match statement {
-                        Statement::Struct { name, .. } if target.public_symbols.iter().any(|symbol| symbol == name) => {
+                        Statement::Struct { name, .. }
+                            if target.public_symbols.iter().any(|symbol| symbol == name) =>
+                        {
                             if let Some(definition) = self.struct_definition(name).cloned() {
-                                self.environment.structs.insert(format!("{}.{}", alias, name), definition);
+                                self.environment
+                                    .structs
+                                    .insert(format!("{}.{}", alias, name), definition);
                             }
                         }
-                        Statement::Enum { name, .. } if target.public_symbols.iter().any(|symbol| symbol == name) => {
+                        Statement::Enum { name, .. }
+                            if target.public_symbols.iter().any(|symbol| symbol == name) =>
+                        {
                             if let Some(definition) = self.environment.enums.get(name).cloned() {
-                                self.environment.enums.insert(format!("{}.{}", alias, name), definition);
+                                self.environment
+                                    .enums
+                                    .insert(format!("{}.{}", alias, name), definition);
                             }
                         }
                         _ => {}
@@ -3401,7 +3836,9 @@ impl TypeChecker {
                     .traits
                     .insert(name.clone(), methods.clone());
                 if let Some(identity) = self.environment.trait_definition_ids.get(name).cloned() {
-                    self.environment.traits_by_id.insert(identity, methods.clone());
+                    self.environment
+                        .traits_by_id
+                        .insert(identity, methods.clone());
                 }
             }
         }
@@ -3561,8 +3998,7 @@ impl Default for TypeChecker {
 mod hir_nominal_identity_tests {
     use super::*;
     use crate::hir::{
-        HirDefinitionId, HirDefinitionKind, HirTypeDefinition, HirTypeRegistry,
-        HirTypeShape,
+        HirDefinitionId, HirDefinitionKind, HirTypeDefinition, HirTypeRegistry, HirTypeShape,
     };
 
     #[test]
@@ -3570,15 +4006,24 @@ mod hir_nominal_identity_tests {
         let mut checker = TypeChecker::new();
         let geometry = HirDefinitionId::new("geometry", "Point", HirDefinitionKind::Struct);
         let graphics = HirDefinitionId::new("graphics", "Point", HirDefinitionKind::Struct);
-        checker.environment.nominal_type_ids.insert("geometry_Point".into(), geometry.clone());
-        checker.environment.nominal_type_ids.insert("graphics_Point".into(), graphics.clone());
+        checker
+            .environment
+            .nominal_type_ids
+            .insert("geometry_Point".into(), geometry.clone());
+        checker
+            .environment
+            .nominal_type_ids
+            .insert("graphics_Point".into(), graphics.clone());
 
         assert!(!checker.types_compatible(
             &Type::Struct("geometry_Point".into()),
             &Type::Struct("graphics_Point".into()),
         ));
 
-        checker.environment.nominal_type_ids.insert("geometry_Point_alias".into(), geometry);
+        checker
+            .environment
+            .nominal_type_ids
+            .insert("geometry_Point_alias".into(), geometry);
         assert!(checker.types_compatible(
             &Type::Struct("geometry_Point".into()),
             &Type::Struct("geometry_Point_alias".into()),
@@ -3608,17 +4053,48 @@ mod hir_nominal_identity_tests {
         let mut checker = TypeChecker::new();
         let geometry = HirDefinitionId::new("geometry", "Point", HirDefinitionKind::Struct);
         let graphics = HirDefinitionId::new("graphics", "Point", HirDefinitionKind::Struct);
-        checker.environment.nominal_type_ids.insert("geometry_Point".into(), geometry.clone());
-        checker.environment.nominal_type_ids.insert("graphics_Point".into(), graphics.clone());
-        let geometry_sig = FunctionType { parameters: vec![Type::Struct("geometry_Point".into())], return_type: Type::Num, generic_parameters: Vec::new() };
-        let graphics_sig = FunctionType { parameters: vec![Type::Struct("graphics_Point".into())], return_type: Type::String, generic_parameters: Vec::new() };
-        checker.environment.methods.insert(("geometry_Point".into(), "measure".into()), geometry_sig.clone());
-        checker.environment.methods.insert(("graphics_Point".into(), "measure".into()), graphics_sig);
-        checker.environment.methods_by_id.insert((geometry.clone(), "measure".into()), geometry_sig);
+        checker
+            .environment
+            .nominal_type_ids
+            .insert("geometry_Point".into(), geometry.clone());
+        checker
+            .environment
+            .nominal_type_ids
+            .insert("graphics_Point".into(), graphics.clone());
+        let geometry_sig = FunctionType {
+            parameters: vec![Type::Struct("geometry_Point".into())],
+            return_type: Type::Num,
+            generic_parameters: Vec::new(),
+        };
+        let graphics_sig = FunctionType {
+            parameters: vec![Type::Struct("graphics_Point".into())],
+            return_type: Type::String,
+            generic_parameters: Vec::new(),
+        };
+        checker.environment.methods.insert(
+            ("geometry_Point".into(), "measure".into()),
+            geometry_sig.clone(),
+        );
+        checker
+            .environment
+            .methods
+            .insert(("graphics_Point".into(), "measure".into()), graphics_sig);
+        checker
+            .environment
+            .methods_by_id
+            .insert((geometry.clone(), "measure".into()), geometry_sig);
 
-        assert_eq!(checker.method_signature("geometry_Point", "measure").unwrap().return_type, Type::Num);
+        assert_eq!(
+            checker
+                .method_signature("geometry_Point", "measure")
+                .unwrap()
+                .return_type,
+            Type::Num
+        );
         // A known project receiver must not fall back to the flat compatibility table.
-        assert!(checker.method_signature("graphics_Point", "measure").is_none());
+        assert!(checker
+            .method_signature("graphics_Point", "measure")
+            .is_none());
     }
 
     #[test]
@@ -3626,15 +4102,41 @@ mod hir_nominal_identity_tests {
         let mut checker = TypeChecker::new();
         let first = HirDefinitionId::new("collections", "Iterable", HirDefinitionKind::Trait);
         let second = HirDefinitionId::new("streams", "Iterable", HirDefinitionKind::Trait);
-        checker.environment.trait_definition_ids.insert("collections_Iterable".into(), first.clone());
-        checker.environment.trait_definition_ids.insert("streams_Iterable".into(), second.clone());
-        checker.environment.traits.insert("collections_Iterable".into(), Vec::new());
-        checker.environment.traits.insert("streams_Iterable".into(), Vec::new());
-        checker.environment.traits_by_id.insert(first, vec![TraitMethod { name: "next".into(), parameters: Vec::new(), return_type: None, span: Span::default() }]);
+        checker
+            .environment
+            .trait_definition_ids
+            .insert("collections_Iterable".into(), first.clone());
+        checker
+            .environment
+            .trait_definition_ids
+            .insert("streams_Iterable".into(), second.clone());
+        checker
+            .environment
+            .traits
+            .insert("collections_Iterable".into(), Vec::new());
+        checker
+            .environment
+            .traits
+            .insert("streams_Iterable".into(), Vec::new());
+        checker.environment.traits_by_id.insert(
+            first,
+            vec![TraitMethod {
+                name: "next".into(),
+                parameters: Vec::new(),
+                return_type: None,
+                span: Span::default(),
+            }],
+        );
         checker.environment.traits_by_id.insert(second, Vec::new());
 
-        assert_eq!(checker.trait_methods("collections_Iterable").unwrap().len(), 1);
-        assert!(checker.trait_methods("streams_Iterable").unwrap().is_empty());
+        assert_eq!(
+            checker.trait_methods("collections_Iterable").unwrap().len(),
+            1
+        );
+        assert!(checker
+            .trait_methods("streams_Iterable")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -3650,7 +4152,9 @@ mod hir_nominal_identity_tests {
             modules: Vec::new(),
         };
 
-        assert!(checker.check_with_hir(&program, identities, &registry).is_err());
+        assert!(checker
+            .check_with_hir(&program, identities, &registry)
+            .is_err());
     }
 
     #[test]
@@ -3663,7 +4167,10 @@ mod hir_nominal_identity_tests {
         registry.insert(HirTypeDefinition {
             id,
             is_public: true,
-            shape: HirTypeShape::Struct { fields: Vec::new(), derives: Vec::new() },
+            shape: HirTypeShape::Struct {
+                fields: Vec::new(),
+                derives: Vec::new(),
+            },
         });
         let program = Program {
             statements: vec![Statement::Struct {
@@ -3676,23 +4183,46 @@ mod hir_nominal_identity_tests {
             modules: Vec::new(),
         };
 
-        checker.check_with_hir(&program, identities, &registry).unwrap();
+        checker
+            .check_with_hir(&program, identities, &registry)
+            .unwrap();
         assert_eq!(checker.environment.nominal_type_ids.len(), 1);
-        assert!(checker.environment.structs_by_id.contains_key(&HirDefinitionId::new(
-            "models", "Point", HirDefinitionKind::Struct
-        )));
+        assert!(checker
+            .environment
+            .structs_by_id
+            .contains_key(&HirDefinitionId::new(
+                "models",
+                "Point",
+                HirDefinitionKind::Struct
+            )));
     }
 
     #[test]
     fn boolean_or_pattern_can_prove_exhaustiveness() {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 0);
-        let pattern = Pattern { kind: PatternKind::Or(vec![
-            Pattern { kind: PatternKind::Boolean(true), span },
-            Pattern { kind: PatternKind::Boolean(false), span },
-        ]), span };
-        let arms = vec![MatchArm { pattern, guard: None, body: vec![], span }];
-        assert!(checker.check_match(&Expression::Boolean { value: true, span }, &arms, span).is_ok());
+        let pattern = Pattern {
+            kind: PatternKind::Or(vec![
+                Pattern {
+                    kind: PatternKind::Boolean(true),
+                    span,
+                },
+                Pattern {
+                    kind: PatternKind::Boolean(false),
+                    span,
+                },
+            ]),
+            span,
+        };
+        let arms = vec![MatchArm {
+            pattern,
+            guard: None,
+            body: vec![],
+            span,
+        }];
+        assert!(checker
+            .check_match(&Expression::Boolean { value: true, span }, &arms, span)
+            .is_ok());
     }
 
     #[test]
@@ -3700,10 +4230,32 @@ mod hir_nominal_identity_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 0);
         let arms = vec![
-            MatchArm { pattern: Pattern { kind: PatternKind::Range { start: 1, end: 5, inclusive: true }, span }, guard: None, body: vec![], span },
-            MatchArm { pattern: Pattern { kind: PatternKind::Number(3), span }, guard: None, body: vec![], span },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Range {
+                        start: 1,
+                        end: 5,
+                        inclusive: true,
+                    },
+                    span,
+                },
+                guard: None,
+                body: vec![],
+                span,
+            },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Number(3),
+                    span,
+                },
+                guard: None,
+                body: vec![],
+                span,
+            },
         ];
-        let error = checker.check_match(&Expression::Number { value: 3, span }, &arms, span).unwrap_err();
+        let error = checker
+            .check_match(&Expression::Number { value: 3, span }, &arms, span)
+            .unwrap_err();
         assert!(error.to_string().contains("Overlapping integer"));
     }
 
@@ -3711,18 +4263,62 @@ mod hir_nominal_identity_tests {
     fn enum_variant_with_refutable_payload_does_not_cover_the_whole_variant() {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 0);
-        checker.environment.enums.insert("Choice".into(), EnumDefinition {
-            variants: HashMap::from([
-                ("Some".into(), EnumVariantDefinition { fields: vec![Type::Num] }),
-                ("None".into(), EnumVariantDefinition { fields: vec![] }),
-            ]),
-        });
-        checker.declare_variable("choice".into(), Type::Enum("Choice".into()), false, span).unwrap();
+        checker.environment.enums.insert(
+            "Choice".into(),
+            EnumDefinition {
+                variants: HashMap::from([
+                    (
+                        "Some".into(),
+                        EnumVariantDefinition {
+                            fields: vec![Type::Num],
+                        },
+                    ),
+                    ("None".into(), EnumVariantDefinition { fields: vec![] }),
+                ]),
+            },
+        );
+        checker
+            .declare_variable("choice".into(), Type::Enum("Choice".into()), false, span)
+            .unwrap();
         let arms = vec![
-            MatchArm { pattern: Pattern { kind: PatternKind::Variant { name: "Choice::Some".into(), bindings: vec![Pattern { kind: PatternKind::Number(1), span }] }, span }, guard: None, body: vec![], span },
-            MatchArm { pattern: Pattern { kind: PatternKind::Variant { name: "Choice::None".into(), bindings: vec![] }, span }, guard: None, body: vec![], span },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Variant {
+                        name: "Choice::Some".into(),
+                        bindings: vec![Pattern {
+                            kind: PatternKind::Number(1),
+                            span,
+                        }],
+                    },
+                    span,
+                },
+                guard: None,
+                body: vec![],
+                span,
+            },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Variant {
+                        name: "Choice::None".into(),
+                        bindings: vec![],
+                    },
+                    span,
+                },
+                guard: None,
+                body: vec![],
+                span,
+            },
         ];
-        let error = checker.check_match(&Expression::Identifier { name: "choice".into(), span }, &arms, span).unwrap_err();
+        let error = checker
+            .check_match(
+                &Expression::Identifier {
+                    name: "choice".into(),
+                    span,
+                },
+                &arms,
+                span,
+            )
+            .unwrap_err();
         assert!(error.to_string().contains("Non-exhaustive match"));
     }
 
@@ -3731,10 +4327,28 @@ mod hir_nominal_identity_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 0);
         let arms = vec![
-            MatchArm { pattern: Pattern { kind: PatternKind::Wildcard, span }, guard: None, body: vec![], span },
-            MatchArm { pattern: Pattern { kind: PatternKind::Boolean(true), span }, guard: None, body: vec![], span },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Wildcard,
+                    span,
+                },
+                guard: None,
+                body: vec![],
+                span,
+            },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Boolean(true),
+                    span,
+                },
+                guard: None,
+                body: vec![],
+                span,
+            },
         ];
-        let error = checker.check_match(&Expression::Boolean { value: true, span }, &arms, span).unwrap_err();
+        let error = checker
+            .check_match(&Expression::Boolean { value: true, span }, &arms, span)
+            .unwrap_err();
         assert!(error.to_string().contains("Unreachable match arm"));
     }
 
@@ -3742,16 +4356,34 @@ mod hir_nominal_identity_tests {
     fn match_with_guard_does_not_prove_function_return() {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 0);
-        let return_stmt = || Statement::Return { value: Some(Expression::Number { value: 1, span }), span };
+        let return_stmt = || Statement::Return {
+            value: Some(Expression::Number { value: 1, span }),
+            span,
+        };
         let statements = vec![Statement::Match {
             expression: Expression::Boolean { value: true, span },
             arms: vec![
-                MatchArm { pattern: Pattern { kind: PatternKind::Boolean(true), span }, guard: Some(Expression::Boolean { value: true, span }), body: vec![return_stmt()], span },
-                MatchArm { pattern: Pattern { kind: PatternKind::Boolean(false), span }, guard: None, body: vec![return_stmt()], span },
+                MatchArm {
+                    pattern: Pattern {
+                        kind: PatternKind::Boolean(true),
+                        span,
+                    },
+                    guard: Some(Expression::Boolean { value: true, span }),
+                    body: vec![return_stmt()],
+                    span,
+                },
+                MatchArm {
+                    pattern: Pattern {
+                        kind: PatternKind::Boolean(false),
+                        span,
+                    },
+                    guard: None,
+                    body: vec![return_stmt()],
+                    span,
+                },
             ],
             span,
         }];
         assert!(!checker.block_returns(&statements));
     }
-
 }

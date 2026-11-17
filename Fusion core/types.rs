@@ -43,7 +43,10 @@ impl Type {
             Type::Bool => "bool".into(),
             Type::String => "string".into(),
             Type::Array(i) => format!("{}[]", i.name()),
-            Type::Tuple(items) => format!("({})", items.iter().map(Type::name).collect::<Vec<_>>().join(", ")),
+            Type::Tuple(items) => format!(
+                "({})",
+                items.iter().map(Type::name).collect::<Vec<_>>().join(", ")
+            ),
             Type::Iterator(i) => format!("Iterator<{}>", i.name()),
             Type::HashMap(k, v) => format!("HashMap<{}, {}>", k.name(), v.name()),
             Type::Option(i) => format!("Option<{}>", i.name()),

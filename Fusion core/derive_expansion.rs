@@ -32,22 +32,29 @@ fn builtin_trait(name: &str, span: Span) -> Statement {
     let methods = match name {
         "Debug" => vec![trait_method("debug", vec![self_param()], "string", span)],
         "Clone" => vec![trait_method("clone", vec![self_param()], "Self", span)],
-        "PartialEq" => vec![trait_method("eq", vec![self_param(), parameter("other", "Self", span)], "bool", span)],
+        "PartialEq" => vec![trait_method(
+            "eq",
+            vec![self_param(), parameter("other", "Self", span)],
+            "bool",
+            span,
+        )],
         _ => unreachable!("only built-in derive traits are synthesized"),
     };
-    Statement::Trait { name: name.to_string(), methods, span }
+    Statement::Trait {
+        name: name.to_string(),
+        methods,
+        span,
+    }
 }
 
 fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
     let self_param = parameter("self", type_name, span);
-    let self_expr = crate::ast::Expression::Identifier { name: "self".into(), span };
+    let self_expr = crate::ast::Expression::Identifier {
+        name: "self".into(),
+        span,
+    };
     let (method_name, parameters, return_type, value) = match trait_name {
-        "Clone" => (
-            "clone",
-            vec![self_param],
-            type_name.to_string(),
-            self_expr,
-        ),
+        "Clone" => ("clone", vec![self_param], type_name.to_string(), self_expr),
         "Debug" => (
             "debug",
             vec![self_param],
@@ -60,7 +67,10 @@ fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
             },
         ),
         "PartialEq" => {
-            let other = crate::ast::Expression::Identifier { name: "other".into(), span };
+            let other = crate::ast::Expression::Identifier {
+                name: "other".into(),
+                span,
+            };
             (
                 "eq",
                 vec![self_param, parameter("other", type_name, span)],
@@ -80,7 +90,10 @@ fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
         generic_parameters: Vec::new(),
         parameters,
         return_type: Some(return_type),
-        body: vec![Statement::Return { value: Some(value), span }],
+        body: vec![Statement::Return {
+            value: Some(value),
+            span,
+        }],
         is_async: false,
         span,
     };
@@ -98,24 +111,43 @@ fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
 /// duplicate attributes.
 pub fn expand_derives(mut program: Program) -> Program {
     let span = program.span;
-    let existing_traits = program.statements.iter().filter_map(|statement| {
-        if let Statement::Trait { name, .. } = statement { Some(name.clone()) } else { None }
-    }).collect::<std::collections::HashSet<_>>();
+    let existing_traits = program
+        .statements
+        .iter()
+        .filter_map(|statement| {
+            if let Statement::Trait { name, .. } = statement {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<std::collections::HashSet<_>>();
 
     let mut generated_traits = Vec::new();
     let mut generated_impls = Vec::new();
 
     for statement in &mut program.statements {
-        if let Statement::Struct { name, derives, span: struct_span, .. } = statement {
+        if let Statement::Struct {
+            name,
+            derives,
+            span: struct_span,
+            ..
+        } = statement
+        {
             let requested = derives.clone();
             for trait_name in requested {
-                if !BUILTIN_DERIVES.iter().any(|known| *known == trait_name.as_str()) {
+                if !BUILTIN_DERIVES
+                    .iter()
+                    .any(|known| *known == trait_name.as_str())
+                {
                     // Keep unsupported names for the type checker to report with the
                     // struct's source span, rather than silently dropping them.
                     continue;
                 }
                 if !existing_traits.contains(&trait_name)
-                    && !generated_traits.iter().any(|t| matches!(t, Statement::Trait { name, .. } if name == &trait_name))
+                    && !generated_traits
+                        .iter()
+                        .any(|t| matches!(t, Statement::Trait { name, .. } if name == &trait_name))
                 {
                     generated_traits.push(builtin_trait(&trait_name, span));
                 }

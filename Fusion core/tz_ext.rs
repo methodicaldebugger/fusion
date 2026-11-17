@@ -90,7 +90,10 @@ fn parse_hms(s: &[u8], i: &mut usize) -> Result<i64, String> {
             }
             return Err("malformed time in TZ string".to_string());
         }
-        *part = std::str::from_utf8(&s[start..*i]).unwrap_or("0").parse().map_err(|_| "bad number in TZ string".to_string())?;
+        *part = std::str::from_utf8(&s[start..*i])
+            .unwrap_or("0")
+            .parse()
+            .map_err(|_| "bad number in TZ string".to_string())?;
         if *i < s.len() && s[*i] == b':' && k < 2 {
             *i += 1;
         } else {
@@ -108,11 +111,20 @@ fn parse_number(s: &[u8], i: &mut usize) -> Result<i64, String> {
     if start == *i {
         return Err("expected a number in TZ rule".to_string());
     }
-    std::str::from_utf8(&s[start..*i]).unwrap_or("0").parse().map_err(|_| "bad number in TZ rule".to_string())
+    std::str::from_utf8(&s[start..*i])
+        .unwrap_or("0")
+        .parse()
+        .map_err(|_| "bad number in TZ rule".to_string())
 }
 
 fn parse_rule_date(s: &[u8], i: &mut usize) -> Result<RuleDate, String> {
-    let mut rule = RuleDate { kind: 'N', month: 0, week: 0, day: 0, time: 7200 };
+    let mut rule = RuleDate {
+        kind: 'N',
+        month: 0,
+        week: 0,
+        day: 0,
+        time: 7200,
+    };
     if *i < s.len() && s[*i] == b'M' {
         *i += 1;
         rule.kind = 'M';
@@ -127,7 +139,10 @@ fn parse_rule_date(s: &[u8], i: &mut usize) -> Result<RuleDate, String> {
         }
         *i += 1;
         rule.day = parse_number(s, i)?;
-        if !(1..=12).contains(&rule.month) || !(1..=5).contains(&rule.week) || !(0..=6).contains(&rule.day) {
+        if !(1..=12).contains(&rule.month)
+            || !(1..=5).contains(&rule.week)
+            || !(0..=6).contains(&rule.day)
+        {
             return Err("Mm.w.d rule out of range".to_string());
         }
     } else if *i < s.len() && s[*i] == b'J' {
@@ -152,7 +167,11 @@ impl PosixRule {
         // POSIX offsets are positive west of Greenwich.
         let std_offset = -parse_hms(s, &mut i)?;
         if i >= s.len() {
-            return Ok(PosixRule { std_name, std_offset, dst: None });
+            return Ok(PosixRule {
+                std_name,
+                std_offset,
+                dst: None,
+            });
         }
         let dst_name = parse_name(s, &mut i)?;
         let mut dst_offset = std_offset + 3600;
@@ -169,8 +188,20 @@ impl PosixRule {
             (start, parse_rule_date(s, &mut i)?)
         } else {
             // US rules before 2007 are the conventional default.
-            let mut a = RuleDate { kind: 'M', month: 3, week: 2, day: 0, time: 7200 };
-            let mut b = RuleDate { kind: 'M', month: 11, week: 1, day: 0, time: 7200 };
+            let mut a = RuleDate {
+                kind: 'M',
+                month: 3,
+                week: 2,
+                day: 0,
+                time: 7200,
+            };
+            let mut b = RuleDate {
+                kind: 'M',
+                month: 11,
+                week: 1,
+                day: 0,
+                time: 7200,
+            };
             a.time = 7200;
             b.time = 7200;
             (a, b)
@@ -178,7 +209,16 @@ impl PosixRule {
         if i != s.len() {
             return Err("unexpected trailing characters in TZ string".to_string());
         }
-        Ok(PosixRule { std_name, std_offset, dst: Some(DstRule { name: dst_name, offset: dst_offset, start, end }) })
+        Ok(PosixRule {
+            std_name,
+            std_offset,
+            dst: Some(DstRule {
+                name: dst_name,
+                offset: dst_offset,
+                start,
+                end,
+            }),
+        })
     }
 
     /// Local midnight (as seconds since the epoch, interpreted as if UTC) of the rule's date in `year`.
@@ -207,15 +247,29 @@ impl PosixRule {
     }
 
     pub fn at(&self, unix: i64) -> Local {
-        let std_local = Local { offset_seconds: self.std_offset, abbreviation: self.std_name.clone(), is_dst: false };
-        let Some(dst) = &self.dst else { return std_local };
+        let std_local = Local {
+            offset_seconds: self.std_offset,
+            abbreviation: self.std_name.clone(),
+            is_dst: false,
+        };
+        let Some(dst) = &self.dst else {
+            return std_local;
+        };
         let (year, _, _) = time_ext::civil_from_days((unix + self.std_offset).div_euclid(86400));
         // Transition instants in UTC: the start is expressed in standard time, the end in DST.
         let start = Self::rule_day_start(&dst.start, year) + dst.start.time - self.std_offset;
         let end = Self::rule_day_start(&dst.end, year) + dst.end.time - dst.offset;
-        let in_dst = if start < end { unix >= start && unix < end } else { !(unix >= end && unix < start) };
+        let in_dst = if start < end {
+            unix >= start && unix < end
+        } else {
+            !(unix >= end && unix < start)
+        };
         if in_dst {
-            Local { offset_seconds: dst.offset, abbreviation: dst.name.clone(), is_dst: true }
+            Local {
+                offset_seconds: dst.offset,
+                abbreviation: dst.name.clone(),
+                is_dst: true,
+            }
         } else {
             std_local
         }
@@ -279,22 +333,39 @@ impl Tzif {
             (&data[44..], 4usize, c1)
         };
         let (timecnt, typecnt, charcnt) = (c[3], c[4], c[5]);
-        let need = timecnt * time_size + timecnt + typecnt * 6 + charcnt + c[2] * (time_size + 4) + c[1] + c[0];
+        let need = timecnt * time_size
+            + timecnt
+            + typecnt * 6
+            + charcnt
+            + c[2] * (time_size + 4)
+            + c[1]
+            + c[0];
         if body.len() < need || typecnt == 0 {
             return Err(bad());
         }
         let mut pos = 0;
         let mut transitions = Vec::with_capacity(timecnt);
         for _ in 0..timecnt {
-            transitions.push(if time_size == 8 { be_i64(&body[pos..pos + 8]) } else { be_i32(&body[pos..pos + 4]) });
+            transitions.push(if time_size == 8 {
+                be_i64(&body[pos..pos + 8])
+            } else {
+                be_i32(&body[pos..pos + 4])
+            });
             pos += time_size;
         }
-        let indices: Vec<usize> = body[pos..pos + timecnt].iter().map(|b| *b as usize).collect();
+        let indices: Vec<usize> = body[pos..pos + timecnt]
+            .iter()
+            .map(|b| *b as usize)
+            .collect();
         pos += timecnt;
         let raw_types: Vec<(i64, bool, usize)> = (0..typecnt)
             .map(|k| {
                 let o = pos + k * 6;
-                (be_i32(&body[o..o + 4]), body[o + 4] != 0, body[o + 5] as usize)
+                (
+                    be_i32(&body[o..o + 4]),
+                    body[o + 4] != 0,
+                    body[o + 5] as usize,
+                )
             })
             .collect();
         pos += typecnt * 6;
@@ -303,8 +374,16 @@ impl Tzif {
         let types: Vec<TypeInfo> = raw_types
             .into_iter()
             .map(|(offset, is_dst, ai)| {
-                let end = chars[ai.min(chars.len())..].iter().position(|b| *b == 0).map_or(chars.len(), |p| ai + p);
-                TypeInfo { offset, is_dst, abbreviation: String::from_utf8_lossy(&chars[ai.min(chars.len())..end]).into_owned() }
+                let end = chars[ai.min(chars.len())..]
+                    .iter()
+                    .position(|b| *b == 0)
+                    .map_or(chars.len(), |p| ai + p);
+                TypeInfo {
+                    offset,
+                    is_dst,
+                    abbreviation: String::from_utf8_lossy(&chars[ai.min(chars.len())..end])
+                        .into_owned(),
+                }
             })
             .collect();
         if indices.iter().any(|i| *i >= types.len()) {
@@ -320,13 +399,26 @@ impl Tzif {
                 }
             }
         }
-        Ok(Tzif { transitions, indices, types, footer })
+        Ok(Tzif {
+            transitions,
+            indices,
+            types,
+            footer,
+        })
     }
 
     pub fn at(&self, unix: i64) -> Local {
-        let info_local = |t: &TypeInfo| Local { offset_seconds: t.offset, abbreviation: t.abbreviation.clone(), is_dst: t.is_dst };
+        let info_local = |t: &TypeInfo| Local {
+            offset_seconds: t.offset,
+            abbreviation: t.abbreviation.clone(),
+            is_dst: t.is_dst,
+        };
         if self.transitions.is_empty() || unix < self.transitions[0] {
-            let first = self.types.iter().find(|t| !t.is_dst).unwrap_or(&self.types[0]);
+            let first = self
+                .types
+                .iter()
+                .find(|t| !t.is_dst)
+                .unwrap_or(&self.types[0]);
             if self.transitions.is_empty() {
                 if let Some(rule) = &self.footer {
                     return rule.at(unix);
@@ -361,56 +453,114 @@ pub enum Zone {
 
 /// Built-in rules (current rules only), used when no tz database is installed.
 const BUILTIN: &[(&str, &str)] = &[
-    ("UTC", "UTC0"), ("Etc/UTC", "UTC0"), ("GMT", "GMT0"), ("Etc/GMT", "GMT0"),
+    ("UTC", "UTC0"),
+    ("Etc/UTC", "UTC0"),
+    ("GMT", "GMT0"),
+    ("Etc/GMT", "GMT0"),
     // Central European Time
-    ("Europe/Ljubljana", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Zagreb", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Belgrade", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Sarajevo", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Skopje", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Podgorica", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Vienna", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Brussels", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Prague", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Budapest", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Warsaw", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Stockholm", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Oslo", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Copenhagen", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Bratislava", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Luxembourg", "CET-1CEST,M3.5.0,M10.5.0/3"),
-    ("Europe/Malta", "CET-1CEST,M3.5.0,M10.5.0/3"), ("Europe/Tirane", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Ljubljana", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Zagreb", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Belgrade", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Sarajevo", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Skopje", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Podgorica", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Vienna", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Brussels", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Prague", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Budapest", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Warsaw", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Stockholm", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Oslo", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Copenhagen", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Bratislava", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Luxembourg", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Malta", "CET-1CEST,M3.5.0,M10.5.0/3"),
+    ("Europe/Tirane", "CET-1CEST,M3.5.0,M10.5.0/3"),
     // Western / Eastern European Time
-    ("Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"), ("Europe/Dublin", "GMT0IST,M3.5.0/1,M10.5.0"),
+    ("Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"),
+    ("Europe/Dublin", "GMT0IST,M3.5.0/1,M10.5.0"),
     ("Europe/Lisbon", "WET0WEST,M3.5.0/1,M10.5.0"),
-    ("Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"), ("Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
-    ("Europe/Kyiv", "EET-2EEST,M3.5.0/3,M10.5.0/4"), ("Europe/Kiev", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
-    ("Europe/Bucharest", "EET-2EEST,M3.5.0/3,M10.5.0/4"), ("Europe/Sofia", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
-    ("Europe/Riga", "EET-2EEST,M3.5.0/3,M10.5.0/4"), ("Europe/Tallinn", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Kyiv", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Kiev", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Bucharest", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Sofia", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Riga", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
+    ("Europe/Tallinn", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
     ("Europe/Vilnius", "EET-2EEST,M3.5.0/3,M10.5.0/4"),
-    ("Europe/Moscow", "MSK-3"), ("Europe/Istanbul", "<+03>-3"), ("Europe/Minsk", "<+03>-3"),
+    ("Europe/Moscow", "MSK-3"),
+    ("Europe/Istanbul", "<+03>-3"),
+    ("Europe/Minsk", "<+03>-3"),
     // Americas
-    ("America/New_York", "EST5EDT,M3.2.0,M11.1.0"), ("America/Toronto", "EST5EDT,M3.2.0,M11.1.0"),
-    ("America/Detroit", "EST5EDT,M3.2.0,M11.1.0"), ("America/Chicago", "CST6CDT,M3.2.0,M11.1.0"),
-    ("America/Winnipeg", "CST6CDT,M3.2.0,M11.1.0"), ("America/Denver", "MST7MDT,M3.2.0,M11.1.0"),
-    ("America/Edmonton", "MST7MDT,M3.2.0,M11.1.0"), ("America/Phoenix", "MST7"),
-    ("America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"), ("America/Vancouver", "PST8PDT,M3.2.0,M11.1.0"),
-    ("America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"), ("Pacific/Honolulu", "HST10"),
-    ("America/Halifax", "AST4ADT,M3.2.0,M11.1.0"), ("America/St_Johns", "NST3:30NDT,M3.2.0,M11.1.0"),
-    ("America/Mexico_City", "CST6"), ("America/Bogota", "<-05>5"), ("America/Lima", "<-05>5"),
-    ("America/Sao_Paulo", "<-03>3"), ("America/Argentina/Buenos_Aires", "<-03>3"), ("America/Buenos_Aires", "<-03>3"),
-    ("America/Caracas", "<-04>4"), ("America/Havana", "CST5CDT,M3.2.0/0,M11.1.0/1"),
+    ("America/New_York", "EST5EDT,M3.2.0,M11.1.0"),
+    ("America/Toronto", "EST5EDT,M3.2.0,M11.1.0"),
+    ("America/Detroit", "EST5EDT,M3.2.0,M11.1.0"),
+    ("America/Chicago", "CST6CDT,M3.2.0,M11.1.0"),
+    ("America/Winnipeg", "CST6CDT,M3.2.0,M11.1.0"),
+    ("America/Denver", "MST7MDT,M3.2.0,M11.1.0"),
+    ("America/Edmonton", "MST7MDT,M3.2.0,M11.1.0"),
+    ("America/Phoenix", "MST7"),
+    ("America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"),
+    ("America/Vancouver", "PST8PDT,M3.2.0,M11.1.0"),
+    ("America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"),
+    ("Pacific/Honolulu", "HST10"),
+    ("America/Halifax", "AST4ADT,M3.2.0,M11.1.0"),
+    ("America/St_Johns", "NST3:30NDT,M3.2.0,M11.1.0"),
+    ("America/Mexico_City", "CST6"),
+    ("America/Bogota", "<-05>5"),
+    ("America/Lima", "<-05>5"),
+    ("America/Sao_Paulo", "<-03>3"),
+    ("America/Argentina/Buenos_Aires", "<-03>3"),
+    ("America/Buenos_Aires", "<-03>3"),
+    ("America/Caracas", "<-04>4"),
+    ("America/Havana", "CST5CDT,M3.2.0/0,M11.1.0/1"),
     // Asia
-    ("Asia/Tokyo", "JST-9"), ("Asia/Seoul", "KST-9"), ("Asia/Shanghai", "CST-8"), ("Asia/Hong_Kong", "HKT-8"),
-    ("Asia/Taipei", "CST-8"), ("Asia/Singapore", "<+08>-8"), ("Asia/Manila", "PST-8"), ("Asia/Jakarta", "WIB-7"),
-    ("Asia/Bangkok", "<+07>-7"), ("Asia/Ho_Chi_Minh", "<+07>-7"), ("Asia/Kolkata", "IST-5:30"),
-    ("Asia/Calcutta", "IST-5:30"), ("Asia/Karachi", "PKT-5"), ("Asia/Dhaka", "<+06>-6"),
-    ("Asia/Kathmandu", "<+0545>-5:45"), ("Asia/Dubai", "<+04>-4"), ("Asia/Tehran", "<+0330>-3:30"),
-    ("Asia/Baghdad", "<+03>-3"), ("Asia/Riyadh", "<+03>-3"), ("Asia/Jerusalem", "IST-2IDT,M3.4.4/26,M10.5.0"),
-    ("Asia/Tashkent", "<+05>-5"), ("Asia/Almaty", "<+05>-5"),
+    ("Asia/Tokyo", "JST-9"),
+    ("Asia/Seoul", "KST-9"),
+    ("Asia/Shanghai", "CST-8"),
+    ("Asia/Hong_Kong", "HKT-8"),
+    ("Asia/Taipei", "CST-8"),
+    ("Asia/Singapore", "<+08>-8"),
+    ("Asia/Manila", "PST-8"),
+    ("Asia/Jakarta", "WIB-7"),
+    ("Asia/Bangkok", "<+07>-7"),
+    ("Asia/Ho_Chi_Minh", "<+07>-7"),
+    ("Asia/Kolkata", "IST-5:30"),
+    ("Asia/Calcutta", "IST-5:30"),
+    ("Asia/Karachi", "PKT-5"),
+    ("Asia/Dhaka", "<+06>-6"),
+    ("Asia/Kathmandu", "<+0545>-5:45"),
+    ("Asia/Dubai", "<+04>-4"),
+    ("Asia/Tehran", "<+0330>-3:30"),
+    ("Asia/Baghdad", "<+03>-3"),
+    ("Asia/Riyadh", "<+03>-3"),
+    ("Asia/Jerusalem", "IST-2IDT,M3.4.4/26,M10.5.0"),
+    ("Asia/Tashkent", "<+05>-5"),
+    ("Asia/Almaty", "<+05>-5"),
     // Africa
-    ("Africa/Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24"), ("Africa/Johannesburg", "SAST-2"), ("Africa/Lagos", "WAT-1"),
-    ("Africa/Nairobi", "EAT-3"), ("Africa/Casablanca", "<+01>-1"), ("Africa/Algiers", "CET-1"), ("Africa/Accra", "GMT0"),
+    ("Africa/Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24"),
+    ("Africa/Johannesburg", "SAST-2"),
+    ("Africa/Lagos", "WAT-1"),
+    ("Africa/Nairobi", "EAT-3"),
+    ("Africa/Casablanca", "<+01>-1"),
+    ("Africa/Algiers", "CET-1"),
+    ("Africa/Accra", "GMT0"),
     // Oceania
-    ("Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"), ("Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
-    ("Australia/Hobart", "AEST-10AEDT,M10.1.0,M4.1.0/3"), ("Australia/Brisbane", "AEST-10"),
-    ("Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"), ("Australia/Darwin", "ACST-9:30"),
-    ("Australia/Perth", "AWST-8"), ("Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"),
+    ("Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+    ("Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+    ("Australia/Hobart", "AEST-10AEDT,M10.1.0,M4.1.0/3"),
+    ("Australia/Brisbane", "AEST-10"),
+    ("Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"),
+    ("Australia/Darwin", "ACST-9:30"),
+    ("Australia/Perth", "AWST-8"),
+    ("Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"),
     ("Pacific/Fiji", "<+12>-12"),
 ];
 
@@ -422,7 +572,9 @@ fn valid_zone_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('/')
         && !name.contains("..")
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
 }
 
 fn zoneinfo_dirs() -> Vec<PathBuf> {
@@ -434,14 +586,20 @@ fn zoneinfo_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    for fixed in ["/usr/share/zoneinfo", "/usr/lib/zoneinfo", "/usr/share/lib/zoneinfo", "/etc/zoneinfo"] {
+    for fixed in [
+        "/usr/share/zoneinfo",
+        "/usr/lib/zoneinfo",
+        "/usr/share/lib/zoneinfo",
+        "/etc/zoneinfo",
+    ] {
         dirs.push(PathBuf::from(fixed));
     }
     dirs
 }
 
 fn cache() -> &'static Mutex<std::collections::HashMap<String, Option<Arc<Tzif>>>> {
-    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<Arc<Tzif>>>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<Arc<Tzif>>>>> =
+        OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -458,14 +616,30 @@ fn embedded_database() -> &'static HashMap<String, Arc<Tzif>> {
         let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let mut pos = 6usize;
         for _ in 0..count {
-            if pos + 6 > bytes.len() { break; }
+            if pos + 6 > bytes.len() {
+                break;
+            }
             let name_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
-            let data_len = u32::from_be_bytes([bytes[pos + 2], bytes[pos + 3], bytes[pos + 4], bytes[pos + 5]]) as usize;
+            let data_len = u32::from_be_bytes([
+                bytes[pos + 2],
+                bytes[pos + 3],
+                bytes[pos + 4],
+                bytes[pos + 5],
+            ]) as usize;
             pos += 6;
-            let Some(end_name) = pos.checked_add(name_len) else { break };
-            let Some(end_data) = end_name.checked_add(data_len) else { break };
-            if end_data > bytes.len() { break; }
-            let name = match std::str::from_utf8(&bytes[pos..end_name]) { Ok(v) => v, Err(_) => break };
+            let Some(end_name) = pos.checked_add(name_len) else {
+                break;
+            };
+            let Some(end_data) = end_name.checked_add(data_len) else {
+                break;
+            };
+            if end_data > bytes.len() {
+                break;
+            }
+            let name = match std::str::from_utf8(&bytes[pos..end_name]) {
+                Ok(v) => v,
+                Err(_) => break,
+            };
             if valid_zone_name(name) {
                 if let Ok(zone) = Tzif::parse(&bytes[end_name..end_data]) {
                     result.insert(name.to_string(), Arc::new(zone));
@@ -504,8 +678,15 @@ impl Zone {
     pub fn parse(name: &str) -> Result<Zone, String> {
         let t = name.trim();
         if let Ok(minutes) = time_ext::parse_offset(t) {
-            let label = if minutes == 0 { "UTC".to_string() } else { time_ext::format_offset(minutes, true) };
-            return Ok(Zone::Fixed { offset_seconds: minutes * 60, label });
+            let label = if minutes == 0 {
+                "UTC".to_string()
+            } else {
+                time_ext::format_offset(minutes, true)
+            };
+            return Ok(Zone::Fixed {
+                offset_seconds: minutes * 60,
+                label,
+            });
         }
         if valid_zone_name(t) {
             if let Some(tz) = load_system(t) {
@@ -525,7 +706,14 @@ impl Zone {
 
     pub fn at(&self, unix: i64) -> Local {
         match self {
-            Zone::Fixed { offset_seconds, label } => Local { offset_seconds: *offset_seconds, abbreviation: label.clone(), is_dst: false },
+            Zone::Fixed {
+                offset_seconds,
+                label,
+            } => Local {
+                offset_seconds: *offset_seconds,
+                abbreviation: label.clone(),
+                is_dst: false,
+            },
             Zone::Posix(rule) => rule.at(unix),
             Zone::Tzif(tz) => tz.at(unix),
         }
@@ -593,7 +781,9 @@ mod tests {
 
     #[test]
     fn bundled_database_preserves_pre_standard_time_history() {
-        let zone = embedded_database().get("Europe/Ljubljana").expect("bundled Ljubljana TZif entry");
+        let zone = embedded_database()
+            .get("Europe/Ljubljana")
+            .expect("bundled Ljubljana TZif entry");
         // Ljubljana used local mean time (+00:58:04) before standard time began in 1884.
         let before = utc(1883, 12, 31, 23, 1);
         let transition = utc(1883, 12, 31, 23, 1) + 56;
@@ -615,11 +805,20 @@ mod tests {
         let z = Zone::parse("Europe/Ljubljana").unwrap();
         let naive = |y, m, d, h, mi| time_ext::from_parts(y, m, d, h, mi, 0, 0).unwrap();
         // Ordinary summer time: 12:00 local is 10:00 UTC.
-        assert_eq!(z.local_to_unix(naive(2026, 7, 1, 12, 0)), utc(2026, 7, 1, 10, 0));
+        assert_eq!(
+            z.local_to_unix(naive(2026, 7, 1, 12, 0)),
+            utc(2026, 7, 1, 10, 0)
+        );
         // Repeated hour on 25 Oct 2026: 02:30 happens twice; the first (CEST) is chosen.
-        assert_eq!(z.local_to_unix(naive(2026, 10, 25, 2, 30)), utc(2026, 10, 25, 0, 30));
+        assert_eq!(
+            z.local_to_unix(naive(2026, 10, 25, 2, 30)),
+            utc(2026, 10, 25, 0, 30)
+        );
         // Skipped hour on 29 Mar 2026: 02:30 does not exist; the pre-gap offset (+01:00) applies.
-        assert_eq!(z.local_to_unix(naive(2026, 3, 29, 2, 30)), utc(2026, 3, 29, 1, 30));
+        assert_eq!(
+            z.local_to_unix(naive(2026, 3, 29, 2, 30)),
+            utc(2026, 3, 29, 1, 30)
+        );
     }
 
     #[test]
@@ -645,7 +844,10 @@ mod tests {
         data.extend_from_slice(b"\nXST-1\n");
         let tz = Tzif::parse(&data).unwrap();
         let local = tz.at(1_000_000);
-        assert_eq!((local.offset_seconds, local.abbreviation.as_str()), (3600, "XST"));
+        assert_eq!(
+            (local.offset_seconds, local.abbreviation.as_str()),
+            (3600, "XST")
+        );
         assert!(Tzif::parse(b"nope").is_err());
     }
 }

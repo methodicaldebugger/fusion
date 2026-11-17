@@ -30,24 +30,39 @@ impl WideInt {
     /// is below `-2^127` (the magnitude does not fit a negative number).
     pub fn new(negative: bool, magnitude: u128) -> Option<WideInt> {
         if magnitude == 0 {
-            return Some(WideInt { negative: false, magnitude: 0 });
+            return Some(WideInt {
+                negative: false,
+                magnitude: 0,
+            });
         }
         if negative && magnitude > NEGATIVE_LIMIT {
             return None;
         }
-        Some(WideInt { negative, magnitude })
+        Some(WideInt {
+            negative,
+            magnitude,
+        })
     }
 
     pub fn from_i64(value: i64) -> WideInt {
-        WideInt { negative: value < 0, magnitude: value.unsigned_abs() as u128 }
+        WideInt {
+            negative: value < 0,
+            magnitude: value.unsigned_abs() as u128,
+        }
     }
 
     pub fn from_i128(value: i128) -> WideInt {
-        WideInt { negative: value < 0, magnitude: value.unsigned_abs() }
+        WideInt {
+            negative: value < 0,
+            magnitude: value.unsigned_abs(),
+        }
     }
 
     pub fn from_u128(value: u128) -> WideInt {
-        WideInt { negative: false, magnitude: value }
+        WideInt {
+            negative: false,
+            magnitude: value,
+        }
     }
 
     pub fn is_negative(&self) -> bool {
@@ -124,7 +139,10 @@ impl WideInt {
     }
 
     fn negated_unchecked(self) -> WideInt {
-        WideInt { negative: !self.negative && self.magnitude != 0, magnitude: self.magnitude }
+        WideInt {
+            negative: !self.negative && self.magnitude != 0,
+            magnitude: self.magnitude,
+        }
     }
 
     pub fn checked_neg(self) -> Option<WideInt> {
@@ -157,7 +175,10 @@ impl WideInt {
         if other.magnitude == 0 {
             return None;
         }
-        WideInt::new(self.negative != other.negative, self.magnitude / other.magnitude)
+        WideInt::new(
+            self.negative != other.negative,
+            self.magnitude / other.magnitude,
+        )
     }
 
     /// Parses an optional sign followed by decimal digits.
@@ -268,16 +289,27 @@ impl IntKind {
     pub fn is_signed(self) -> bool {
         matches!(
             self,
-            IntKind::I8 | IntKind::I16 | IntKind::I32 | IntKind::I64 | IntKind::I128 | IntKind::Isize
+            IntKind::I8
+                | IntKind::I16
+                | IntKind::I32
+                | IntKind::I64
+                | IntKind::I128
+                | IntKind::Isize
         )
     }
 
     /// Smallest representable value.
     pub fn min(self) -> WideInt {
         if self.is_signed() {
-            WideInt { negative: true, magnitude: 1u128 << (self.bits() - 1) }
+            WideInt {
+                negative: true,
+                magnitude: 1u128 << (self.bits() - 1),
+            }
         } else {
-            WideInt { negative: false, magnitude: 0 }
+            WideInt {
+                negative: false,
+                magnitude: 0,
+            }
         }
     }
 
@@ -290,7 +322,10 @@ impl IntKind {
         } else {
             (1u128 << self.bits()) - 1
         };
-        WideInt { negative: false, magnitude }
+        WideInt {
+            negative: false,
+            magnitude,
+        }
     }
 
     pub fn contains(self, value: WideInt) -> bool {

@@ -51,7 +51,11 @@ fn function_name(line: &str) -> Option<String> {
         rest = r.trim_start();
     }
     let rest = rest.strip_prefix("fn ")?;
-    let name: String = rest.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
     if name.is_empty() {
         None
     } else {
@@ -102,7 +106,9 @@ pub fn discover(source: &str) -> Vec<Case> {
 fn load(path: &str) -> Result<(crate::ast::Program, Vec<Case>), String> {
     let project = crate::compile_project_with_metadata(path)?;
     let mut program = project.program.clone();
-    program.statements.retain(|s| !matches!(s, Statement::Main { .. }));
+    program
+        .statements
+        .retain(|s| !matches!(s, Statement::Main { .. }));
     let mut cases: Vec<Case> = Vec::new();
     for module in &project.modules {
         if let Ok(source) = std::fs::read_to_string(&module.path) {
@@ -121,7 +127,10 @@ fn load(path: &str) -> Result<(crate::ast::Program, Vec<Case>), String> {
 }
 
 fn matches_filter(name: &str, options: &Options) -> bool {
-    options.filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
+    options
+        .filter
+        .as_ref()
+        .map_or(true, |f| name.contains(f.as_str()))
 }
 
 fn run_once(program: &crate::ast::Program, name: &str) -> (Result<(), String>, Vec<String>) {
@@ -140,7 +149,10 @@ fn run_once(program: &crate::ast::Program, name: &str) -> (Result<(), String>, V
 /// Runs every `#[test]` function reachable from `path`. Prints results and returns a summary.
 pub fn run_tests(path: &str, options: &Options) -> Result<Summary, String> {
     let (program, cases) = load(path)?;
-    let tests: Vec<&Case> = cases.iter().filter(|c| c.kind == Kind::Test && matches_filter(&c.name, options)).collect();
+    let tests: Vec<&Case> = cases
+        .iter()
+        .filter(|c| c.kind == Kind::Test && matches_filter(&c.name, options))
+        .collect();
     println!("running {} test(s)", tests.len());
     let started = Instant::now();
     let mut summary = Summary::default();
@@ -196,7 +208,10 @@ pub fn run_tests(path: &str, options: &Options) -> Result<Summary, String> {
 /// Times every `#[bench]` function: one warm-up call, then repeated calls for about 300 ms.
 pub fn run_benchmarks(path: &str, options: &Options) -> Result<usize, String> {
     let (program, cases) = load(path)?;
-    let benches: Vec<&Case> = cases.iter().filter(|c| c.kind == Kind::Bench && matches_filter(&c.name, options)).collect();
+    let benches: Vec<&Case> = cases
+        .iter()
+        .filter(|c| c.kind == Kind::Bench && matches_filter(&c.name, options))
+        .collect();
     println!("running {} benchmark(s)", benches.len());
     panic::set_hook(Box::new(|_| {}));
     let mut failed = 0usize;
@@ -218,7 +233,13 @@ pub fn run_benchmarks(path: &str, options: &Options) -> Result<usize, String> {
         }));
         match outcome {
             Ok((iterations, fastest, total)) if iterations > 0 => {
-                println!("bench {} ... {} ns/iter (min {} ns, {} iterations)", case.name, total / iterations as u128, fastest, iterations)
+                println!(
+                    "bench {} ... {} ns/iter (min {} ns, {} iterations)",
+                    case.name,
+                    total / iterations as u128,
+                    fastest,
+                    iterations
+                )
             }
             Ok(_) => println!("bench {} ... too slow to measure", case.name),
             Err(payload) => {

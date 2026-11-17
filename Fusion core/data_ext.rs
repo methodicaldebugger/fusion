@@ -33,7 +33,10 @@ struct JsonParser<'a> {
 }
 
 pub fn json_parse(text: &str) -> Result<Data, String> {
-    let mut p = JsonParser { text: text.as_bytes(), pos: 0 };
+    let mut p = JsonParser {
+        text: text.as_bytes(),
+        pos: 0,
+    };
     p.skip_ws();
     let value = p.value(0)?;
     p.skip_ws();
@@ -52,7 +55,9 @@ impl<'a> JsonParser<'a> {
     }
 
     fn skip_ws(&mut self) {
-        while self.pos < self.text.len() && matches!(self.text[self.pos], b' ' | b'\t' | b'\n' | b'\r') {
+        while self.pos < self.text.len()
+            && matches!(self.text[self.pos], b' ' | b'\t' | b'\n' | b'\r')
+        {
             self.pos += 1;
         }
     }
@@ -74,9 +79,27 @@ impl<'a> JsonParser<'a> {
             return Err(self.err("unexpected end of input"));
         }
         match self.text[self.pos] {
-            b'n' => if self.eat("null") { Ok(Data::Null) } else { Err(self.err("expected 'null'")) },
-            b't' => if self.eat("true") { Ok(Data::Bool(true)) } else { Err(self.err("expected 'true'")) },
-            b'f' => if self.eat("false") { Ok(Data::Bool(false)) } else { Err(self.err("expected 'false'")) },
+            b'n' => {
+                if self.eat("null") {
+                    Ok(Data::Null)
+                } else {
+                    Err(self.err("expected 'null'"))
+                }
+            }
+            b't' => {
+                if self.eat("true") {
+                    Ok(Data::Bool(true))
+                } else {
+                    Err(self.err("expected 'true'"))
+                }
+            }
+            b'f' => {
+                if self.eat("false") {
+                    Ok(Data::Bool(false))
+                } else {
+                    Err(self.err("expected 'false'"))
+                }
+            }
             b'"' => self.string().map(Data::Str),
             b'[' => {
                 self.pos += 1;
@@ -164,14 +187,18 @@ impl<'a> JsonParser<'a> {
                 return Ok(Data::Int(n));
             }
         }
-        slice.parse::<f64>().map(Data::Float).map_err(|_| self.err("invalid number"))
+        slice
+            .parse::<f64>()
+            .map(Data::Float)
+            .map_err(|_| self.err("invalid number"))
     }
 
     fn hex4(&mut self) -> Result<u32, String> {
         if self.pos + 4 > self.text.len() {
             return Err(self.err("truncated \\u escape"));
         }
-        let s = std::str::from_utf8(&self.text[self.pos..self.pos + 4]).map_err(|_| self.err("invalid \\u escape"))?;
+        let s = std::str::from_utf8(&self.text[self.pos..self.pos + 4])
+            .map_err(|_| self.err("invalid \\u escape"))?;
         let v = u32::from_str_radix(s, 16).map_err(|_| self.err("invalid \\u escape"))?;
         self.pos += 4;
         Ok(v)
@@ -181,12 +208,18 @@ impl<'a> JsonParser<'a> {
         self.pos += 1; // opening quote
         let mut out: Vec<u8> = Vec::new();
         loop {
-            let b = *self.text.get(self.pos).ok_or_else(|| self.err("unterminated string"))?;
+            let b = *self
+                .text
+                .get(self.pos)
+                .ok_or_else(|| self.err("unterminated string"))?;
             self.pos += 1;
             match b {
                 b'"' => break,
                 b'\\' => {
-                    let e = *self.text.get(self.pos).ok_or_else(|| self.err("unterminated escape"))?;
+                    let e = *self
+                        .text
+                        .get(self.pos)
+                        .ok_or_else(|| self.err("unterminated escape"))?;
                     self.pos += 1;
                     let ch = match e {
                         b'"' => '"',
@@ -325,7 +358,10 @@ struct TomlParser {
 }
 
 pub fn toml_parse(text: &str) -> Result<Data, String> {
-    let mut p = TomlParser { chars: text.chars().collect(), pos: 0 };
+    let mut p = TomlParser {
+        chars: text.chars().collect(),
+        pos: 0,
+    };
     let mut root = Data::Map(Vec::new());
     let mut current: Vec<String> = Vec::new();
     loop {
@@ -351,7 +387,9 @@ pub fn toml_parse(text: &str) -> Result<Data, String> {
             if array_table {
                 let (last, parent) = path.split_last().ok_or_else(|| p.err("empty table name"))?;
                 let table = table_mut(&mut root, parent).map_err(|e| p.err(&e))?;
-                let Data::Map(entries) = table else { return Err(p.err("invalid array of tables")) };
+                let Data::Map(entries) = table else {
+                    return Err(p.err("invalid array of tables"));
+                };
                 match entries.iter_mut().find(|(k, _)| k == last) {
                     Some((_, Data::List(items))) => items.push(Data::Map(Vec::new())),
                     Some(_) => return Err(p.err(&format!("'{}' is not an array of tables", last))),
@@ -374,7 +412,9 @@ pub fn toml_parse(text: &str) -> Result<Data, String> {
             let table = table_mut(&mut root, &current).map_err(|e| p.err(&e))?;
             let (last, parents) = key_path.split_last().ok_or_else(|| p.err("empty key"))?;
             let target = table_mut(table, parents).map_err(|e| p.err(&e))?;
-            let Data::Map(entries) = target else { return Err(p.err("cannot assign into a non-table")) };
+            let Data::Map(entries) = target else {
+                return Err(p.err("cannot assign into a non-table"));
+            };
             if entries.iter().any(|(k, _)| k == last) {
                 return Err(p.err(&format!("duplicate key '{}'", last)));
             }
@@ -395,7 +435,9 @@ fn table_mut<'a>(node: &'a mut Data, path: &[String]) -> Result<&'a mut Data, St
         };
         if is_array_table {
             if let Data::List(items) = node {
-                return Ok(items.last_mut().expect("array-table was checked to be non-empty"));
+                return Ok(items
+                    .last_mut()
+                    .expect("array-table was checked to be non-empty"));
             }
         }
         return Ok(node);
@@ -424,7 +466,11 @@ impl TomlParser {
     }
 
     fn err(&self, msg: &str) -> String {
-        let line = self.chars[..self.pos.min(self.chars.len())].iter().filter(|c| **c == '\n').count() + 1;
+        let line = self.chars[..self.pos.min(self.chars.len())]
+            .iter()
+            .filter(|c| **c == '\n')
+            .count()
+            + 1;
         format!("TOML error at line {}: {}", line, msg)
     }
 
@@ -540,13 +586,23 @@ impl TomlParser {
                         '\\' => out.push('\\'),
                         'u' | 'U' => {
                             let n = if e == 'u' { 4 } else { 8 };
-                            let hex: String = self.chars[self.pos..(self.pos + n).min(self.chars.len())].iter().collect();
-                            let code = u32::from_str_radix(&hex, 16).map_err(|_| self.err("invalid unicode escape"))?;
-                            out.push(char::from_u32(code).ok_or_else(|| self.err("invalid code point"))?);
+                            let hex: String = self.chars
+                                [self.pos..(self.pos + n).min(self.chars.len())]
+                                .iter()
+                                .collect();
+                            let code = u32::from_str_radix(&hex, 16)
+                                .map_err(|_| self.err("invalid unicode escape"))?;
+                            out.push(
+                                char::from_u32(code)
+                                    .ok_or_else(|| self.err("invalid code point"))?,
+                            );
                             self.pos += n;
                         }
                         '\n' if multiline => {
-                            while matches!(self.peek(), Some(' ') | Some('\t') | Some('\n') | Some('\r')) {
+                            while matches!(
+                                self.peek(),
+                                Some(' ') | Some('\t') | Some('\n') | Some('\r')
+                            ) {
                                 self.pos += 1;
                             }
                         }
@@ -634,7 +690,9 @@ impl TomlParser {
                     let value = self.value()?;
                     let (last, parents) = path.split_last().ok_or_else(|| self.err("empty key"))?;
                     let target = table_mut(&mut table, parents).map_err(|e| self.err(&e))?;
-                    let Data::Map(entries) = target else { return Err(self.err("invalid inline table")) };
+                    let Data::Map(entries) = target else {
+                        return Err(self.err("invalid inline table"));
+                    };
                     if entries.iter().any(|(k, _)| k == last) {
                         return Err(self.err(&format!("duplicate key '{}'", last)));
                     }
@@ -659,7 +717,14 @@ impl TomlParser {
                 break;
             }
             // Datetimes contain a space between date and time.
-            if c == ' ' && !(word.len() == 10 && word.as_bytes()[4] == b'-' && self.chars.get(self.pos + 1).map_or(false, |n| n.is_ascii_digit())) {
+            if c == ' '
+                && !(word.len() == 10
+                    && word.as_bytes()[4] == b'-'
+                    && self
+                        .chars
+                        .get(self.pos + 1)
+                        .map_or(false, |n| n.is_ascii_digit()))
+            {
                 break;
             }
             word.push(c);
@@ -676,18 +741,28 @@ impl TomlParser {
         }
         let clean: String = w.chars().filter(|c| *c != '_').collect();
         if let Some(hex) = clean.strip_prefix("0x") {
-            return i64::from_str_radix(hex, 16).map(Data::Int).map_err(|_| self.err("invalid hex integer"));
+            return i64::from_str_radix(hex, 16)
+                .map(Data::Int)
+                .map_err(|_| self.err("invalid hex integer"));
         }
         if let Some(bin) = clean.strip_prefix("0b") {
-            return i64::from_str_radix(bin, 2).map(Data::Int).map_err(|_| self.err("invalid binary integer"));
+            return i64::from_str_radix(bin, 2)
+                .map(Data::Int)
+                .map_err(|_| self.err("invalid binary integer"));
         }
         if let Some(oct) = clean.strip_prefix("0o") {
-            return i64::from_str_radix(oct, 8).map(Data::Int).map_err(|_| self.err("invalid octal integer"));
+            return i64::from_str_radix(oct, 8)
+                .map(Data::Int)
+                .map_err(|_| self.err("invalid octal integer"));
         }
         if let Ok(n) = clean.parse::<i64>() {
             return Ok(Data::Int(n));
         }
-        if clean.chars().next().map_or(false, |c| c.is_ascii_digit() || c == '+' || c == '-') {
+        if clean
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_digit() || c == '+' || c == '-')
+        {
             if let Ok(f) = clean.parse::<f64>() {
                 return Ok(Data::Float(f));
             }
@@ -701,7 +776,10 @@ impl TomlParser {
 }
 
 fn toml_key(k: &str) -> String {
-    if !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !k.is_empty()
+        && k.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         k.to_string()
     } else {
         json_escape(k)
@@ -717,7 +795,11 @@ fn toml_inline(data: &Data) -> Result<String, String> {
             if f.is_nan() {
                 "nan".to_string()
             } else if f.is_infinite() {
-                if *f > 0.0 { "inf".to_string() } else { "-inf".to_string() }
+                if *f > 0.0 {
+                    "inf".to_string()
+                } else {
+                    "-inf".to_string()
+                }
             } else if f.fract() == 0.0 {
                 format!("{:.1}", f)
             } else {
@@ -740,7 +822,9 @@ fn toml_inline(data: &Data) -> Result<String, String> {
 }
 
 pub fn toml_stringify(data: &Data) -> Result<String, String> {
-    let Data::Map(_) = data else { return Err("a TOML document must be a map".to_string()) };
+    let Data::Map(_) = data else {
+        return Err("a TOML document must be a map".to_string());
+    };
     let mut out = String::new();
     write_toml_table(data, &[], &mut out)?;
     Ok(out)
@@ -751,9 +835,12 @@ fn is_table_list(items: &[Data]) -> bool {
 }
 
 fn write_toml_table(table: &Data, path: &[String], out: &mut String) -> Result<(), String> {
-    let Data::Map(entries) = table else { return Ok(()) };
+    let Data::Map(entries) = table else {
+        return Ok(());
+    };
     for (k, v) in entries {
-        let nested = matches!(v, Data::Map(_)) || matches!(v, Data::List(items) if is_table_list(items));
+        let nested =
+            matches!(v, Data::Map(_)) || matches!(v, Data::List(items) if is_table_list(items));
         if !nested {
             out.push_str(&format!("{} = {}\n", toml_key(k), toml_inline(v)?));
         }
@@ -784,7 +871,8 @@ mod tests {
 
     #[test]
     fn json_round_trip() {
-        let text = r#"{"name":"fusion","n":[1,2.5,true,null],"nested":{"k":"v\n\u00e9\ud83d\ude00"}}"#;
+        let text =
+            r#"{"name":"fusion","n":[1,2.5,true,null],"nested":{"k":"v\n\u00e9\ud83d\ude00"}}"#;
         let data = json_parse(text).unwrap();
         assert_eq!(data.get("name"), Some(&Data::Str("fusion".into())));
         let again = json_parse(&json_stringify(&data, false)).unwrap();
@@ -806,11 +894,17 @@ mod tests {
     fn toml_manifest_like() {
         let text = "# comment\n[package]\nname = \"demo\"\nversion = \"0.1.0\"\nbig = 1_000\n\n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nlist = [\n  1,\n  2, # two\n]\n\n[[bin]]\nname = \"a\"\n[[bin]]\nname = \"b\"\n";
         let d = toml_parse(text).unwrap();
-        assert_eq!(d.get("package").unwrap().get("name"), Some(&Data::Str("demo".into())));
+        assert_eq!(
+            d.get("package").unwrap().get("name"),
+            Some(&Data::Str("demo".into()))
+        );
         assert_eq!(d.get("package").unwrap().get("big"), Some(&Data::Int(1000)));
         let serde = d.get("dependencies").unwrap().get("serde").unwrap();
         assert_eq!(serde.get("version"), Some(&Data::Str("1".into())));
-        assert_eq!(d.get("dependencies").unwrap().get("list"), Some(&Data::List(vec![Data::Int(1), Data::Int(2)])));
+        assert_eq!(
+            d.get("dependencies").unwrap().get("list"),
+            Some(&Data::List(vec![Data::Int(1), Data::Int(2)]))
+        );
         match d.get("bin") {
             Some(Data::List(items)) => assert_eq!(items.len(), 2),
             other => panic!("expected array of tables, got {:?}", other),
@@ -820,8 +914,14 @@ mod tests {
     #[test]
     fn toml_dotted_keys_and_errors() {
         let d = toml_parse("a.b.c = 1\n[x.y]\nz = true\n").unwrap();
-        assert_eq!(d.get("a").unwrap().get("b").unwrap().get("c"), Some(&Data::Int(1)));
-        assert_eq!(d.get("x").unwrap().get("y").unwrap().get("z"), Some(&Data::Bool(true)));
+        assert_eq!(
+            d.get("a").unwrap().get("b").unwrap().get("c"),
+            Some(&Data::Int(1))
+        );
+        assert_eq!(
+            d.get("x").unwrap().get("y").unwrap().get("z"),
+            Some(&Data::Bool(true))
+        );
         assert!(toml_parse("a = 1\na = 2\n").is_err());
         assert!(toml_parse("a = \n").is_err());
         assert!(toml_parse("a = 'unterminated\n").is_err());

@@ -45,7 +45,13 @@ pub struct Frame {
     pub payload: Vec<u8>,
 }
 
-pub fn write_frame(io: &mut dyn Io, kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Result<(), String> {
+pub fn write_frame(
+    io: &mut dyn Io,
+    kind: u8,
+    flags: u8,
+    stream: u32,
+    payload: &[u8],
+) -> Result<(), String> {
     let len = payload.len();
     if len > 0x00ff_ffff {
         return Err("HTTP/2 frame too large".to_string());
@@ -54,7 +60,9 @@ pub fn write_frame(io: &mut dyn Io, kind: u8, flags: u8, stream: u32, payload: &
     buf.extend_from_slice(&[(len >> 16) as u8, (len >> 8) as u8, len as u8, kind, flags]);
     buf.extend_from_slice(&(stream & 0x7fff_ffff).to_be_bytes());
     buf.extend_from_slice(payload);
-    io.write_all(&buf).and_then(|_| io.flush()).map_err(|e| format!("HTTP/2 write: {}", e))
+    io.write_all(&buf)
+        .and_then(|_| io.flush())
+        .map_err(|e| format!("HTTP/2 write: {}", e))
 }
 
 /// Message used when the peer closes the connection (so callers can tell it from a protocol error).
@@ -63,7 +71,9 @@ pub const CONNECTION_CLOSED: &str = "HTTP/2 connection closed";
 fn read_error(e: std::io::Error) -> String {
     use std::io::ErrorKind::*;
     match e.kind() {
-        UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe => CONNECTION_CLOSED.to_string(),
+        UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe => {
+            CONNECTION_CLOSED.to_string()
+        }
         _ => format!("HTTP/2 read: {}", e),
     }
 }
@@ -77,7 +87,12 @@ pub fn read_frame(io: &mut dyn Io) -> Result<Frame, String> {
     }
     let mut payload = vec![0u8; len];
     io.read_exact(&mut payload).map_err(read_error)?;
-    Ok(Frame { kind: head[3], flags: head[4], stream: u32::from_be_bytes([head[5], head[6], head[7], head[8]]) & 0x7fff_ffff, payload })
+    Ok(Frame {
+        kind: head[3],
+        flags: head[4],
+        stream: u32::from_be_bytes([head[5], head[6], head[7], head[8]]) & 0x7fff_ffff,
+        payload,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +111,10 @@ pub struct Codec {
 impl Codec {
     #[cfg(feature = "http2")]
     pub fn new() -> Codec {
-        Codec { encoder: hpack::Encoder::new(), decoder: hpack::Decoder::new() }
+        Codec {
+            encoder: hpack::Encoder::new(),
+            decoder: hpack::Decoder::new(),
+        }
     }
 
     #[cfg(not(feature = "http2"))]
@@ -106,23 +124,42 @@ impl Codec {
 
     #[cfg(feature = "http2")]
     pub fn encode(&mut self, headers: &[(String, String)]) -> Result<Vec<u8>, String> {
-        Ok(self.encoder.encode(headers.iter().map(|(k, v)| (k.as_bytes(), v.as_bytes()))))
+        Ok(self
+            .encoder
+            .encode(headers.iter().map(|(k, v)| (k.as_bytes(), v.as_bytes()))))
     }
 
     #[cfg(feature = "http2")]
     pub fn decode(&mut self, block: &[u8]) -> Result<HeaderList, String> {
-        let pairs = self.decoder.decode(block).map_err(|e| format!("HPACK decoding failed: {:?}", e))?;
-        Ok(pairs.into_iter().map(|(k, v)| (String::from_utf8_lossy(&k).into_owned(), String::from_utf8_lossy(&v).into_owned())).collect())
+        let pairs = self
+            .decoder
+            .decode(block)
+            .map_err(|e| format!("HPACK decoding failed: {:?}", e))?;
+        Ok(pairs
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    String::from_utf8_lossy(&k).into_owned(),
+                    String::from_utf8_lossy(&v).into_owned(),
+                )
+            })
+            .collect())
     }
 
     #[cfg(not(feature = "http2"))]
     pub fn encode(&mut self, _headers: &[(String, String)]) -> Result<Vec<u8>, String> {
-        Err("HTTP/2 needs header compression: rebuild Fusion with `cargo build --features http2`".to_string())
+        Err(
+            "HTTP/2 needs header compression: rebuild Fusion with `cargo build --features http2`"
+                .to_string(),
+        )
     }
 
     #[cfg(not(feature = "http2"))]
     pub fn decode(&mut self, _block: &[u8]) -> Result<HeaderList, String> {
-        Err("HTTP/2 needs header compression: rebuild Fusion with `cargo build --features http2`".to_string())
+        Err(
+            "HTTP/2 needs header compression: rebuild Fusion with `cargo build --features http2`"
+                .to_string(),
+        )
     }
 }
 
@@ -230,13 +267,17 @@ impl Conn {
                     match id {
                         0x2 => {
                             if value > 1 {
-                                return Err("HTTP/2 protocol error: ENABLE_PUSH must be 0 or 1".to_string());
+                                return Err(
+                                    "HTTP/2 protocol error: ENABLE_PUSH must be 0 or 1".to_string()
+                                );
                             }
                             self.peer_push_enabled = value == 1;
                         }
                         0x4 => {
                             if value > 0x7fff_ffff {
-                                return Err("HTTP/2 protocol error: window size too large".to_string());
+                                return Err(
+                                    "HTTP/2 protocol error: window size too large".to_string()
+                                );
                             }
                             let delta = value as i64 - self.initial_send;
                             self.initial_send = value as i64;
@@ -246,7 +287,9 @@ impl Conn {
                         }
                         0x5 => {
                             if !(16_384..=16_777_215).contains(&value) {
-                                return Err("HTTP/2 protocol error: invalid MAX_FRAME_SIZE".to_string());
+                                return Err(
+                                    "HTTP/2 protocol error: invalid MAX_FRAME_SIZE".to_string()
+                                );
                             }
                             self.max_frame = value as usize;
                         }
@@ -265,7 +308,12 @@ impl Conn {
                 if frame.payload.len() != 4 {
                     return Err("HTTP/2 protocol error: malformed WINDOW_UPDATE".to_string());
                 }
-                let inc = (u32::from_be_bytes([frame.payload[0], frame.payload[1], frame.payload[2], frame.payload[3]]) & 0x7fff_ffff) as i64;
+                let inc = (u32::from_be_bytes([
+                    frame.payload[0],
+                    frame.payload[1],
+                    frame.payload[2],
+                    frame.payload[3],
+                ]) & 0x7fff_ffff) as i64;
                 if frame.stream == 0 {
                     self.conn_send += inc;
                 } else {
@@ -274,12 +322,30 @@ impl Conn {
                 Ok(())
             }
             GOAWAY => {
-                let code = if frame.payload.len() >= 8 { u32::from_be_bytes([frame.payload[4], frame.payload[5], frame.payload[6], frame.payload[7]]) } else { 0 };
+                let code = if frame.payload.len() >= 8 {
+                    u32::from_be_bytes([
+                        frame.payload[4],
+                        frame.payload[5],
+                        frame.payload[6],
+                        frame.payload[7],
+                    ])
+                } else {
+                    0
+                };
                 self.goaway = Some(code);
                 Ok(())
             }
             RST_STREAM => {
-                let code = if frame.payload.len() >= 4 { u32::from_be_bytes([frame.payload[0], frame.payload[1], frame.payload[2], frame.payload[3]]) } else { 0 };
+                let code = if frame.payload.len() >= 4 {
+                    u32::from_be_bytes([
+                        frame.payload[0],
+                        frame.payload[1],
+                        frame.payload[2],
+                        frame.payload[3],
+                    ])
+                } else {
+                    0
+                };
                 self.reset.insert(frame.stream, code);
                 self.streams.remove(&frame.stream);
                 Ok(())
@@ -290,18 +356,25 @@ impl Conn {
                     return Err("HTTP/2 protocol error: malformed PUSH_PROMISE".to_string());
                 }
                 if !self.peer_push_enabled {
-                    return Err("HTTP/2 protocol error: peer sent PUSH_PROMISE after push was disabled".to_string());
+                    return Err(
+                        "HTTP/2 protocol error: peer sent PUSH_PROMISE after push was disabled"
+                            .to_string(),
+                    );
                 }
                 let mut data: &[u8] = &frame.payload;
                 let mut pad = 0usize;
                 if frame.flags & PADDED != 0 {
-                    pad = *data.first().ok_or("HTTP/2 protocol error: truncated PUSH_PROMISE")? as usize;
+                    pad = *data
+                        .first()
+                        .ok_or("HTTP/2 protocol error: truncated PUSH_PROMISE")?
+                        as usize;
                     data = &data[1..];
                 }
                 if data.len() < 4 || pad > data.len() - 4 {
                     return Err("HTTP/2 protocol error: malformed PUSH_PROMISE padding".to_string());
                 }
-                let promised = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) & 0x7fff_ffff;
+                let promised =
+                    u32::from_be_bytes([data[0], data[1], data[2], data[3]]) & 0x7fff_ffff;
                 if promised == 0 || promised % 2 != 0 || self.promised_streams.contains(&promised) {
                     return Err("HTTP/2 protocol error: invalid promised stream id".to_string());
                 }
@@ -309,10 +382,15 @@ impl Conn {
                 if frame.flags & END_HEADERS != 0 {
                     self.finish_push_promise(promised, fragment)
                 } else {
-                    self.block = Some(Block { stream: frame.stream, data: fragment, end_stream: false, promised_stream: Some(promised) });
+                    self.block = Some(Block {
+                        stream: frame.stream,
+                        data: fragment,
+                        end_stream: false,
+                        promised_stream: Some(promised),
+                    });
                     Ok(())
                 }
-            },
+            }
             HEADERS => {
                 if frame.stream == 0 {
                     return Err("HTTP/2 protocol error: HEADERS on stream 0".to_string());
@@ -320,7 +398,10 @@ impl Conn {
                 let mut data: &[u8] = &frame.payload;
                 let mut pad = 0usize;
                 if frame.flags & PADDED != 0 {
-                    pad = *data.first().ok_or("HTTP/2 protocol error: truncated HEADERS")? as usize;
+                    pad = *data
+                        .first()
+                        .ok_or("HTTP/2 protocol error: truncated HEADERS")?
+                        as usize;
                     data = &data[1..];
                 }
                 if frame.flags & PRIORITY_FLAG != 0 {
@@ -337,12 +418,20 @@ impl Conn {
                 if frame.flags & END_HEADERS != 0 {
                     self.finish_block(frame.stream, fragment, end_stream)
                 } else {
-                    self.block = Some(Block { stream: frame.stream, data: fragment, end_stream, promised_stream: None });
+                    self.block = Some(Block {
+                        stream: frame.stream,
+                        data: fragment,
+                        end_stream,
+                        promised_stream: None,
+                    });
                     Ok(())
                 }
             }
             CONTINUATION => {
-                let mut block = self.block.take().ok_or("HTTP/2 protocol error: unexpected CONTINUATION")?;
+                let mut block = self
+                    .block
+                    .take()
+                    .ok_or("HTTP/2 protocol error: unexpected CONTINUATION")?;
                 block.data.extend_from_slice(&frame.payload);
                 if block.data.len() > MAX_INCOMING_FRAME {
                     return Err("HTTP/2 header block too large".to_string());
@@ -365,7 +454,10 @@ impl Conn {
                 let total = frame.payload.len();
                 let mut data: &[u8] = &frame.payload;
                 if frame.flags & PADDED != 0 {
-                    let pad = *data.first().ok_or("HTTP/2 protocol error: truncated DATA")? as usize;
+                    let pad = *data
+                        .first()
+                        .ok_or("HTTP/2 protocol error: truncated DATA")?
+                        as usize;
                     data = &data[1..];
                     if pad > data.len() {
                         return Err("HTTP/2 protocol error: bad padding".to_string());
@@ -395,7 +487,12 @@ impl Conn {
         }
     }
 
-    fn finish_block(&mut self, stream: u32, fragment: Vec<u8>, end_stream: bool) -> Result<(), String> {
+    fn finish_block(
+        &mut self,
+        stream: u32,
+        fragment: Vec<u8>,
+        end_stream: bool,
+    ) -> Result<(), String> {
         let headers = self.codec.decode(&fragment)?;
         let partial = self.streams.entry(stream).or_default();
         partial.headers.extend(headers);
@@ -418,7 +515,11 @@ impl Conn {
     fn complete(&mut self, stream: u32) {
         if let Some(p) = self.streams.remove(&stream) {
             if p.seen_headers {
-                self.ready.push_back(Message { stream, headers: p.headers, body: p.body });
+                self.ready.push_back(Message {
+                    stream,
+                    headers: p.headers,
+                    body: p.body,
+                });
             }
         }
     }
@@ -431,15 +532,28 @@ impl Conn {
 
     /// Sends a PUSH_PROMISE for a promised request and allocates an even stream id.
     /// Large HPACK blocks are split across PUSH_PROMISE and CONTINUATION frames.
-    pub fn send_push_promise(&mut self, io: &mut dyn Io, parent_stream: u32, request_headers: &[(String, String)]) -> Result<u32, String> {
+    pub fn send_push_promise(
+        &mut self,
+        io: &mut dyn Io,
+        parent_stream: u32,
+        request_headers: &[(String, String)],
+    ) -> Result<u32, String> {
         if !self.peer_push_enabled {
-            return Err("HTTP/2 server push was disabled by the client (SETTINGS_ENABLE_PUSH=0)".to_string());
+            return Err(
+                "HTTP/2 server push was disabled by the client (SETTINGS_ENABLE_PUSH=0)"
+                    .to_string(),
+            );
         }
         if parent_stream == 0 || parent_stream % 2 == 0 {
-            return Err("HTTP/2 PUSH_PROMISE requires an active client-initiated parent stream".to_string());
+            return Err(
+                "HTTP/2 PUSH_PROMISE requires an active client-initiated parent stream".to_string(),
+            );
         }
         let promised = self.next_push_stream;
-        self.next_push_stream = self.next_push_stream.checked_add(2).ok_or("HTTP/2 promised stream id exhausted")?;
+        self.next_push_stream = self
+            .next_push_stream
+            .checked_add(2)
+            .ok_or("HTTP/2 promised stream id exhausted")?;
         let block = self.codec.encode(request_headers)?;
         if block.len() > MAX_INCOMING_FRAME {
             return Err("HTTP/2 PUSH_PROMISE header block too large".to_string());
@@ -450,21 +564,45 @@ impl Conn {
         payload.extend_from_slice(&promised.to_be_bytes());
         payload.extend_from_slice(&block[..first_len]);
         let remaining = &block[first_len..];
-        write_frame(io, PUSH_PROMISE, if remaining.is_empty() { END_HEADERS } else { 0 }, parent_stream, &payload)?;
+        write_frame(
+            io,
+            PUSH_PROMISE,
+            if remaining.is_empty() { END_HEADERS } else { 0 },
+            parent_stream,
+            &payload,
+        )?;
         for (index, chunk) in remaining.chunks(self.max_frame.max(1)).enumerate() {
             let is_last = (index + 1) * self.max_frame >= remaining.len();
-            write_frame(io, CONTINUATION, if is_last { END_HEADERS } else { 0 }, parent_stream, chunk)?;
+            write_frame(
+                io,
+                CONTINUATION,
+                if is_last { END_HEADERS } else { 0 },
+                parent_stream,
+                chunk,
+            )?;
         }
         Ok(promised)
     }
 
     /// Sends a header block, splitting it into HEADERS + CONTINUATION frames if needed.
-    pub fn send_headers(&mut self, io: &mut dyn Io, stream: u32, headers: &[(String, String)], end_stream: bool) -> Result<(), String> {
+    pub fn send_headers(
+        &mut self,
+        io: &mut dyn Io,
+        stream: u32,
+        headers: &[(String, String)],
+        end_stream: bool,
+    ) -> Result<(), String> {
         let block = self.codec.encode(headers)?;
         let mut chunks = block.chunks(self.max_frame.max(1)).peekable();
         let mut first = true;
         if block.is_empty() {
-            return write_frame(io, HEADERS, END_HEADERS | if end_stream { END_STREAM } else { 0 }, stream, &[]);
+            return write_frame(
+                io,
+                HEADERS,
+                END_HEADERS | if end_stream { END_STREAM } else { 0 },
+                stream,
+                &[],
+            );
         }
         while let Some(chunk) = chunks.next() {
             let last = chunks.peek().is_none();
@@ -476,7 +614,13 @@ impl Conn {
                 write_frame(io, HEADERS, flags, stream, chunk)?;
                 first = false;
             } else {
-                write_frame(io, CONTINUATION, if last { END_HEADERS } else { 0 }, stream, chunk)?;
+                write_frame(
+                    io,
+                    CONTINUATION,
+                    if last { END_HEADERS } else { 0 },
+                    stream,
+                    chunk,
+                )?;
             }
         }
         Ok(())
@@ -484,7 +628,13 @@ impl Conn {
 
     /// Sends a body, respecting the peer's connection and stream flow-control windows. While
     /// both windows are exhausted it keeps reading frames (to receive WINDOW_UPDATE).
-    pub fn send_data(&mut self, io: &mut dyn Io, stream: u32, data: &[u8], end_stream: bool) -> Result<(), String> {
+    pub fn send_data(
+        &mut self,
+        io: &mut dyn Io,
+        stream: u32,
+        data: &[u8],
+        end_stream: bool,
+    ) -> Result<(), String> {
         if data.is_empty() {
             if end_stream {
                 write_frame(io, DATA, END_STREAM, stream, &[])?;
@@ -504,7 +654,13 @@ impl Conn {
             }
             let n = (allowed as usize).min(data.len() - sent);
             let last = sent + n == data.len();
-            write_frame(io, DATA, if last && end_stream { END_STREAM } else { 0 }, stream, &data[sent..sent + n])?;
+            write_frame(
+                io,
+                DATA,
+                if last && end_stream { END_STREAM } else { 0 },
+                stream,
+                &data[sent..sent + n],
+            )?;
             self.conn_send -= n as i64;
             *self.window_for(stream) -= n as i64;
             sent += n;
@@ -514,11 +670,23 @@ impl Conn {
 }
 
 fn is_connection_specific(name: &str) -> bool {
-    matches!(name, "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" | "host" | "content-length")
+    matches!(
+        name,
+        "connection"
+            | "keep-alive"
+            | "proxy-connection"
+            | "transfer-encoding"
+            | "upgrade"
+            | "host"
+            | "content-length"
+    )
 }
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+    headers
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
 }
 
 // ---------------------------------------------------------------------------
@@ -545,18 +713,36 @@ pub struct ClientSession<'a> {
 }
 
 impl<'a> ClientSession<'a> {
-    pub fn new(io: &'a mut dyn Io, scheme: &str, authority: &str, enable_push: bool) -> Result<ClientSession<'a>, String> {
-        io.write_all(PREFACE).map_err(|e| format!("HTTP/2 write: {}", e))?;
+    pub fn new(
+        io: &'a mut dyn Io,
+        scheme: &str,
+        authority: &str,
+        enable_push: bool,
+    ) -> Result<ClientSession<'a>, String> {
+        io.write_all(PREFACE)
+            .map_err(|e| format!("HTTP/2 write: {}", e))?;
         let mut settings = Vec::with_capacity(6);
         settings.extend_from_slice(&[0, 2]); // SETTINGS_ENABLE_PUSH
         settings.extend_from_slice(&(if enable_push { 1u32 } else { 0u32 }).to_be_bytes());
         write_frame(io, SETTINGS, 0, 0, &settings)?;
         let mut conn = Conn::new();
         conn.peer_push_enabled = enable_push;
-        Ok(ClientSession { io, conn, next_stream: 1, scheme: scheme.to_string(), authority: authority.to_string() })
+        Ok(ClientSession {
+            io,
+            conn,
+            next_stream: 1,
+            scheme: scheme.to_string(),
+            authority: authority.to_string(),
+        })
     }
 
-    pub fn send_request(&mut self, method: &str, path: &str, headers: &[(String, String)], body: &[u8]) -> Result<u32, String> {
+    pub fn send_request(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<u32, String> {
         if self.next_stream > 0x7fff_fffd {
             return Err("HTTP/2 client stream id space exhausted".to_string());
         }
@@ -566,28 +752,60 @@ impl<'a> ClientSession<'a> {
             (":method".into(), method.to_ascii_uppercase()),
             (":scheme".into(), self.scheme.clone()),
             (":authority".into(), self.authority.clone()),
-            (":path".into(), if path.is_empty() { "/".to_string() } else { path.to_string() }),
+            (
+                ":path".into(),
+                if path.is_empty() {
+                    "/".to_string()
+                } else {
+                    path.to_string()
+                },
+            ),
         ];
         let mut has_agent = false;
         for (k, v) in headers {
             let name = k.to_ascii_lowercase();
-            if is_connection_specific(&name) || name == "te" { continue; }
-            if name == "user-agent" { has_agent = true; }
+            if is_connection_specific(&name) || name == "te" {
+                continue;
+            }
+            if name == "user-agent" {
+                has_agent = true;
+            }
             list.push((name, v.clone()));
         }
-        if !has_agent { list.push(("user-agent".into(), "fusion/0.3".into())); }
-        if !body.is_empty() || matches!(method.to_ascii_uppercase().as_str(), "POST" | "PUT" | "PATCH") {
+        if !has_agent {
+            list.push(("user-agent".into(), "fusion/0.3".into()));
+        }
+        if !body.is_empty()
+            || matches!(
+                method.to_ascii_uppercase().as_str(),
+                "POST" | "PUT" | "PATCH"
+            )
+        {
             list.push(("content-length".into(), body.len().to_string()));
         }
-        self.conn.send_headers(self.io, stream, &list, body.is_empty())?;
-        if !body.is_empty() { self.conn.send_data(self.io, stream, body, true)?; }
+        self.conn
+            .send_headers(self.io, stream, &list, body.is_empty())?;
+        if !body.is_empty() {
+            self.conn.send_data(self.io, stream, body, true)?;
+        }
         Ok(stream)
     }
 
     fn into_response(message: Message) -> Result<Response, String> {
-        let status: i64 = header(&message.headers, ":status").and_then(|s| s.parse().ok()).ok_or("HTTP/2 response has no :status")?;
-        let headers = message.headers.into_iter().filter(|(k, _)| !k.starts_with(':')).collect();
-        Ok(Response { stream: message.stream, status, headers, body: message.body })
+        let status: i64 = header(&message.headers, ":status")
+            .and_then(|s| s.parse().ok())
+            .ok_or("HTTP/2 response has no :status")?;
+        let headers = message
+            .headers
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with(':'))
+            .collect();
+        Ok(Response {
+            stream: message.stream,
+            status,
+            headers,
+            body: message.body,
+        })
     }
 
     /// Waits for one specific stream. Other completed responses remain queued.
@@ -601,7 +819,10 @@ impl<'a> ClientSession<'a> {
                 return Err(format!("HTTP/2 stream reset by peer (error code {})", code));
             }
             if let Some(code) = self.conn.goaway {
-                return Err(format!("HTTP/2 connection closed by peer (GOAWAY, error code {})", code));
+                return Err(format!(
+                    "HTTP/2 connection closed by peer (GOAWAY, error code {})",
+                    code
+                ));
             }
             self.conn.pump(self.io)?;
         }
@@ -615,7 +836,10 @@ impl<'a> ClientSession<'a> {
                 return Self::into_response(message);
             }
             if let Some(code) = self.conn.goaway {
-                return Err(format!("HTTP/2 connection closed by peer (GOAWAY, error code {})", code));
+                return Err(format!(
+                    "HTTP/2 connection closed by peer (GOAWAY, error code {})",
+                    code
+                ));
             }
             self.conn.pump(self.io)?;
         }
@@ -675,7 +899,9 @@ pub struct ServerResponse {
 }
 
 fn to_request(message: &Message) -> Result<Request, String> {
-    let method = header(&message.headers, ":method").ok_or("request has no :method")?.to_string();
+    let method = header(&message.headers, ":method")
+        .ok_or("request has no :method")?
+        .to_string();
     let target = header(&message.headers, ":path").ok_or("request has no :path")?;
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p.to_string(), q.to_string()),
@@ -685,9 +911,18 @@ fn to_request(message: &Message) -> Result<Request, String> {
         method,
         path,
         query,
-        scheme: header(&message.headers, ":scheme").unwrap_or("http").to_string(),
-        authority: header(&message.headers, ":authority").unwrap_or("").to_string(),
-        headers: message.headers.iter().filter(|(k, _)| !k.starts_with(':')).cloned().collect(),
+        scheme: header(&message.headers, ":scheme")
+            .unwrap_or("http")
+            .to_string(),
+        authority: header(&message.headers, ":authority")
+            .unwrap_or("")
+            .to_string(),
+        headers: message
+            .headers
+            .iter()
+            .filter(|(k, _)| !k.starts_with(':'))
+            .cloned()
+            .collect(),
         body: message.body.clone(),
     })
 }
@@ -714,12 +949,18 @@ fn reply_headers(reply: &Reply) -> HeaderList {
 
 /// Serves one HTTP/2 connection without server push.
 pub fn serve(io: &mut dyn Io, on_request: &mut dyn FnMut(Request) -> Reply) -> Result<(), String> {
-    serve_with_push(io, &mut |request| ServerResponse { reply: on_request(request), pushes: Vec::new() })
+    serve_with_push(io, &mut |request| ServerResponse {
+        reply: on_request(request),
+        pushes: Vec::new(),
+    })
 }
 
 /// Serves one HTTP/2 connection and emits explicitly requested server pushes.
 /// The application must only push resources that are safe and useful for the requesting client.
-pub fn serve_with_push(io: &mut dyn Io, on_request: &mut dyn FnMut(Request) -> ServerResponse) -> Result<(), String> {
+pub fn serve_with_push(
+    io: &mut dyn Io,
+    on_request: &mut dyn FnMut(Request) -> ServerResponse,
+) -> Result<(), String> {
     let mut preface = [0u8; 24];
     io.read_exact(&mut preface).map_err(read_error)?;
     if preface != PREFACE {
@@ -732,13 +973,19 @@ pub fn serve_with_push(io: &mut dyn Io, on_request: &mut dyn FnMut(Request) -> S
             let response = match to_request(&message) {
                 Ok(request) => on_request(request),
                 Err(e) => ServerResponse {
-                    reply: Reply { status: 400, headers: Vec::new(), body: e.into_bytes() },
+                    reply: Reply {
+                        status: 400,
+                        headers: Vec::new(),
+                        body: e.into_bytes(),
+                    },
                     pushes: Vec::new(),
                 },
             };
             for push in response.pushes {
                 let promised = conn.send_push_promise(io, message.stream, &push.request_headers)?;
-                let push_no_body = push.reply.status == 204 || push.reply.status == 304 || push.reply.body.is_empty();
+                let push_no_body = push.reply.status == 204
+                    || push.reply.status == 304
+                    || push.reply.body.is_empty();
                 conn.send_headers(io, promised, &reply_headers(&push.reply), push_no_body)?;
                 if !push_no_body {
                     conn.send_data(io, promised, &push.reply.body, true)?;
@@ -790,34 +1037,81 @@ mod frame_tests {
 
     #[test]
     fn frame_round_trip() {
-        let mut pipe = Pipe { input: Cursor::new(Vec::new()), output: Vec::new() };
+        let mut pipe = Pipe {
+            input: Cursor::new(Vec::new()),
+            output: Vec::new(),
+        };
         write_frame(&mut pipe, PING, 0, 0, b"12345678").unwrap();
-        let mut reader = Pipe { input: Cursor::new(pipe.output.clone()), output: Vec::new() };
+        let mut reader = Pipe {
+            input: Cursor::new(pipe.output.clone()),
+            output: Vec::new(),
+        };
         let frame = read_frame(&mut reader).unwrap();
-        assert_eq!(frame, Frame { kind: PING, flags: 0, stream: 0, payload: b"12345678".to_vec() });
+        assert_eq!(
+            frame,
+            Frame {
+                kind: PING,
+                flags: 0,
+                stream: 0,
+                payload: b"12345678".to_vec()
+            }
+        );
         assert_eq!(&pipe.output[..9], &[0, 0, 8, 6, 0, 0, 0, 0, 0]);
     }
 
     #[test]
     fn settings_are_acknowledged_and_windows_adjusted() {
         let mut conn = Conn::new();
-        let mut pipe = Pipe { input: Cursor::new(Vec::new()), output: Vec::new() };
+        let mut pipe = Pipe {
+            input: Cursor::new(Vec::new()),
+            output: Vec::new(),
+        };
         // INITIAL_WINDOW_SIZE = 100, MAX_FRAME_SIZE = 32768.
         let payload = [0, 4, 0, 0, 0, 100, 0, 5, 0, 0, 0x80, 0];
-        conn.handle(&mut pipe, Frame { kind: SETTINGS, flags: 0, stream: 0, payload: payload.to_vec() }).unwrap();
+        conn.handle(
+            &mut pipe,
+            Frame {
+                kind: SETTINGS,
+                flags: 0,
+                stream: 0,
+                payload: payload.to_vec(),
+            },
+        )
+        .unwrap();
         assert_eq!(conn.initial_send, 100);
         assert_eq!(conn.max_frame, 32768);
         assert_eq!(&pipe.output[3..5], &[SETTINGS, ACK]);
         // A WINDOW_UPDATE of 50 on a new stream adds to the new initial window.
-        conn.handle(&mut pipe, Frame { kind: WINDOW_UPDATE, flags: 0, stream: 3, payload: 50u32.to_be_bytes().to_vec() }).unwrap();
+        conn.handle(
+            &mut pipe,
+            Frame {
+                kind: WINDOW_UPDATE,
+                flags: 0,
+                stream: 3,
+                payload: 50u32.to_be_bytes().to_vec(),
+            },
+        )
+        .unwrap();
         assert_eq!(*conn.window_for(3), 150);
     }
 
     #[test]
     fn ping_is_echoed_with_ack() {
         let mut conn = Conn::new();
-        let mut pipe = Pipe { input: Cursor::new(Vec::new()), output: Vec::new() };
-        conn.handle(&mut pipe, Frame { kind: PING, flags: 0, stream: 0, payload: b"abcdefgh".to_vec() }).unwrap();
+        let mut pipe = Pipe {
+            input: Cursor::new(Vec::new()),
+            output: Vec::new(),
+        };
+        conn.handle(
+            &mut pipe,
+            Frame {
+                kind: PING,
+                flags: 0,
+                stream: 0,
+                payload: b"abcdefgh".to_vec(),
+            },
+        )
+        .unwrap();
         assert_eq!(pipe.output[4], ACK);
         assert_eq!(&pipe.output[9..], b"abcdefgh");
     }
@@ -828,13 +1122,21 @@ mod frame_tests {
         let mut conn = Conn::new();
         conn.conn_send = 10;
         let mut updates = Vec::new();
-        let mut wire = Pipe { input: Cursor::new(Vec::new()), output: Vec::new() };
+        let mut wire = Pipe {
+            input: Cursor::new(Vec::new()),
+            output: Vec::new(),
+        };
         write_frame(&mut wire, WINDOW_UPDATE, 0, 0, &20u32.to_be_bytes()).unwrap();
         updates.extend_from_slice(&wire.output);
-        let mut io = Pipe { input: Cursor::new(updates), output: Vec::new() };
+        let mut io = Pipe {
+            input: Cursor::new(updates),
+            output: Vec::new(),
+        };
         conn.send_data(&mut io, 1, &[7u8; 25], true).unwrap();
         // Two DATA frames: 10 bytes, then 15 bytes with END_STREAM.
-        let first_len = ((io.output[0] as usize) << 16) | ((io.output[1] as usize) << 8) | io.output[2] as usize;
+        let first_len = ((io.output[0] as usize) << 16)
+            | ((io.output[1] as usize) << 8)
+            | io.output[2] as usize;
         assert_eq!(first_len, 10);
         let second = &io.output[9 + 10..];
         assert_eq!(second[4], END_STREAM);
@@ -845,7 +1147,10 @@ mod frame_tests {
     #[test]
     fn without_the_feature_header_compression_reports_how_to_enable_it() {
         let mut codec = Codec::new();
-        assert!(codec.encode(&[(":method".into(), "GET".into())]).unwrap_err().contains("--features http2"));
+        assert!(codec
+            .encode(&[(":method".into(), "GET".into())])
+            .unwrap_err()
+            .contains("--features http2"));
     }
 }
 
@@ -890,7 +1195,11 @@ mod loopback_tests {
         let server = thread::spawn(move || {
             let (mut tcp, _) = listener.accept().unwrap();
             let mut handler = |_req: Request| ServerResponse {
-                reply: Reply { status: 200, headers: Vec::new(), body: b"html".to_vec() },
+                reply: Reply {
+                    status: 200,
+                    headers: Vec::new(),
+                    body: b"html".to_vec(),
+                },
                 pushes: vec![Push {
                     request_headers: vec![
                         (":method".into(), "GET".into()),
@@ -898,7 +1207,11 @@ mod loopback_tests {
                         (":authority".into(), "localhost".into()),
                         (":path".into(), "/app.css".into()),
                     ],
-                    reply: Reply { status: 200, headers: vec![("content-type".into(), "text/css".into())], body: b"body{}".to_vec() },
+                    reply: Reply {
+                        status: 200,
+                        headers: vec![("content-type".into(), "text/css".into())],
+                        body: b"body{}".to_vec(),
+                    },
                 }],
             };
             serve_with_push(&mut tcp, &mut handler).unwrap();
@@ -933,9 +1246,21 @@ mod loopback_tests {
         });
         let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let body = vec![b'x'; 200_000];
-        let response = client_request(&mut tcp, "http", "localhost", "POST", "/upload?a=1", &[], &body).unwrap();
+        let response = client_request(
+            &mut tcp,
+            "http",
+            "localhost",
+            "POST",
+            "/upload?a=1",
+            &[],
+            &body,
+        )
+        .unwrap();
         assert_eq!(response.status, 200);
-        assert_eq!(String::from_utf8(response.body).unwrap(), "/upload:a=1:200000");
+        assert_eq!(
+            String::from_utf8(response.body).unwrap(),
+            "/upload:a=1:200000"
+        );
         assert_eq!(header(&response.headers, "x-method"), Some("POST"));
         drop(tcp);
         server.join().unwrap();

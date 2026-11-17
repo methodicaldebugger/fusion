@@ -16,19 +16,27 @@ pub fn path_join(a: &str, b: &str) -> String {
 }
 
 pub fn path_parent(p: &str) -> Option<String> {
-    Path::new(p).parent().map(|x| x.to_string_lossy().into_owned())
+    Path::new(p)
+        .parent()
+        .map(|x| x.to_string_lossy().into_owned())
 }
 
 pub fn path_file_name(p: &str) -> Option<String> {
-    Path::new(p).file_name().map(|x| x.to_string_lossy().into_owned())
+    Path::new(p)
+        .file_name()
+        .map(|x| x.to_string_lossy().into_owned())
 }
 
 pub fn path_extension(p: &str) -> Option<String> {
-    Path::new(p).extension().map(|x| x.to_string_lossy().into_owned())
+    Path::new(p)
+        .extension()
+        .map(|x| x.to_string_lossy().into_owned())
 }
 
 pub fn path_stem(p: &str) -> Option<String> {
-    Path::new(p).file_stem().map(|x| x.to_string_lossy().into_owned())
+    Path::new(p)
+        .file_stem()
+        .map(|x| x.to_string_lossy().into_owned())
 }
 
 pub fn path_is_absolute(p: &str) -> bool {
@@ -45,7 +53,10 @@ pub fn path_normalize(p: &str) -> String {
                 let can_pop = matches!(out.components().next_back(), Some(Component::Normal(_)));
                 if can_pop {
                     out.pop();
-                } else if !matches!(out.components().next_back(), Some(Component::RootDir) | Some(Component::Prefix(_))) {
+                } else if !matches!(
+                    out.components().next_back(),
+                    Some(Component::RootDir) | Some(Component::Prefix(_))
+                ) {
                     out.push("..");
                 }
             }
@@ -80,7 +91,11 @@ pub fn file_size(p: &str) -> Result<i64, String> {
 }
 
 pub fn modified_time(p: &str) -> Result<i64, String> {
-    let t = io("modified_time", p, io("metadata", p, std::fs::metadata(p))?.modified())?;
+    let t = io(
+        "modified_time",
+        p,
+        io("metadata", p, std::fs::metadata(p))?.modified(),
+    )?;
     Ok(match t.duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
         Err(e) => -(e.duration().as_secs() as i64),
@@ -101,7 +116,14 @@ pub fn remove_dir(p: &str) -> Result<(), String> {
 }
 
 pub fn append_file(p: &str, text: &str) -> Result<(), String> {
-    let mut f = io("append_file", p, std::fs::OpenOptions::new().create(true).append(true).open(p))?;
+    let mut f = io(
+        "append_file",
+        p,
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p),
+    )?;
     io("append_file", p, f.write_all(text.as_bytes()))
 }
 
@@ -122,7 +144,11 @@ pub fn walk_dir(root: &str) -> Result<Vec<String>, String> {
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             let path = entry.path();
-            let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().into_owned();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
             out.push(rel);
             let is_real_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             if is_real_dir {
@@ -137,7 +163,9 @@ pub fn walk_dir(root: &str) -> Result<Vec<String>, String> {
 }
 
 pub fn is_readonly(p: &str) -> Result<bool, String> {
-    Ok(io("is_readonly", p, std::fs::metadata(p))?.permissions().readonly())
+    Ok(io("is_readonly", p, std::fs::metadata(p))?
+        .permissions()
+        .readonly())
 }
 
 pub fn set_readonly(p: &str, readonly: bool) -> Result<(), String> {
@@ -151,7 +179,10 @@ pub fn file_mode(p: &str) -> Result<i64, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        Ok((io("file_mode", p, std::fs::metadata(p))?.permissions().mode() & 0o7777) as i64)
+        Ok((io("file_mode", p, std::fs::metadata(p))?
+            .permissions()
+            .mode()
+            & 0o7777) as i64)
     }
     #[cfg(not(unix))]
     {
@@ -164,7 +195,11 @@ pub fn set_file_mode(p: &str, mode: i64) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        io("set_file_mode", p, std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode as u32)))
+        io(
+            "set_file_mode",
+            p,
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode as u32)),
+        )
     }
     #[cfg(not(unix))]
     {
@@ -208,16 +243,32 @@ fn result_of(out: std::process::Output) -> ProcessResult {
 }
 
 /// Runs a program to completion and captures its output.
-pub fn process_output(program: &str, args: &[String], input: Option<&str>) -> Result<ProcessResult, String> {
+pub fn process_output(
+    program: &str,
+    args: &[String],
+    input: Option<&str>,
+) -> Result<ProcessResult, String> {
     let mut cmd = Command::new(program);
-    cmd.args(args).stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("cannot start '{}': {}", program, e))?;
+    cmd.args(args)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("cannot start '{}': {}", program, e))?;
     if let Some(text) = input {
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(text.as_bytes());
         }
     }
-    child.wait_with_output().map(result_of).map_err(|e| format!("waiting for '{}': {}", program, e))
+    child
+        .wait_with_output()
+        .map(result_of)
+        .map_err(|e| format!("waiting for '{}': {}", program, e))
 }
 
 /// Starts a program with piped stdin/stdout/stderr and returns a process handle.
@@ -236,14 +287,20 @@ pub fn process_spawn(program: &str, args: &[String]) -> Result<i64, String> {
 
 pub fn process_write(id: i64, text: &str) -> Result<(), String> {
     let mut map = processes().lock().unwrap();
-    let child = map.get_mut(&id).ok_or_else(|| format!("process {} does not exist", id))?;
+    let child = map
+        .get_mut(&id)
+        .ok_or_else(|| format!("process {} does not exist", id))?;
     let stdin = child.stdin.as_mut().ok_or("process stdin is closed")?;
-    stdin.write_all(text.as_bytes()).map_err(|e| format!("process_write: {}", e))
+    stdin
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("process_write: {}", e))
 }
 
 pub fn process_close_stdin(id: i64) -> Result<(), String> {
     let mut map = processes().lock().unwrap();
-    let child = map.get_mut(&id).ok_or_else(|| format!("process {} does not exist", id))?;
+    let child = map
+        .get_mut(&id)
+        .ok_or_else(|| format!("process {} does not exist", id))?;
     child.stdin.take();
     Ok(())
 }
@@ -251,14 +308,20 @@ pub fn process_close_stdin(id: i64) -> Result<(), String> {
 /// Non-blocking check: `Some(exit code)` if the process has finished.
 pub fn process_try_wait(id: i64) -> Result<Option<i64>, String> {
     let mut map = processes().lock().unwrap();
-    let child = map.get_mut(&id).ok_or_else(|| format!("process {} does not exist", id))?;
-    let status = child.try_wait().map_err(|e| format!("process_try_wait: {}", e))?;
+    let child = map
+        .get_mut(&id)
+        .ok_or_else(|| format!("process {} does not exist", id))?;
+    let status = child
+        .try_wait()
+        .map_err(|e| format!("process_try_wait: {}", e))?;
     Ok(status.map(|s| s.code().unwrap_or(-1) as i64))
 }
 
 pub fn process_kill(id: i64) -> Result<(), String> {
     let mut map = processes().lock().unwrap();
-    let child = map.get_mut(&id).ok_or_else(|| format!("process {} does not exist", id))?;
+    let child = map
+        .get_mut(&id)
+        .ok_or_else(|| format!("process {} does not exist", id))?;
     match child.kill() {
         Ok(()) => Ok(()),
         // Already exited.
@@ -270,9 +333,13 @@ pub fn process_kill(id: i64) -> Result<(), String> {
 /// Closes stdin, waits for the process to finish and returns its exit code and output.
 pub fn process_wait(id: i64) -> Result<ProcessResult, String> {
     let child = processes().lock().unwrap().remove(&id);
-    let mut child = child.ok_or_else(|| format!("process {} does not exist or was already waited for", id))?;
+    let mut child =
+        child.ok_or_else(|| format!("process {} does not exist or was already waited for", id))?;
     child.stdin.take();
-    child.wait_with_output().map(result_of).map_err(|e| format!("process_wait: {}", e))
+    child
+        .wait_with_output()
+        .map(result_of)
+        .map_err(|e| format!("process_wait: {}", e))
 }
 
 #[cfg(test)]
@@ -285,13 +352,20 @@ mod tests {
         assert_eq!(path_extension("a/b/c.tar.gz").as_deref(), Some("gz"));
         assert_eq!(path_stem("a/b/c.txt").as_deref(), Some("c"));
         assert_eq!(path_parent("a/b/c.txt").as_deref(), Some("a/b"));
-        assert_eq!(path_normalize("a/./b/../c"), Path::new("a").join("c").to_string_lossy());
-        assert_eq!(path_normalize("../x"), Path::new("..").join("x").to_string_lossy());
+        assert_eq!(
+            path_normalize("a/./b/../c"),
+            Path::new("a").join("c").to_string_lossy()
+        );
+        assert_eq!(
+            path_normalize("../x"),
+            Path::new("..").join("x").to_string_lossy()
+        );
         assert_eq!(path_normalize("."), ".");
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fusion_os_ext_{}_{}", std::process::id(), name));
+        let dir =
+            std::env::temp_dir().join(format!("fusion_os_ext_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

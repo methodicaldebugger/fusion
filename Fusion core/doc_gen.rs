@@ -27,11 +27,19 @@ fn doc_text(line: &str) -> Option<String> {
     if t.starts_with("////") {
         return None;
     }
-    Some(rest.strip_prefix(' ').unwrap_or(rest).trim_end().to_string())
+    Some(
+        rest.strip_prefix(' ')
+            .unwrap_or(rest)
+            .trim_end()
+            .to_string(),
+    )
 }
 
 fn ident(s: &str) -> String {
-    s.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
+    s.trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
 }
 
 /// Extracts module-level docs and documented/public items from source text.
@@ -44,7 +52,12 @@ pub fn extract(source: &str) -> (String, Vec<Item>) {
         let trimmed = raw.trim();
         let indented = raw.starts_with(' ') || raw.starts_with('\t');
         if let Some(rest) = trimmed.strip_prefix("//!") {
-            module_docs.push(rest.strip_prefix(' ').unwrap_or(rest).trim_end().to_string());
+            module_docs.push(
+                rest.strip_prefix(' ')
+                    .unwrap_or(rest)
+                    .trim_end()
+                    .to_string(),
+            );
             continue;
         }
         if let Some(text) = doc_text(raw) {
@@ -62,29 +75,54 @@ pub fn extract(source: &str) -> (String, Vec<Item>) {
             Some(r) => (true, r.trim_start()),
             None => (false, trimmed),
         };
-        let body = body.strip_prefix("async ").map(|r| format!("async {}", r)).unwrap_or_else(|| body.to_string());
+        let body = body
+            .strip_prefix("async ")
+            .map(|r| format!("async {}", r))
+            .unwrap_or_else(|| body.to_string());
         let bare = body.strip_prefix("async ").unwrap_or(&body).to_string();
-        let kind = ["fn", "struct", "enum", "trait", "impl", "const"].iter().find(|k| bare.starts_with(&format!("{} ", k)));
+        let kind = ["fn", "struct", "enum", "trait", "impl", "const"]
+            .iter()
+            .find(|k| bare.starts_with(&format!("{} ", k)));
         if !indented {
             container = None;
         }
         if let Some(kind) = kind {
             let after = bare[kind.len()..].trim_start();
-            let mut name = if *kind == "impl" { after.trim_end_matches(|c: char| c == ':' || c == '{').trim().to_string() } else { ident(after) };
+            let mut name = if *kind == "impl" {
+                after
+                    .trim_end_matches(|c: char| c == ':' || c == '{')
+                    .trim()
+                    .to_string()
+            } else {
+                ident(after)
+            };
             if (*kind == "impl" || *kind == "trait") && !indented {
-                container = Some(ident(after.trim_start_matches(|c: char| !c.is_alphanumeric())));
+                container = Some(ident(
+                    after.trim_start_matches(|c: char| !c.is_alphanumeric()),
+                ));
             } else if *kind == "fn" && indented {
                 if let Some(c) = &container {
                     name = format!("{}.{}", c, name);
                 }
             }
-            let signature = trimmed.trim_end_matches(|c: char| c == ':' || c == '{').trim().to_string();
+            let signature = trimmed
+                .trim_end_matches(|c: char| c == ':' || c == '{')
+                .trim()
+                .to_string();
             let documented = !pending.is_empty();
             if documented || public {
                 items.push(Item {
                     kind: kind.to_string(),
                     name,
-                    signature: format!("{}{}", if public && !signature.starts_with("pub ") { "pub " } else { "" }, signature),
+                    signature: format!(
+                        "{}{}",
+                        if public && !signature.starts_with("pub ") {
+                            "pub "
+                        } else {
+                            ""
+                        },
+                        signature
+                    ),
                     docs: pending.join("\n"),
                     public,
                 });
@@ -119,7 +157,10 @@ pub fn render_markdown(title: &str, module_docs: &str, items: &[Item]) -> String
         }
         out.push_str(&format!("## {}\n\n", section_title(kind)));
         for item in group {
-            out.push_str(&format!("### `{}`\n\n```fusion\n{}\n```\n\n", item.name, item.signature));
+            out.push_str(&format!(
+                "### `{}`\n\n```fusion\n{}\n```\n\n",
+                item.name, item.signature
+            ));
             if !item.docs.trim().is_empty() {
                 out.push_str(item.docs.trim());
                 out.push_str("\n\n");
@@ -130,7 +171,9 @@ pub fn render_markdown(title: &str, module_docs: &str, items: &[Item]) -> String
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn inline(s: &str) -> String {
@@ -163,7 +206,11 @@ pub fn markdown_to_html(md: &str) -> String {
                 out.push_str("</ul>\n");
                 in_list = false;
             }
-            out.push_str(if in_code { "</code></pre>\n" } else { "<pre><code>" });
+            out.push_str(if in_code {
+                "</code></pre>\n"
+            } else {
+                "<pre><code>"
+            });
             in_code = !in_code;
             continue;
         }
@@ -188,7 +235,11 @@ pub fn markdown_to_html(md: &str) -> String {
         let hashes = line.chars().take_while(|c| *c == '#').count();
         if (1..=4).contains(&hashes) && line[hashes..].starts_with(' ') {
             flush(&mut out, &mut paragraph);
-            out.push_str(&format!("<h{0}>{1}</h{0}>\n", hashes + 2, inline(line[hashes..].trim())));
+            out.push_str(&format!(
+                "<h{0}>{1}</h{0}>\n",
+                hashes + 2,
+                inline(line[hashes..].trim())
+            ));
         } else if line.trim().is_empty() {
             flush(&mut out, &mut paragraph);
         } else {
@@ -206,7 +257,11 @@ pub fn markdown_to_html(md: &str) -> String {
 }
 
 pub fn render_html(title: &str, module_docs: &str, items: &[Item]) -> String {
-    let mut body = format!("<h1>{}</h1>\n{}", escape(title), markdown_to_html(module_docs));
+    let mut body = format!(
+        "<h1>{}</h1>\n{}",
+        escape(title),
+        markdown_to_html(module_docs)
+    );
     for kind in ["struct", "enum", "trait", "impl", "fn", "const"] {
         let group: Vec<&Item> = items.iter().filter(|i| i.kind == kind).collect();
         if group.is_empty() {
@@ -214,7 +269,12 @@ pub fn render_html(title: &str, module_docs: &str, items: &[Item]) -> String {
         }
         body.push_str(&format!("<h2>{}</h2>\n", section_title(kind)));
         for item in group {
-            body.push_str(&format!("<h3 id=\"{0}\"><code>{0}</code></h3>\n<pre><code>{1}</code></pre>\n{2}", escape(&item.name), escape(&item.signature), markdown_to_html(&item.docs)));
+            body.push_str(&format!(
+                "<h3 id=\"{0}\"><code>{0}</code></h3>\n<pre><code>{1}</code></pre>\n{2}",
+                escape(&item.name),
+                escape(&item.signature),
+                markdown_to_html(&item.docs)
+            ));
         }
     }
     format!(
@@ -226,10 +286,16 @@ pub fn render_html(title: &str, module_docs: &str, items: &[Item]) -> String {
 
 fn collect_sources(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     if path.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(path).map_err(|e| format!("{}: {}", path.display(), e))?.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        let mut entries: Vec<_> = std::fs::read_dir(path)
+            .map_err(|e| format!("{}: {}", path.display(), e))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .collect();
         entries.sort();
         for p in entries {
-            let hidden = p.file_name().map_or(false, |n| n.to_string_lossy().starts_with('.') || n == "target");
+            let hidden = p.file_name().map_or(false, |n| {
+                n.to_string_lossy().starts_with('.') || n == "target"
+            });
             if !hidden {
                 collect_sources(&p, out)?;
             }
@@ -249,11 +315,18 @@ pub fn generate(path: &str, format: Format) -> Result<String, String> {
     }
     let mut md = String::new();
     let mut html_body = String::new();
-    let title = Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Fusion".to_string());
+    let title = Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Fusion".to_string());
     for file in &files {
-        let source = std::fs::read_to_string(file).map_err(|e| format!("{}: {}", file.display(), e))?;
+        let source =
+            std::fs::read_to_string(file).map_err(|e| format!("{}: {}", file.display(), e))?;
         let (module_docs, items) = extract(&source);
-        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         match format {
             Format::Markdown => md.push_str(&render_markdown(&name, &module_docs, &items)),
             Format::Html => html_body.push_str(&render_html(&name, &module_docs, &items)),

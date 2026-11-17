@@ -1,38 +1,59 @@
-//! Cloud build integration scaffold.
+//! Cloud build integration.
+//! contents of lib.rs
 
-pub const PLUGIN_ID: &str = "platform.cloud-builds";
+use std::path::PathBuf;
+use std::error::Error;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Executor {
-    Local,
-    Remote,
+pub mod cli;
+pub mod orchestrator;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CloudBuildConfig {
+    pub target_architecture: String,
+    pub language_plugin: String,
+    pub source_path: PathBuf,
+    pub optimization_level: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct BuildRequest<'a> {
-    pub project: &'a str,
-    pub executor: Executor,
-}
-
+#[derive(Serialize, Deserialize, Debug)]
 pub struct BuildResult {
     pub success: bool,
+    pub artifact_path: Option<PathBuf>,
+    pub logs: String,
+    pub execution_time_ms: u64,
 }
 
-pub fn execute(_request: BuildRequest<'_>) -> Result<BuildResult, &'static str> {
-    Err("cloud build execution is not implemented")
+pub struct CloudBuildPlugin {
+    endpoint: String,
+    api_token: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl CloudBuildPlugin {
+    /// Initialize the cloud build client with a remote runner endpoint and auth token.
+    pub fn new(endpoint: impl Into<String>, api_token: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            api_token: api_token.into(),
+        }
+    }
 
-    #[test]
-    fn cloud_execution_is_not_claimed_as_implemented() {
-        let request = BuildRequest {
-            project: "example",
-            executor: Executor::Remote,
-        };
+    /// Submits a remote build request to the cloud orchestrator infrastructure.
+    pub async fn execute_remote_build(&self, config: &CloudBuildConfig) -> Result<BuildResult, Box<dyn Error>> {
+        let client = reqwest::Client::new();
+        
+        let response = client
+            .post(format!("{}/v1/build", self.endpoint))
+            .bearer_auth(&self.api_token)
+            .json(config)
+            .send()
+            .await?;
 
-        assert!(execute(request).is_err());
+        if response.status().is_success() {
+            let result = response.json::<BuildResult>().await?;
+            Ok(result)
+        } else {
+            Err(format!("Cloud build failed with status code: {}", response.status()).into())
+        }
     }
 }

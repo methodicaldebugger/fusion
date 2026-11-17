@@ -2,7 +2,7 @@
 
 /*
 Lexer — breaks text into tokens
-The lexer, also called a scanner or tokenizer, reads the source code character by character 
+The lexer, also called a scanner or tokenizer, reads the source code character by character
 and groups characters into meaningful units called tokens.
 
 Example:
@@ -16,7 +16,7 @@ PLUS      "+"
 NUMBER    "20"
 SEMICOLON ";"
 
-The lexer typically doesn't care whether the expression makes sense. 
+The lexer typically doesn't care whether the expression makes sense.
 It just identifies the pieces.
 */
 
@@ -169,9 +169,12 @@ impl Lexer {
     /// `enum`, etc. Files without any block declarations default to indentation
     /// mode (the choice is immaterial until a block is introduced).
     fn detect_block_mode(source: &str) -> Result<BlockMode, LexError> {
-        for (line_no, line) in source.lines().enumerate() {
-            let trimmed = line.trim();
+        let lines: Vec<&str> = source.lines().collect();
+        let mut index = 0usize;
+        while index < lines.len() {
+            let trimmed = lines[index].trim();
             if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
+                index += 1;
                 continue;
             }
 
@@ -179,48 +182,80 @@ impl Lexer {
             let is_block_declaration = declaration.starts_with("main")
                 || declaration.starts_with("fn ")
                 || declaration.starts_with("async fn ")
-                || declaration.starts_with("struct ")
-                || declaration.starts_with("enum ")
                 || declaration.starts_with("trait ")
                 || declaration.starts_with("impl ");
-
             if !is_block_declaration {
+                index += 1;
                 continue;
             }
 
-            // Avoid treating identifiers such as `mainly` as the main keyword.
+            // `main:` / `main {` may put the delimiter immediately after the
+            // keyword. Do not mistake identifiers such as `mainly` for it.
             let rest = if let Some(rest) = declaration.strip_prefix("main") {
-                if rest.is_empty() || rest.starts_with(':') || rest.starts_with('{') || rest.chars().next().map(char::is_whitespace).unwrap_or(false) {
+                if rest.is_empty()
+                    || rest.starts_with(':')
+                    || rest.starts_with('{')
+                    || rest
+                        .chars()
+                        .next()
+                        .map(char::is_whitespace)
+                        .unwrap_or(false)
+                {
                     rest.trim_start()
                 } else {
+                    index += 1;
                     continue;
                 }
             } else {
                 declaration
             };
 
-            // Indentation-style declarations place the block colon at the
-            // end of the declaration (`fn name(...):`, `struct Name:`).
-            // The old check only looked for a colon at the beginning of
-            // `rest`, which works for `main:` but rejects every ordinary
-            // function/type declaration in indentation mode.
-            if rest.starts_with(':') || declaration.trim_end().ends_with(':') {
-                return Ok(BlockMode::Indentation);
+            // Function signatures may span several physical lines. Inspect the
+            // complete declaration header until its block delimiter is found;
+            // only an indented continuation may belong to this declaration.
+            let mut header = rest.trim_end().to_string();
+            let mut cursor = index;
+            loop {
+                let candidate = header.trim_end();
+                if candidate.ends_with(':') {
+                    return Ok(BlockMode::Indentation);
+                }
+                if candidate.contains('{') {
+                    // Inline trait/impl declarations may put their complete
+                    // contract body on the header line (`trait T { fn ... }`).
+                    return Ok(BlockMode::Braces);
+                }
+                cursor += 1;
+                if cursor >= lines.len() {
+                    break;
+                }
+                let next = lines[cursor];
+                let next_trimmed = next.trim();
+                if next_trimmed.is_empty()
+                    || next_trimmed.starts_with("//")
+                    || next_trimmed.starts_with('#')
+                {
+                    continue;
+                }
+                let aligned_continuation = next_trimmed.starts_with(')')
+                    || next_trimmed.starts_with("->")
+                    || next_trimmed.starts_with("where ")
+                    || next_trimmed == ":"
+                    || next_trimmed == "{";
+                if !next.starts_with(' ') && !next.starts_with('\t') && !aligned_continuation {
+                    break;
+                }
+                header.push(' ');
+                header.push_str(next_trimmed);
             }
 
-            // Brace-style declarations end with the opening brace. Keep the
-            // `main {` special case above, where `rest` starts with `{`.
-            if rest.starts_with('{') || declaration.trim_end().ends_with('{') {
-                return Ok(BlockMode::Braces);
-            }
             return Err(LexError {
                 message: "expected ':' or '{' to establish this file's block style".into(),
                 position: 0,
-                line: line_no + 1,
+                line: index + 1,
                 column: 1,
             });
         }
-
         Ok(BlockMode::Indentation)
     }
 
@@ -389,7 +424,7 @@ impl Lexer {
     }
 
     fn handle_indentation(&mut self) -> Result<(), LexError> {
-        if self.block_mode != BlockMode::Indentation {
+        if self.block_mode != BlockMode::Indentation || self.brace_depth > 0 {
             return Ok(());
         }
         let start = self.position;
@@ -575,25 +610,34 @@ impl Lexer {
                 }
 
                 '{' => {
-                    if self.block_mode != BlockMode::Braces {
-                        return self.error(
-                            "Braces are not allowed in indentation mode; use ':' for blocks",
-                        );
+                    // In indentation mode, permit braces for inline struct
+                    // declarations and named struct literals, but do not silently
+                    // accept brace-delimited executable blocks or multiline
+                    // brace-style struct declarations.
+                    if self.block_mode == BlockMode::Indentation && self.brace_depth == 0 {
+                        let prefix = self.input[..start].iter().collect::<String>();
+                        let line = prefix.rsplit('\n').next().unwrap_or("");
+                        let trimmed = line.trim();
+                        let inline_declaration = ["struct ", "trait ", "impl "]
+                            .iter().any(|prefix| trimmed.starts_with(prefix))
+                            && self.input[start..].iter().position(|c| *c == '}').is_some_and(|end| {
+                                !self.input[start..start + end].contains(&'\n')
+                            });
+                        let block_header = ["main", "fn ", "async fn ", "if ", "else", "while ", "for ", "match ", "trait ", "impl "]
+                            .iter().any(|prefix| trimmed.starts_with(prefix));
+                        let named_literal = !trimmed.starts_with("struct ")
+                            && !block_header
+                            && trimmed.chars().last().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
+                        if !inline_declaration && !named_literal {
+                            return self.error("Braces are not allowed in indentation mode; use ':' for blocks");
+                        }
                     }
-
                     self.advance();
                     self.brace_depth += 1;
-
                     return Ok(Spanned::new(Token::LeftBrace, start, self.position));
                 }
 
                 '}' => {
-                    if self.block_mode != BlockMode::Braces {
-                        return self.error(
-                            "Braces are not allowed in indentation mode; use ':' for blocks",
-                        );
-                    }
-
                     if self.brace_depth == 0 {
                         return self.error("Unexpected '}'");
                     }
@@ -658,6 +702,7 @@ impl Lexer {
                     //     fn identity<T>(value: T) -> T {
                     //
                     if self.block_mode == BlockMode::Braces
+                        && self.brace_depth == 0
                         && self.paren_depth == 0
                         && self.line_leading_keyword.is_some()
                     {
@@ -801,5 +846,40 @@ impl Lexer {
             }
         }
         Ok(tokens)
+    }
+}
+
+#[cfg(test)]
+mod multiline_block_header_tests {
+    use super::*;
+
+    #[test]
+    fn multiline_function_signature_establishes_indentation_mode() {
+        let source = "fn add(\n    left: num,\n    right: num\n) -> num:\n    return left + right\nmain:\n    print(add(1, 2))\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        assert!(lexer.tokenize().is_ok());
+    }
+
+
+    #[test]
+    fn inline_struct_braces_do_not_force_brace_block_mode() {
+        let source = "pub struct Point { x: num }\nfn get_x(point: Point) -> num:\n    return point.x\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        assert!(lexer.tokenize().is_ok());
+    }
+
+    #[test]
+    fn struct_literal_braces_are_allowed_in_indentation_mode() {
+        let source = "main:\n    point = Point { x: 1 }\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        assert!(lexer.tokenize().is_ok());
+    }
+
+
+    #[test]
+    fn struct_field_colons_are_allowed_inside_brace_mode() {
+        let source = "main {\n    print(1)\n}\nstruct Point { x: num }\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        assert!(lexer.tokenize().is_ok());
     }
 }

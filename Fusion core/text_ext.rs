@@ -243,7 +243,8 @@ impl ReParser {
             } else {
                 c
             };
-            if self.peek() == Some('-') && self.chars.get(self.pos + 1).map_or(false, |n| *n != ']') {
+            if self.peek() == Some('-') && self.chars.get(self.pos + 1).map_or(false, |n| *n != ']')
+            {
                 self.pos += 1;
                 let mut hi = self.peek().ok_or("unclosed character class")?;
                 self.pos += 1;
@@ -300,17 +301,30 @@ impl<'a> Matcher<'a> {
     fn class_matches(&self, items: &[ClassItem], negated: bool, c: char) -> bool {
         let mut hit = items.iter().any(|item| item_matches(item, c));
         if !hit && self.icase {
-            hit = c.to_lowercase().chain(c.to_uppercase()).any(|v| items.iter().any(|item| item_matches(item, v)));
+            hit = c
+                .to_lowercase()
+                .chain(c.to_uppercase())
+                .any(|v| items.iter().any(|item| item_matches(item, v)));
         }
         hit != negated
     }
 
-    fn m(&self, node: &Node, pos: usize, caps: &mut Caps, k: &mut dyn FnMut(usize, &mut Caps) -> bool) -> bool {
+    fn m(
+        &self,
+        node: &Node,
+        pos: usize,
+        caps: &mut Caps,
+        k: &mut dyn FnMut(usize, &mut Caps) -> bool,
+    ) -> bool {
         match node {
-            Node::Char(c) => pos < self.text.len() && self.same(self.text[pos], *c) && k(pos + 1, caps),
+            Node::Char(c) => {
+                pos < self.text.len() && self.same(self.text[pos], *c) && k(pos + 1, caps)
+            }
             Node::Any => pos < self.text.len() && self.text[pos] != '\n' && k(pos + 1, caps),
             Node::Class(items, negated) => {
-                pos < self.text.len() && self.class_matches(items, *negated, self.text[pos]) && k(pos + 1, caps)
+                pos < self.text.len()
+                    && self.class_matches(items, *negated, self.text[pos])
+                    && k(pos + 1, caps)
             }
             Node::Start => pos == 0 && k(pos, caps),
             Node::End => pos == self.text.len() && k(pos, caps),
@@ -349,15 +363,26 @@ impl<'a> Matcher<'a> {
                     ok
                 }
             },
-            Node::Repeat(inner, min, max, greedy) => self.rep(inner, *min, *max, *greedy, 0, pos, caps, k),
+            Node::Repeat(inner, min, max, greedy) => {
+                self.rep(inner, *min, *max, *greedy, 0, pos, caps, k)
+            }
         }
     }
 
-    fn concat(&self, items: &[Node], i: usize, pos: usize, caps: &mut Caps, k: &mut dyn FnMut(usize, &mut Caps) -> bool) -> bool {
+    fn concat(
+        &self,
+        items: &[Node],
+        i: usize,
+        pos: usize,
+        caps: &mut Caps,
+        k: &mut dyn FnMut(usize, &mut Caps) -> bool,
+    ) -> bool {
         if i == items.len() {
             return k(pos, caps);
         }
-        self.m(&items[i], pos, caps, &mut |p: usize, c: &mut Caps| self.concat(items, i + 1, p, c, &mut *k))
+        self.m(&items[i], pos, caps, &mut |p: usize, c: &mut Caps| {
+            self.concat(items, i + 1, p, c, &mut *k)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -406,24 +431,40 @@ impl Regex {
             Some(rest) => (rest, true),
             None => (pattern, false),
         };
-        let mut parser = ReParser { chars: body.chars().collect(), pos: 0, groups: 0 };
+        let mut parser = ReParser {
+            chars: body.chars().collect(),
+            pos: 0,
+            groups: 0,
+        };
         let root = parser.parse_alt()?;
         if parser.pos != parser.chars.len() {
             return Err("unmatched ')' in pattern".to_string());
         }
-        Ok(Regex { root, groups: parser.groups, icase })
+        Ok(Regex {
+            root,
+            groups: parser.groups,
+            icase,
+        })
     }
 
     /// Finds the leftmost match starting at or after `from`. Returns capture spans
     /// (index 0 is the whole match) in char positions.
     pub fn find_at(&self, text: &[char], from: usize) -> Option<Caps> {
-        let matcher = Matcher { text, icase: self.icase };
+        let matcher = Matcher {
+            text,
+            icase: self.icase,
+        };
         for start in from..=text.len() {
             let mut caps: Caps = vec![None; self.groups + 1];
-            let found = matcher.m(&self.root, start, &mut caps, &mut |end: usize, c: &mut Caps| {
-                c[0] = Some((start, end));
-                true
-            });
+            let found = matcher.m(
+                &self.root,
+                start,
+                &mut caps,
+                &mut |end: usize, c: &mut Caps| {
+                    c[0] = Some((start, end));
+                    true
+                },
+            );
             if found {
                 return Some(caps);
             }
@@ -438,7 +479,8 @@ impl Regex {
 
     pub fn find(&self, text: &str) -> Option<String> {
         let chars: Vec<char> = text.chars().collect();
-        self.find_at(&chars, 0).and_then(|caps| span_text(&chars, caps[0]))
+        self.find_at(&chars, 0)
+            .and_then(|caps| span_text(&chars, caps[0]))
     }
 
     pub fn find_all(&self, text: &str) -> Vec<String> {
@@ -446,7 +488,9 @@ impl Regex {
         let mut out = Vec::new();
         let mut from = 0;
         while from <= chars.len() {
-            let Some(caps) = self.find_at(&chars, from) else { break };
+            let Some(caps) = self.find_at(&chars, from) else {
+                break;
+            };
             let (s, e) = caps[0].unwrap_or((from, from));
             out.push(chars[s..e].iter().collect());
             from = if e == s { e + 1 } else { e };
@@ -458,7 +502,11 @@ impl Regex {
     pub fn captures(&self, text: &str) -> Option<Vec<Option<String>>> {
         let chars: Vec<char> = text.chars().collect();
         let caps = self.find_at(&chars, 0)?;
-        Some(caps.into_iter().map(|span| span_text(&chars, span)).collect())
+        Some(
+            caps.into_iter()
+                .map(|span| span_text(&chars, span))
+                .collect(),
+        )
     }
 
     /// Replaces all matches. `$0`..`$9` in `replacement` refer to capture groups; `$$` is a literal `$`.
@@ -468,7 +516,9 @@ impl Regex {
         let mut from = 0;
         let mut last = 0;
         while from <= chars.len() {
-            let Some(caps) = self.find_at(&chars, from) else { break };
+            let Some(caps) = self.find_at(&chars, from) else {
+                break;
+            };
             let (s, e) = caps[0].unwrap_or((from, from));
             out.extend(chars[last..s].iter());
             let rep: Vec<char> = replacement.chars().collect();
@@ -514,7 +564,9 @@ impl Regex {
         let mut from = 0;
         let mut last = 0;
         while from <= chars.len() {
-            let Some(caps) = self.find_at(&chars, from) else { break };
+            let Some(caps) = self.find_at(&chars, from) else {
+                break;
+            };
             let (s, e) = caps[0].unwrap_or((from, from));
             if e == s {
                 from = s + 1;
@@ -547,7 +599,8 @@ pub fn utf8_encode(text: &str) -> Vec<u8> {
 }
 
 pub fn utf8_decode(bytes: &[u8]) -> Result<String, String> {
-    String::from_utf8(bytes.to_vec()).map_err(|e| format!("invalid UTF-8 at byte {}", e.utf8_error().valid_up_to()))
+    String::from_utf8(bytes.to_vec())
+        .map_err(|e| format!("invalid UTF-8 at byte {}", e.utf8_error().valid_up_to()))
 }
 
 #[cfg(test)]
@@ -572,7 +625,9 @@ mod tests {
     fn find_and_captures() {
         assert_eq!(re(r"\d+").find("abc 123 def"), Some("123".to_string()));
         assert_eq!(re(r"\d+").find_all("1 22 333"), vec!["1", "22", "333"]);
-        let caps = re(r"(\w+)@(\w+)\.com").captures("mail bob@example.com now").unwrap();
+        let caps = re(r"(\w+)@(\w+)\.com")
+            .captures("mail bob@example.com now")
+            .unwrap();
         assert_eq!(caps[1].as_deref(), Some("bob"));
         assert_eq!(caps[2].as_deref(), Some("example"));
     }
@@ -588,7 +643,10 @@ mod tests {
 
     #[test]
     fn replace_and_split() {
-        assert_eq!(re(r"(\w+) (\w+)").replace_all("hello world", "$2 $1"), "world hello");
+        assert_eq!(
+            re(r"(\w+) (\w+)").replace_all("hello world", "$2 $1"),
+            "world hello"
+        );
         assert_eq!(re(r"\s+").split("a  b   c"), vec!["a", "b", "c"]);
         assert_eq!(re("x*").replace_all("abc", "-"), "-a-b-c-");
     }

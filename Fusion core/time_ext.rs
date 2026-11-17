@@ -3,9 +3,27 @@
 //! Named IANA time zones (e.g. `Europe/Ljubljana`) need a tz database and are not supported;
 //! use fixed offsets such as `+02:00`, `Z` or `UTC`.
 
-const WEEKDAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 const MONTHS: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
     "December",
 ];
 
@@ -83,17 +101,31 @@ pub fn parts(unix: i64, offset_minutes: i64) -> Parts {
 }
 
 /// Builds a Unix timestamp from calendar fields interpreted at the given offset.
-pub fn from_parts(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64, offset_minutes: i64) -> Result<i64, String> {
+pub fn from_parts(
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    offset_minutes: i64,
+) -> Result<i64, String> {
     if !(1..=12).contains(&month) {
         return Err(format!("month {} out of range", month));
     }
     if day < 1 || day > days_in_month(year, month) {
-        return Err(format!("day {} out of range for {}-{:02}", day, year, month));
+        return Err(format!(
+            "day {} out of range for {}-{:02}",
+            day, year, month
+        ));
     }
     if !(0..24).contains(&hour) || !(0..60).contains(&minute) || !(0..61).contains(&second) {
         return Err("time of day out of range".to_string());
     }
-    Ok(days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second - offset_minutes * 60)
+    Ok(
+        days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+            - offset_minutes * 60,
+    )
 }
 
 /// Adds calendar months, clamping the day to the target month's length.
@@ -103,19 +135,29 @@ pub fn add_months(unix: i64, months: i64, offset_minutes: i64) -> i64 {
     let year = total.div_euclid(12);
     let month = total.rem_euclid(12) + 1;
     let day = p.day.min(days_in_month(year, month));
-    days_from_civil(year, month, day) * 86400 + p.hour * 3600 + p.minute * 60 + p.second - offset_minutes * 60
+    days_from_civil(year, month, day) * 86400 + p.hour * 3600 + p.minute * 60 + p.second
+        - offset_minutes * 60
 }
 
 /// Parses `Z`, `UTC`, `GMT`, `+HH:MM`, `-HH:MM`, `+HHMM` or `+HH` into minutes east of UTC.
 pub fn parse_offset(text: &str) -> Result<i64, String> {
     let t = text.trim();
-    if t.is_empty() || t.eq_ignore_ascii_case("z") || t.eq_ignore_ascii_case("utc") || t.eq_ignore_ascii_case("gmt") {
+    if t.is_empty()
+        || t.eq_ignore_ascii_case("z")
+        || t.eq_ignore_ascii_case("utc")
+        || t.eq_ignore_ascii_case("gmt")
+    {
         return Ok(0);
     }
     let (sign, rest) = match t.chars().next() {
         Some('+') => (1, &t[1..]),
         Some('-') => (-1, &t[1..]),
-        _ => return Err(format!("unsupported time zone '{}': use UTC or a fixed offset like +02:00", text)),
+        _ => {
+            return Err(format!(
+                "unsupported time zone '{}': use UTC or a fixed offset like +02:00",
+                text
+            ))
+        }
     };
     let digits: String = rest.chars().filter(|c| *c != ':').collect();
     if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
@@ -123,7 +165,10 @@ pub fn parse_offset(text: &str) -> Result<i64, String> {
     }
     let (h, m) = match digits.len() {
         1 | 2 => (digits.parse::<i64>().unwrap_or(0), 0),
-        4 => (digits[..2].parse::<i64>().unwrap_or(0), digits[2..].parse::<i64>().unwrap_or(0)),
+        4 => (
+            digits[..2].parse::<i64>().unwrap_or(0),
+            digits[2..].parse::<i64>().unwrap_or(0),
+        ),
         _ => return Err(format!("invalid UTC offset '{}'", text)),
     };
     if h > 23 || m > 59 {
@@ -149,7 +194,12 @@ pub fn format(unix: i64, fmt: &str, offset_minutes: i64) -> String {
 
 /// Like `format`, but `%Z` prints `abbreviation` (for example `CEST`) when one is given, and
 /// `%:z` prints the offset with a colon (`+02:00`).
-pub fn format_with(unix: i64, fmt: &str, offset_minutes: i64, abbreviation: Option<&str>) -> String {
+pub fn format_with(
+    unix: i64,
+    fmt: &str,
+    offset_minutes: i64,
+    abbreviation: Option<&str>,
+) -> String {
     let p = parts(unix, offset_minutes);
     let mut out = String::new();
     let mut chars = fmt.chars();
@@ -165,7 +215,10 @@ pub fn format_with(unix: i64, fmt: &str, offset_minutes: i64, abbreviation: Opti
             Some('d') => out.push_str(&format!("{:02}", p.day)),
             Some('e') => out.push_str(&format!("{:2}", p.day)),
             Some('H') => out.push_str(&format!("{:02}", p.hour)),
-            Some('I') => out.push_str(&format!("{:02}", if p.hour % 12 == 0 { 12 } else { p.hour % 12 })),
+            Some('I') => out.push_str(&format!(
+                "{:02}",
+                if p.hour % 12 == 0 { 12 } else { p.hour % 12 }
+            )),
             Some('M') => out.push_str(&format!("{:02}", p.minute)),
             Some('S') => out.push_str(&format!("{:02}", p.second)),
             Some('p') => out.push_str(if p.hour < 12 { "AM" } else { "PM" }),
@@ -180,7 +233,11 @@ pub fn format_with(unix: i64, fmt: &str, offset_minutes: i64, abbreviation: Opti
             Some('z') => out.push_str(&format_offset(offset_minutes, false)),
             Some('Z') => match abbreviation {
                 Some(name) if !name.is_empty() => out.push_str(name),
-                _ => out.push_str(&if offset_minutes == 0 { "UTC".to_string() } else { format_offset(offset_minutes, true) }),
+                _ => out.push_str(&if offset_minutes == 0 {
+                    "UTC".to_string()
+                } else {
+                    format_offset(offset_minutes, true)
+                }),
             },
             Some(':') => match chars.next() {
                 Some('z') => out.push_str(&format_offset(offset_minutes, true)),
@@ -205,7 +262,12 @@ pub fn format_with(unix: i64, fmt: &str, offset_minutes: i64, abbreviation: Opti
 /// `HH:MM[:SS[.fraction]]` and `Z` / `±HH:MM`. Returns Unix seconds in UTC.
 pub fn parse(text: &str) -> Result<i64, String> {
     let t = text.trim();
-    let bad = || format!("cannot parse '{}' as a date/time (expected e.g. 2026-10-31T12:30:00Z)", text);
+    let bad = || {
+        format!(
+            "cannot parse '{}' as a date/time (expected e.g. 2026-10-31T12:30:00Z)",
+            text
+        )
+    };
     let bytes: Vec<char> = t.chars().collect();
     if bytes.len() < 10 {
         return Err(bad());
@@ -272,7 +334,10 @@ mod tests {
     #[test]
     fn parts_weekday_and_offset() {
         let p = parts(0, 0);
-        assert_eq!((p.year, p.month, p.day, p.weekday, p.yday), (1970, 1, 1, 4, 1));
+        assert_eq!(
+            (p.year, p.month, p.day, p.weekday, p.yday),
+            (1970, 1, 1, 4, 1)
+        );
         let p = parts(0, 120);
         assert_eq!((p.hour, p.minute), (2, 0));
     }
@@ -281,7 +346,10 @@ mod tests {
     fn formatting() {
         // 2026-10-31T12:30:45Z
         let t = parse("2026-10-31T12:30:45Z").unwrap();
-        assert_eq!(format(t, "%Y-%m-%d %H:%M:%S %Z", 0), "2026-10-31 12:30:45 UTC");
+        assert_eq!(
+            format(t, "%Y-%m-%d %H:%M:%S %Z", 0),
+            "2026-10-31 12:30:45 UTC"
+        );
         assert_eq!(format(t, "%A, %d %B %Y", 0), "Saturday, 31 October 2026");
         assert_eq!(format(t, "%F %T %z", 120), "2026-10-31 14:30:45 +0200");
         assert_eq!(format(t, "%I:%M %p", 0), "12:30 PM");

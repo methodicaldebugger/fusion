@@ -5,9 +5,19 @@ The goal is not simply to "run the compiler on a server".
 A cloud build system should understand Fusion's build graph and provide
 reproducible remote execution.
 
-CLOUD BUILDS COULD BECOME MASSIVE AS THEY ENABLE FUSION DEVELOPERS TO AVOID INSTALLING MANY LOCAL ECOSYSTEM PLUGINS.
+CLOUD BUILDS COULD BECOME VITAL AS THEY ENABLE FUSION DEVELOPERS TO AVOID INSTALLING MANY LOCAL ECOSYSTEM PLUGINS.
 Instead the server has the ecosystem plugins, the developer just installs fusion(basic/vanilla) + cloud builds. 
 The developer may download or write millions of lines of foreign code and let's the server handle the ecosystem plugins.
+
+
+# Fusion Cloud Builds Plugin
+
+The Cloud Builds plugin enables Fusion projects to delegate heavy foreign compilation tasks (such as C/C++, Rust, or Swift toolchains) to isolated, managed remote build servers. 
+
+## Features
+- **Zero Local Footprint:** Eliminates the need to install heavy SDKs, compilers, or platform linkers locally.
+- **Orchestrator Integration:** Automatically hooked into Foundry's build pipeline via the toolchain manager.
+- **Reproducible Artifacts:** Guarantees consistent build outputs across different developer environments.
 
 ## Potential architecture
 

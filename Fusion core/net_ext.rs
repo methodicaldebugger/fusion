@@ -55,7 +55,12 @@ fn register(resource: Resource) -> i64 {
 }
 
 fn lookup(handle: i64) -> Result<Arc<Resource>, String> {
-    registry().lock().unwrap().get(&handle).cloned().ok_or_else(|| format!("invalid or closed network handle {}", handle))
+    registry()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| format!("invalid or closed network handle {}", handle))
 }
 
 pub fn close(handle: i64) -> Result<(), String> {
@@ -91,12 +96,14 @@ fn address(host: &str, port: i64) -> Result<std::net::SocketAddr, String> {
 // ---------------------------------------------------------------------------
 
 pub fn tcp_listen(host: &str, port: i64) -> Result<i64, String> {
-    let listener = TcpListener::bind(address(host, port)?).map_err(|e| format!("tcp_listen {}:{}: {}", host, port, e))?;
+    let listener = TcpListener::bind(address(host, port)?)
+        .map_err(|e| format!("tcp_listen {}:{}: {}", host, port, e))?;
     Ok(register(Resource::Listener(listener)))
 }
 
 pub fn tcp_connect(host: &str, port: i64) -> Result<i64, String> {
-    let stream = TcpStream::connect(address(host, port)?).map_err(|e| format!("tcp_connect {}:{}: {}", host, port, e))?;
+    let stream = TcpStream::connect(address(host, port)?)
+        .map_err(|e| format!("tcp_connect {}:{}: {}", host, port, e))?;
     Ok(register(Resource::Stream(stream)))
 }
 
@@ -117,7 +124,9 @@ pub fn tcp_read(handle: i64, max: i64) -> Result<String, String> {
     match &*res {
         Resource::Stream(s) => {
             let mut buf = vec![0u8; max.clamp(1, 1 << 24) as usize];
-            let n = (&*s).read(&mut buf).map_err(|e| format!("tcp_read: {}", e))?;
+            let n = (&*s)
+                .read(&mut buf)
+                .map_err(|e| format!("tcp_read: {}", e))?;
             Ok(String::from_utf8_lossy(&buf[..n]).into_owned())
         }
         _ => Err("tcp_read expects a stream handle".to_string()),
@@ -128,7 +137,9 @@ pub fn tcp_write(handle: i64, text: &str) -> Result<i64, String> {
     let res = lookup(handle)?;
     match &*res {
         Resource::Stream(s) => {
-            (&*s).write_all(text.as_bytes()).map_err(|e| format!("tcp_write: {}", e))?;
+            (&*s)
+                .write_all(text.as_bytes())
+                .map_err(|e| format!("tcp_write: {}", e))?;
             Ok(text.len() as i64)
         }
         _ => Err("tcp_write expects a stream handle".to_string()),
@@ -137,7 +148,11 @@ pub fn tcp_write(handle: i64, text: &str) -> Result<i64, String> {
 
 pub fn set_timeout(handle: i64, millis: i64) -> Result<(), String> {
     let res = lookup(handle)?;
-    let t = if millis <= 0 { None } else { Some(Duration::from_millis(millis as u64)) };
+    let t = if millis <= 0 {
+        None
+    } else {
+        Some(Duration::from_millis(millis as u64))
+    };
     match &*res {
         Resource::Stream(s) => {
             s.set_read_timeout(t).map_err(|e| e.to_string())?;
@@ -159,7 +174,9 @@ pub fn local_port(handle: i64) -> Result<i64, String> {
         Resource::Udp(u) => u.local_addr(),
         Resource::HttpServer(server) => return Ok(server.port as i64),
         Resource::Reply(_) => return Err("a pending reply has no local port".to_string()),
-        Resource::HttpClient(_) => return Err("an HTTP client session has no listening port".to_string()),
+        Resource::HttpClient(_) => {
+            return Err("an HTTP client session has no listening port".to_string())
+        }
     };
     addr.map(|a| a.port() as i64).map_err(|e| e.to_string())
 }
@@ -167,7 +184,10 @@ pub fn local_port(handle: i64) -> Result<i64, String> {
 pub fn peer_address(handle: i64) -> Result<String, String> {
     let res = lookup(handle)?;
     match &*res {
-        Resource::Stream(s) => s.peer_addr().map(|a| a.to_string()).map_err(|e| e.to_string()),
+        Resource::Stream(s) => s
+            .peer_addr()
+            .map(|a| a.to_string())
+            .map_err(|e| e.to_string()),
         _ => Err("peer_address expects a stream handle".to_string()),
     }
 }
@@ -177,14 +197,18 @@ pub fn peer_address(handle: i64) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 pub fn udp_bind(host: &str, port: i64) -> Result<i64, String> {
-    let socket = UdpSocket::bind(address(host, port)?).map_err(|e| format!("udp_bind {}:{}: {}", host, port, e))?;
+    let socket = UdpSocket::bind(address(host, port)?)
+        .map_err(|e| format!("udp_bind {}:{}: {}", host, port, e))?;
     Ok(register(Resource::Udp(socket)))
 }
 
 pub fn udp_send_to(handle: i64, host: &str, port: i64, text: &str) -> Result<i64, String> {
     let res = lookup(handle)?;
     match &*res {
-        Resource::Udp(u) => u.send_to(text.as_bytes(), address(host, port)?).map(|n| n as i64).map_err(|e| format!("udp_send_to: {}", e)),
+        Resource::Udp(u) => u
+            .send_to(text.as_bytes(), address(host, port)?)
+            .map(|n| n as i64)
+            .map_err(|e| format!("udp_send_to: {}", e)),
         _ => Err("udp_send_to expects a UDP handle".to_string()),
     }
 }
@@ -195,8 +219,13 @@ pub fn udp_recv_from(handle: i64, max: i64) -> Result<(String, String), String> 
     match &*res {
         Resource::Udp(u) => {
             let mut buf = vec![0u8; max.clamp(1, 65535) as usize];
-            let (n, from) = u.recv_from(&mut buf).map_err(|e| format!("udp_recv_from: {}", e))?;
-            Ok((String::from_utf8_lossy(&buf[..n]).into_owned(), from.to_string()))
+            let (n, from) = u
+                .recv_from(&mut buf)
+                .map_err(|e| format!("udp_recv_from: {}", e))?;
+            Ok((
+                String::from_utf8_lossy(&buf[..n]).into_owned(),
+                from.to_string(),
+            ))
         }
         _ => Err("udp_recv_from expects a UDP handle".to_string()),
     }
@@ -230,14 +259,22 @@ fn parse_head(raw: &[u8]) -> Result<Head, String> {
         if line.is_empty() {
             continue;
         }
-        let (name, value) = line.split_once(':').ok_or_else(|| format!("malformed header line '{}'", line))?;
+        let (name, value) = line
+            .split_once(':')
+            .ok_or_else(|| format!("malformed header line '{}'", line))?;
         headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
     }
-    Ok(Head { first_line, headers })
+    Ok(Head {
+        first_line,
+        headers,
+    })
 }
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+    headers
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
 }
 
 fn decode_chunked(mut data: &[u8]) -> Result<Vec<u8>, String> {
@@ -246,7 +283,8 @@ fn decode_chunked(mut data: &[u8]) -> Result<Vec<u8>, String> {
         let end = find_subslice(data, b"\r\n").ok_or("truncated chunked body")?;
         let size_text = String::from_utf8_lossy(&data[..end]).to_string();
         let size_hex = size_text.split(';').next().unwrap_or("").trim().to_string();
-        let size = usize::from_str_radix(&size_hex, 16).map_err(|_| "invalid chunk size".to_string())?;
+        let size =
+            usize::from_str_radix(&size_hex, 16).map_err(|_| "invalid chunk size".to_string())?;
         data = &data[end + 2..];
         if size == 0 {
             return Ok(out);
@@ -264,7 +302,10 @@ fn decode_chunked(mut data: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Reads one complete HTTP message (head + body). With `until_eof`, a body without a length
 /// is read until the peer closes the connection (responses); otherwise it is empty (requests).
-fn read_message<R: Read + ?Sized>(stream: &mut R, until_eof: bool) -> Result<(Head, Vec<u8>), String> {
+fn read_message<R: Read + ?Sized>(
+    stream: &mut R,
+    until_eof: bool,
+) -> Result<(Head, Vec<u8>), String> {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let head_end = loop {
@@ -274,7 +315,9 @@ fn read_message<R: Read + ?Sized>(stream: &mut R, until_eof: bool) -> Result<(He
         if buf.len() > MAX_HEAD {
             return Err("HTTP header section too large".to_string());
         }
-        let n = stream.read(&mut chunk).map_err(|e| format!("read: {}", e))?;
+        let n = stream
+            .read(&mut chunk)
+            .map_err(|e| format!("read: {}", e))?;
         if n == 0 {
             return Err("connection closed before the HTTP headers were complete".to_string());
         }
@@ -282,13 +325,16 @@ fn read_message<R: Read + ?Sized>(stream: &mut R, until_eof: bool) -> Result<(He
     };
     let head = parse_head(&buf[..head_end])?;
     let mut body: Vec<u8> = buf[head_end + 4..].to_vec();
-    let chunked = header(&head.headers, "transfer-encoding").map_or(false, |v| v.to_ascii_lowercase().contains("chunked"));
+    let chunked = header(&head.headers, "transfer-encoding")
+        .map_or(false, |v| v.to_ascii_lowercase().contains("chunked"));
     if chunked {
         loop {
             match decode_chunked(&body) {
                 Ok(decoded) => return Ok((head, decoded)),
                 Err(e) => {
-                    let n = stream.read(&mut chunk).map_err(|e| format!("read: {}", e))?;
+                    let n = stream
+                        .read(&mut chunk)
+                        .map_err(|e| format!("read: {}", e))?;
                     if n == 0 {
                         return Err(e);
                     }
@@ -301,12 +347,16 @@ fn read_message<R: Read + ?Sized>(stream: &mut R, until_eof: bool) -> Result<(He
         }
     }
     if let Some(len) = header(&head.headers, "content-length") {
-        let len: usize = len.parse().map_err(|_| "invalid Content-Length".to_string())?;
+        let len: usize = len
+            .parse()
+            .map_err(|_| "invalid Content-Length".to_string())?;
         if len > MAX_BODY {
             return Err("HTTP body too large".to_string());
         }
         while body.len() < len {
-            let n = stream.read(&mut chunk).map_err(|e| format!("read: {}", e))?;
+            let n = stream
+                .read(&mut chunk)
+                .map_err(|e| format!("read: {}", e))?;
             if n == 0 {
                 return Err("connection closed before the full HTTP body arrived".to_string());
             }
@@ -317,7 +367,9 @@ fn read_message<R: Read + ?Sized>(stream: &mut R, until_eof: bool) -> Result<(He
     }
     if until_eof {
         loop {
-            let n = stream.read(&mut chunk).map_err(|e| format!("read: {}", e))?;
+            let n = stream
+                .read(&mut chunk)
+                .map_err(|e| format!("read: {}", e))?;
             if n == 0 {
                 break;
             }
@@ -332,7 +384,12 @@ fn read_message<R: Read + ?Sized>(stream: &mut R, until_eof: bool) -> Result<(He
 }
 
 fn headers_to_data(headers: &[(String, String)]) -> Data {
-    Data::Map(headers.iter().map(|(k, v)| (k.clone(), Data::Str(v.clone()))).collect())
+    Data::Map(
+        headers
+            .iter()
+            .map(|(k, v)| (k.clone(), Data::Str(v.clone())))
+            .collect(),
+    )
 }
 
 fn reason_phrase(status: i64) -> &'static str {
@@ -392,8 +449,13 @@ struct Http1Stream {
 impl Http1Stream {
     fn read_more(&mut self) -> Result<bool, String> {
         let mut chunk = [0u8; 8192];
-        let n = self.io.read(&mut chunk).map_err(|e| format!("HTTP read: {}", e))?;
-        if n == 0 { return Ok(false); }
+        let n = self
+            .io
+            .read(&mut chunk)
+            .map_err(|e| format!("HTTP read: {}", e))?;
+        if n == 0 {
+            return Ok(false);
+        }
         self.buffered.extend_from_slice(&chunk[..n]);
         if self.buffered.len() > MAX_BODY + MAX_HEAD {
             return Err("HTTP response exceeds configured size limits".to_string());
@@ -403,37 +465,65 @@ impl Http1Stream {
 
     fn read_response(&mut self, method: &str) -> Result<Data, String> {
         let head_end = loop {
-            if let Some(end) = find_subslice(&self.buffered, b"\r\n\r\n") { break end; }
-            if self.buffered.len() > MAX_HEAD { return Err("HTTP response headers too large".to_string()); }
-            if !self.read_more()? { self.reusable = false; return Err("connection closed before HTTP response headers".to_string()); }
+            if let Some(end) = find_subslice(&self.buffered, b"\r\n\r\n") {
+                break end;
+            }
+            if self.buffered.len() > MAX_HEAD {
+                return Err("HTTP response headers too large".to_string());
+            }
+            if !self.read_more()? {
+                self.reusable = false;
+                return Err("connection closed before HTTP response headers".to_string());
+            }
         };
         let head = parse_head(&self.buffered[..head_end])?;
         self.buffered.drain(..head_end + 4);
         let mut parts = head.first_line.splitn(3, ' ');
         let version = parts.next().unwrap_or("HTTP/1.1").to_string();
-        let status: i64 = parts.next().unwrap_or("").parse().map_err(|_| format!("malformed status line '{}'", head.first_line))?;
+        let status: i64 = parts
+            .next()
+            .unwrap_or("")
+            .parse()
+            .map_err(|_| format!("malformed status line '{}'", head.first_line))?;
         let reason = parts.next().unwrap_or("").to_string();
         // Interim responses (100 Continue, 103 Early Hints) are not the final result.
         if (100..200).contains(&status) && status != 101 {
             return self.read_response(method);
         }
-        if status == 101 { self.reusable = false; }
-        let no_body = method.eq_ignore_ascii_case("HEAD") || (100..200).contains(&status) || status == 204 || status == 304;
+        if status == 101 {
+            self.reusable = false;
+        }
+        let no_body = method.eq_ignore_ascii_case("HEAD")
+            || (100..200).contains(&status)
+            || status == 204
+            || status == 304;
         let body = if no_body {
             Vec::new()
-        } else if header(&head.headers, "transfer-encoding").map_or(false, |v| v.to_ascii_lowercase().contains("chunked")) {
+        } else if header(&head.headers, "transfer-encoding")
+            .map_or(false, |v| v.to_ascii_lowercase().contains("chunked"))
+        {
             loop {
                 if let Some((decoded, consumed)) = decode_chunked_complete(&self.buffered)? {
                     self.buffered.drain(..consumed);
                     break decoded;
                 }
-                if !self.read_more()? { self.reusable = false; return Err("truncated chunked HTTP response".to_string()); }
+                if !self.read_more()? {
+                    self.reusable = false;
+                    return Err("truncated chunked HTTP response".to_string());
+                }
             }
         } else if let Some(length) = header(&head.headers, "content-length") {
-            let length: usize = length.parse().map_err(|_| "invalid response Content-Length".to_string())?;
-            if length > MAX_BODY { return Err("HTTP response body too large".to_string()); }
+            let length: usize = length
+                .parse()
+                .map_err(|_| "invalid response Content-Length".to_string())?;
+            if length > MAX_BODY {
+                return Err("HTTP response body too large".to_string());
+            }
             while self.buffered.len() < length {
-                if !self.read_more()? { self.reusable = false; return Err("connection closed before complete HTTP response body".to_string()); }
+                if !self.read_more()? {
+                    self.reusable = false;
+                    return Err("connection closed before complete HTTP response body".to_string());
+                }
             }
             self.buffered.drain(..length).collect()
         } else {
@@ -443,7 +533,8 @@ impl Http1Stream {
             std::mem::take(&mut self.buffered)
         };
         if header_has_token(&head.headers, "connection", "close")
-            || (version.eq_ignore_ascii_case("HTTP/1.0") && !header_has_token(&head.headers, "connection", "keep-alive"))
+            || (version.eq_ignore_ascii_case("HTTP/1.0")
+                && !header_has_token(&head.headers, "connection", "keep-alive"))
         {
             self.reusable = false;
         }
@@ -457,24 +548,35 @@ fn decode_chunked_complete(data: &[u8]) -> Result<Option<(Vec<u8>, usize)>, Stri
     let mut pos = 0usize;
     let mut out = Vec::new();
     loop {
-        let Some(line_end_rel) = find_subslice(&data[pos..], b"\r\n") else { return Ok(None) };
+        let Some(line_end_rel) = find_subslice(&data[pos..], b"\r\n") else {
+            return Ok(None);
+        };
         let line_end = pos + line_end_rel;
         let size_text = String::from_utf8_lossy(&data[pos..line_end]);
         let size_hex = size_text.split(';').next().unwrap_or("").trim();
-        let size = usize::from_str_radix(size_hex, 16).map_err(|_| "invalid chunk size".to_string())?;
+        let size =
+            usize::from_str_radix(size_hex, 16).map_err(|_| "invalid chunk size".to_string())?;
         pos = line_end + 2;
         if size == 0 {
             if data.len() >= pos + 2 && &data[pos..pos + 2] == b"\r\n" {
                 return Ok(Some((out, pos + 2)));
             }
-            let Some(trailer_end_rel) = find_subslice(&data[pos..], b"\r\n\r\n") else { return Ok(None) };
+            let Some(trailer_end_rel) = find_subslice(&data[pos..], b"\r\n\r\n") else {
+                return Ok(None);
+            };
             return Ok(Some((out, pos + trailer_end_rel + 4)));
         }
-        if out.len().saturating_add(size) > MAX_BODY { return Err("HTTP body too large".to_string()); }
-        if data.len() < pos.saturating_add(size).saturating_add(2) { return Ok(None); }
+        if out.len().saturating_add(size) > MAX_BODY {
+            return Err("HTTP body too large".to_string());
+        }
+        if data.len() < pos.saturating_add(size).saturating_add(2) {
+            return Ok(None);
+        }
         out.extend_from_slice(&data[pos..pos + size]);
         pos += size;
-        if &data[pos..pos + 2] != b"\r\n" { return Err("malformed chunk terminator".to_string()); }
+        if &data[pos..pos + 2] != b"\r\n" {
+            return Err("malformed chunk terminator".to_string());
+        }
         pos += 2;
     }
 }
@@ -487,7 +589,10 @@ fn parse_url(url: &str) -> Result<Url, String> {
     } else if let Some(r) = url.strip_prefix("h2c://") {
         ("h2c", r)
     } else {
-        return Err(format!("unsupported URL '{}': expected http://, https:// or h2c:// (HTTP/2 without TLS)", url));
+        return Err(format!(
+            "unsupported URL '{}': expected http://, https:// or h2c:// (HTTP/2 without TLS)",
+            url
+        ));
     };
     let (authority, target) = match rest.find(|c: char| c == '/' || c == '?') {
         Some(i) if rest.as_bytes()[i] == b'/' => (&rest[..i], rest[i..].to_string()),
@@ -500,33 +605,54 @@ fn parse_url(url: &str) -> Result<Url, String> {
     let default_port = if scheme == "https" { 443 } else { 80 };
     let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
         // IPv6 literal: [::1] or [::1]:8080
-        let (h, after) = inner.split_once(']').ok_or_else(|| "unterminated IPv6 address in URL".to_string())?;
+        let (h, after) = inner
+            .split_once(']')
+            .ok_or_else(|| "unterminated IPv6 address in URL".to_string())?;
         match after.strip_prefix(':') {
-            Some(p) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (h.to_string(), p.parse::<i64>().map_err(|_| "invalid port".to_string())?),
+            Some(p) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (
+                h.to_string(),
+                p.parse::<i64>().map_err(|_| "invalid port".to_string())?,
+            ),
             Some(_) => return Err("invalid port in URL".to_string()),
             None => (h.to_string(), default_port),
         }
     } else {
         match authority.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (h.to_string(), p.parse::<i64>().map_err(|_| "invalid port".to_string())?),
+            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (
+                h.to_string(),
+                p.parse::<i64>().map_err(|_| "invalid port".to_string())?,
+            ),
             _ => (authority.to_string(), default_port),
         }
     };
     if !valid_header_text(&host) || !valid_header_text(&target) || target.contains(' ') {
         return Err("URL contains illegal characters".to_string());
     }
-    Ok(Url { scheme: scheme.to_string(), host, port, target })
+    Ok(Url {
+        scheme: scheme.to_string(),
+        host,
+        port,
+        target,
+    })
 }
 
 /// Opens a persistent HTTP/1.1 client connection. HTTPS uses rustls with HTTP/1.1 ALPN.
 pub fn http_client_open(url: &str, timeout_ms: i64) -> Result<i64, String> {
     let u = parse_url(url)?;
-    if u.scheme == "h2c" { return Err("persistent HTTP/1.1 sessions do not support h2c URLs".to_string()); }
-    let timeout = Duration::from_millis(if timeout_ms <= 0 { 30_000 } else { timeout_ms as u64 });
+    if u.scheme == "h2c" {
+        return Err("persistent HTTP/1.1 sessions do not support h2c URLs".to_string());
+    }
+    let timeout = Duration::from_millis(if timeout_ms <= 0 {
+        30_000
+    } else {
+        timeout_ms as u64
+    });
     let tcp = TcpStream::connect_timeout(&address(&u.host, u.port)?, timeout)
         .map_err(|e| format!("connect {}:{}: {}", u.host, u.port, e))?;
-    tcp.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
-    tcp.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    tcp.set_read_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
+    tcp.set_write_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
     let io: BoxIo = if u.scheme == "https" {
         tls_ext::connect_tls(&u.host, tcp, false)?.stream
     } else {
@@ -534,12 +660,22 @@ pub fn http_client_open(url: &str, timeout_ms: i64) -> Result<i64, String> {
     };
     Ok(register(Resource::HttpClient(Arc::new(Http1Client {
         url: u,
-        io: Mutex::new(Http1Stream { io, buffered: Vec::new(), reusable: true }),
+        io: Mutex::new(Http1Stream {
+            io,
+            buffered: Vec::new(),
+            reusable: true,
+        }),
     }))))
 }
 
 /// Sends a request over an existing persistent HTTP/1.1 connection.
-pub fn http_client_request(handle: i64, method: &str, path: &str, headers: &[(String, String)], body: &str) -> Result<Data, String> {
+pub fn http_client_request(
+    handle: i64,
+    method: &str,
+    path: &str,
+    headers: &[(String, String)],
+    body: &str,
+) -> Result<Data, String> {
     if method.is_empty() || !method.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(format!("invalid HTTP method '{}'", method));
     }
@@ -547,48 +683,102 @@ pub fn http_client_request(handle: i64, method: &str, path: &str, headers: &[(St
         return Err("HTTP request path must be an absolute path beginning with '/' and contain no whitespace or line breaks".to_string());
     }
     check_headers(headers)?;
-    if headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("transfer-encoding")) {
+    if headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("transfer-encoding"))
+    {
         return Err("http_client_request manages message framing; Transfer-Encoding cannot be supplied manually".to_string());
     }
-    if let Some((_, value)) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-length")) {
-        let declared: usize = value.parse().map_err(|_| "invalid request Content-Length".to_string())?;
+    if let Some((_, value)) = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+    {
+        let declared: usize = value
+            .parse()
+            .map_err(|_| "invalid request Content-Length".to_string())?;
         if declared != body.as_bytes().len() {
             return Err("request Content-Length does not match the supplied body".to_string());
         }
     }
     let resource = lookup(handle)?;
-    let Resource::HttpClient(client) = &*resource else { return Err("http_client_request expects an HTTP client handle".to_string()) };
-    let mut session = client.io.lock().map_err(|_| "HTTP client connection lock poisoned".to_string())?;
-    if !session.reusable { return Err("HTTP client connection is no longer reusable; open a new session".to_string()); }
-    let authority = if (client.url.scheme == "https" && client.url.port == 443) || (client.url.scheme == "http" && client.url.port == 80) {
+    let Resource::HttpClient(client) = &*resource else {
+        return Err("http_client_request expects an HTTP client handle".to_string());
+    };
+    let mut session = client
+        .io
+        .lock()
+        .map_err(|_| "HTTP client connection lock poisoned".to_string())?;
+    if !session.reusable {
+        return Err("HTTP client connection is no longer reusable; open a new session".to_string());
+    }
+    let authority = if (client.url.scheme == "https" && client.url.port == 443)
+        || (client.url.scheme == "http" && client.url.port == 80)
+    {
         client.url.host.clone()
-    } else { format!("{}:{}", client.url.host, client.url.port) };
-    let mut request = format!("{} {} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nUser-Agent: fusion/0.3\r\n", method.to_ascii_uppercase(), path, authority);
+    } else {
+        format!("{}:{}", client.url.host, client.url.port)
+    };
+    let mut request = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nUser-Agent: fusion/0.3\r\n",
+        method.to_ascii_uppercase(),
+        path,
+        authority
+    );
     let mut has_length = false;
     for (key, value) in headers {
-        if key.eq_ignore_ascii_case("host") || key.eq_ignore_ascii_case("connection") { continue; }
-        if key.eq_ignore_ascii_case("content-length") { has_length = true; }
+        if key.eq_ignore_ascii_case("host") || key.eq_ignore_ascii_case("connection") {
+            continue;
+        }
+        if key.eq_ignore_ascii_case("content-length") {
+            has_length = true;
+        }
         request.push_str(&format!("{}: {}\r\n", key, value));
     }
-    if !has_length && (!body.is_empty() || matches!(method.to_ascii_uppercase().as_str(), "POST" | "PUT" | "PATCH")) {
+    if !has_length
+        && (!body.is_empty()
+            || matches!(
+                method.to_ascii_uppercase().as_str(),
+                "POST" | "PUT" | "PATCH"
+            ))
+    {
         request.push_str(&format!("Content-Length: {}\r\n", body.as_bytes().len()));
     }
     request.push_str("\r\n");
-    session.io.write_all(request.as_bytes()).map_err(|e| format!("HTTP request write: {}", e))?;
-    session.io.write_all(body.as_bytes()).map_err(|e| format!("HTTP request body write: {}", e))?;
-    session.io.flush().map_err(|e| format!("HTTP request flush: {}", e))?;
+    session
+        .io
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("HTTP request write: {}", e))?;
+    session
+        .io
+        .write_all(body.as_bytes())
+        .map_err(|e| format!("HTTP request body write: {}", e))?;
+    session
+        .io
+        .flush()
+        .map_err(|e| format!("HTTP request flush: {}", e))?;
     session.read_response(method)
 }
 
-pub fn http_client_close(handle: i64) -> Result<(), String> { close(handle) }
+pub fn http_client_close(handle: i64) -> Result<(), String> {
+    close(handle)
+}
 
-fn response_map(version: &str, status: i64, reason: String, headers: &[(String, String)], body: &[u8]) -> Data {
+fn response_map(
+    version: &str,
+    status: i64,
+    reason: String,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Data {
     Data::Map(vec![
         ("status".to_string(), Data::Int(status)),
         ("reason".to_string(), Data::Str(reason)),
         ("version".to_string(), Data::Str(version.to_string())),
         ("headers".to_string(), headers_to_data(headers)),
-        ("body".to_string(), Data::Str(String::from_utf8_lossy(body).into_owned())),
+        (
+            "body".to_string(),
+            Data::Str(String::from_utf8_lossy(body).into_owned()),
+        ),
     ])
 }
 
@@ -601,8 +791,19 @@ fn check_headers(headers: &[(String, String)]) -> Result<(), String> {
     Ok(())
 }
 
-fn http1_exchange(io: &mut dyn Io, u: &Url, method: &str, headers: &[(String, String)], body: &str) -> Result<Data, String> {
-    let authority = if (u.scheme == "https" && u.port == 443) || (u.scheme != "https" && u.port == 80) { u.host.clone() } else { format!("{}:{}", u.host, u.port) };
+fn http1_exchange(
+    io: &mut dyn Io,
+    u: &Url,
+    method: &str,
+    headers: &[(String, String)],
+    body: &str,
+) -> Result<Data, String> {
+    let authority =
+        if (u.scheme == "https" && u.port == 443) || (u.scheme != "https" && u.port == 80) {
+            u.host.clone()
+        } else {
+            format!("{}:{}", u.host, u.port)
+        };
     let mut request = format!(
         "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: fusion/0.3\r\n",
         method.to_ascii_uppercase(),
@@ -619,34 +820,65 @@ fn http1_exchange(io: &mut dyn Io, u: &Url, method: &str, headers: &[(String, St
         }
         request.push_str(&format!("{}: {}\r\n", k, v));
     }
-    if !has_length && (!body.is_empty() || matches!(method.to_ascii_uppercase().as_str(), "POST" | "PUT" | "PATCH")) {
+    if !has_length
+        && (!body.is_empty()
+            || matches!(
+                method.to_ascii_uppercase().as_str(),
+                "POST" | "PUT" | "PATCH"
+            ))
+    {
         request.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
     request.push_str("\r\n");
-    io.write_all(request.as_bytes()).map_err(|e| format!("write: {}", e))?;
-    io.write_all(body.as_bytes()).map_err(|e| format!("write: {}", e))?;
+    io.write_all(request.as_bytes())
+        .map_err(|e| format!("write: {}", e))?;
+    io.write_all(body.as_bytes())
+        .map_err(|e| format!("write: {}", e))?;
     io.flush().map_err(|e| format!("write: {}", e))?;
     let (head, body_bytes) = read_message(io, true)?;
     let mut parts = head.first_line.splitn(3, ' ');
     let version = parts.next().unwrap_or("HTTP/1.1").to_string();
-    let status: i64 = parts.next().unwrap_or("").parse().map_err(|_| format!("malformed status line '{}'", head.first_line))?;
+    let status: i64 = parts
+        .next()
+        .unwrap_or("")
+        .parse()
+        .map_err(|_| format!("malformed status line '{}'", head.first_line))?;
     let reason = parts.next().unwrap_or("").to_string();
-    Ok(response_map(&version, status, reason, &head.headers, &body_bytes))
+    Ok(response_map(
+        &version,
+        status,
+        reason,
+        &head.headers,
+        &body_bytes,
+    ))
 }
 
 /// Performs one HTTP request. `http://` uses HTTP/1.1; `https://` uses TLS and negotiates HTTP/2
 /// or HTTP/1.1 with ALPN; `h2c://` speaks HTTP/2 over plain TCP (prior knowledge).
 /// Returns a map with `status`, `reason`, `version`, `headers` and `body`.
-pub fn http_request(method: &str, url: &str, headers: &[(String, String)], body: &str, timeout_ms: i64) -> Result<Data, String> {
+pub fn http_request(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &str,
+    timeout_ms: i64,
+) -> Result<Data, String> {
     let u = parse_url(url)?;
     if method.is_empty() || !method.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(format!("invalid HTTP method '{}'", method));
     }
     check_headers(headers)?;
-    let timeout = Duration::from_millis(if timeout_ms <= 0 { 30_000 } else { timeout_ms as u64 });
-    let tcp = TcpStream::connect_timeout(&address(&u.host, u.port)?, timeout).map_err(|e| format!("connect {}:{}: {}", u.host, u.port, e))?;
-    tcp.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
-    tcp.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    let timeout = Duration::from_millis(if timeout_ms <= 0 {
+        30_000
+    } else {
+        timeout_ms as u64
+    });
+    let tcp = TcpStream::connect_timeout(&address(&u.host, u.port)?, timeout)
+        .map_err(|e| format!("connect {}:{}: {}", u.host, u.port, e))?;
+    tcp.set_read_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
+    tcp.set_write_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
     let mut io: BoxIo;
     let mut use_h2 = false;
     match u.scheme.as_str() {
@@ -662,10 +894,29 @@ pub fn http_request(method: &str, url: &str, headers: &[(String, String)], body:
         _ => io = Box::new(tcp),
     }
     if use_h2 {
-        let authority = if (u.scheme == "https" && u.port == 443) || (u.scheme != "https" && u.port == 80) { u.host.clone() } else { format!("{}:{}", u.host, u.port) };
+        let authority =
+            if (u.scheme == "https" && u.port == 443) || (u.scheme != "https" && u.port == 80) {
+                u.host.clone()
+            } else {
+                format!("{}:{}", u.host, u.port)
+            };
         let scheme = if u.scheme == "https" { "https" } else { "http" };
-        let r = h2_ext::client_request(&mut *io, scheme, &authority, method, &u.target, headers, body.as_bytes())?;
-        return Ok(response_map("HTTP/2", r.status, String::new(), &r.headers, &r.body));
+        let r = h2_ext::client_request(
+            &mut *io,
+            scheme,
+            &authority,
+            method,
+            &u.target,
+            headers,
+            body.as_bytes(),
+        )?;
+        return Ok(response_map(
+            "HTTP/2",
+            r.status,
+            String::new(),
+            &r.headers,
+            &r.body,
+        ));
     }
     http1_exchange(&mut *io, &u, method, headers, body)
 }
@@ -680,14 +931,25 @@ pub fn http_request(method: &str, url: &str, headers: &[(String, String)], body:
 //    concurrently, detects HTTP/1.1 vs HTTP/2 (ALPN under TLS, the connection preface on plain
 //    TCP) and queues requests for `http_accept`. `http_respond` answers either kind.
 
-fn request_map(method: String, path: String, query: String, version: &str, headers: &[(String, String)], body: &[u8], extra: Vec<(String, Data)>) -> Data {
+fn request_map(
+    method: String,
+    path: String,
+    query: String,
+    version: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    extra: Vec<(String, Data)>,
+) -> Data {
     let mut entries = vec![
         ("method".to_string(), Data::Str(method)),
         ("path".to_string(), Data::Str(path)),
         ("query".to_string(), Data::Str(query)),
         ("version".to_string(), Data::Str(version.to_string())),
         ("headers".to_string(), headers_to_data(headers)),
-        ("body".to_string(), Data::Str(String::from_utf8_lossy(body).into_owned())),
+        (
+            "body".to_string(),
+            Data::Str(String::from_utf8_lossy(body).into_owned()),
+        ),
     ];
     entries.extend(extra);
     Data::Map(entries)
@@ -702,10 +964,16 @@ fn split_target(target: &str) -> (String, String) {
 
 /// Starts a protocol-sniffing HTTP server. With `tls`, connections are TLS and ALPN selects h2 or http/1.1.
 pub fn http_listen(host: &str, port: i64, tls: Option<ServerTls>) -> Result<i64, String> {
-    let listener = TcpListener::bind(address(host, port)?).map_err(|e| format!("http_listen {}:{}: {}", host, port, e))?;
+    let listener = TcpListener::bind(address(host, port)?)
+        .map_err(|e| format!("http_listen {}:{}: {}", host, port, e))?;
     let bound = listener.local_addr().map_err(|e| e.to_string())?.port();
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-    let server = Arc::new(HttpServer { queue: Mutex::new(VecDeque::new()), ready: Condvar::new(), stop: AtomicBool::new(false), port: bound });
+    let server = Arc::new(HttpServer {
+        queue: Mutex::new(VecDeque::new()),
+        ready: Condvar::new(),
+        stop: AtomicBool::new(false),
+        port: bound,
+    });
     let worker = server.clone();
     thread::Builder::new()
         .name("fusion-http-acceptor".to_string())
@@ -725,9 +993,13 @@ fn accept_loop(listener: TcpListener, server: Arc<HttpServer>, tls: Option<Serve
             Ok((tcp, _)) => {
                 let _ = tcp.set_nonblocking(false);
                 let (s, t) = (server.clone(), tls.clone());
-                let _ = thread::Builder::new().name("fusion-http-connection".to_string()).spawn(move || handle_connection(tcp, s, t));
+                let _ = thread::Builder::new()
+                    .name("fusion-http-connection".to_string())
+                    .spawn(move || handle_connection(tcp, s, t));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(10)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(10))
+            }
             Err(_) => thread::sleep(Duration::from_millis(50)),
         }
     }
@@ -770,7 +1042,11 @@ fn dispatch(server: &HttpServer, mut request: Data) -> ResponseMsg {
         Ok(message) => message,
         Err(_) => {
             let _ = close(id);
-            ResponseMsg { status: 504, headers: Vec::new(), body: b"the handler did not respond in time".to_vec() }
+            ResponseMsg {
+                status: 504,
+                headers: Vec::new(),
+                body: b"the handler did not respond in time".to_vec(),
+            }
         }
     }
 }
@@ -801,10 +1077,17 @@ fn handle_connection(tcp: TcpStream, server: Arc<HttpServer>, tls: Option<Server
                 "HTTP/2",
                 &req.headers,
                 &req.body,
-                vec![("scheme".to_string(), Data::Str(req.scheme.clone())), ("authority".to_string(), Data::Str(req.authority.clone()))],
+                vec![
+                    ("scheme".to_string(), Data::Str(req.scheme.clone())),
+                    ("authority".to_string(), Data::Str(req.authority.clone())),
+                ],
             );
             let reply = dispatch(&server, data);
-            h2_ext::Reply { status: reply.status, headers: reply.headers, body: reply.body }
+            h2_ext::Reply {
+                status: reply.status,
+                headers: reply.headers,
+                body: reply.body,
+            }
         };
         let _ = h2_ext::serve(&mut *io, &mut handler);
         return;
@@ -822,18 +1105,33 @@ fn handle_connection(tcp: TcpStream, server: Arc<HttpServer>, tls: Option<Server
         let target = it.next().unwrap_or("/").to_string();
         let version = it.next().unwrap_or("HTTP/1.1").to_string();
         if method.is_empty() || !(version == "HTTP/1.1" || version == "HTTP/1.0") {
-            let _ = io.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = io.write_all(
+                b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
             let _ = io.flush();
             return;
         }
         let request_keep_alive = request_wants_keep_alive(&version, &head.headers);
         let (path, query) = split_target(&target);
-        let data = request_map(method, path, query, &version, &head.headers, &body, vec![("scheme".to_string(), Data::Str(scheme.to_string()))]);
+        let data = request_map(
+            method,
+            path,
+            query,
+            &version,
+            &head.headers,
+            &body,
+            vec![("scheme".to_string(), Data::Str(scheme.to_string()))],
+        );
         let reply = dispatch(&server, data);
         let response_keep_alive = request_keep_alive
             && request_number < 999
             && !header_has_token(&reply.headers, "connection", "close");
-        let bytes = format_h1_response(reply.status, &reply.headers, &reply.body, response_keep_alive);
+        let bytes = format_h1_response(
+            reply.status,
+            &reply.headers,
+            &reply.body,
+            response_keep_alive,
+        );
         if io.write_all(&bytes).and_then(|_| io.flush()).is_err() {
             return;
         }
@@ -852,7 +1150,10 @@ fn accept_queued(server: &HttpServer) -> Result<Data, String> {
         if server.stop.load(Ordering::SeqCst) {
             return Err("http_accept: the server was closed".to_string());
         }
-        let (guard, _) = server.ready.wait_timeout(queue, Duration::from_millis(200)).unwrap();
+        let (guard, _) = server
+            .ready
+            .wait_timeout(queue, Duration::from_millis(200))
+            .unwrap();
         queue = guard;
     }
 }
@@ -865,7 +1166,12 @@ pub fn http_accept(listener: i64) -> Result<Data, String> {
     let l = match &*res {
         Resource::HttpServer(server) => return accept_queued(server),
         Resource::Listener(l) => l,
-        _ => return Err("http_accept expects a listener from tcp_listen, http_listen or https_listen".to_string()),
+        _ => {
+            return Err(
+                "http_accept expects a listener from tcp_listen, http_listen or https_listen"
+                    .to_string(),
+            )
+        }
     };
     loop {
         let (mut stream, _) = l.accept().map_err(|e| format!("http_accept: {}", e))?;
@@ -875,7 +1181,9 @@ pub fn http_accept(listener: i64) -> Result<Data, String> {
             Ok(m) => m,
             Err(_) => {
                 // Malformed or aborted request: answer 400 if we still can and keep serving.
-                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = stream.write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
                 continue;
             }
         };
@@ -885,14 +1193,27 @@ pub fn http_accept(listener: i64) -> Result<Data, String> {
         let version = it.next().unwrap_or("HTTP/1.1").to_string();
         let (path, query) = split_target(&target);
         let conn = register(Resource::Stream(stream));
-        return Ok(request_map(method, path, query, &version, &head.headers, &body, vec![("conn".to_string(), Data::Int(conn))]));
+        return Ok(request_map(
+            method,
+            path,
+            query,
+            &version,
+            &head.headers,
+            &body,
+            vec![("conn".to_string(), Data::Int(conn))],
+        ));
     }
 }
 
 fn header_has_token(headers: &[(String, String)], name: &str, token: &str) -> bool {
-    headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case(name)).any(|(_, value)| {
-        value.split(',').any(|part| part.trim().eq_ignore_ascii_case(token))
-    })
+    headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+        .any(|(_, value)| {
+            value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case(token))
+        })
 }
 
 fn request_wants_keep_alive(version: &str, headers: &[(String, String)]) -> bool {
@@ -902,16 +1223,26 @@ fn request_wants_keep_alive(version: &str, headers: &[(String, String)]) -> bool
     if version.eq_ignore_ascii_case("HTTP/1.1") {
         true
     } else {
-        version.eq_ignore_ascii_case("HTTP/1.0") && header_has_token(headers, "connection", "keep-alive")
+        version.eq_ignore_ascii_case("HTTP/1.0")
+            && header_has_token(headers, "connection", "keep-alive")
     }
 }
 
-fn format_h1_response(status: i64, headers: &[(String, String)], body: &[u8], keep_alive: bool) -> Vec<u8> {
+fn format_h1_response(
+    status: i64,
+    headers: &[(String, String)],
+    body: &[u8],
+    keep_alive: bool,
+) -> Vec<u8> {
     let mut out = format!("HTTP/1.1 {} {}\r\n", status, reason_phrase(status));
     let mut has_type = false;
     for (k, v) in headers {
         let lower = k.to_ascii_lowercase();
-        if lower == "content-length" || lower == "connection" || lower == "keep-alive" || lower == "transfer-encoding" {
+        if lower == "content-length"
+            || lower == "connection"
+            || lower == "keep-alive"
+            || lower == "transfer-encoding"
+        {
             continue;
         }
         if lower == "content-type" {
@@ -925,7 +1256,10 @@ fn format_h1_response(status: i64, headers: &[(String, String)], body: &[u8], ke
     if keep_alive {
         out.push_str(&format!("Content-Length: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=30, max=1000\r\n\r\n", body.len()));
     } else {
-        out.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", body.len()));
+        out.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        ));
     }
     let mut bytes = out.into_bytes();
     if status != 204 && status != 304 {
@@ -935,7 +1269,12 @@ fn format_h1_response(status: i64, headers: &[(String, String)], body: &[u8], ke
 }
 
 /// Sends a response for the request identified by `conn` and finishes that exchange.
-pub fn http_respond(conn: i64, status: i64, headers: &[(String, String)], body: &str) -> Result<(), String> {
+pub fn http_respond(
+    conn: i64,
+    status: i64,
+    headers: &[(String, String)],
+    body: &str,
+) -> Result<(), String> {
     if !(100..=599).contains(&status) {
         return Err(format!("invalid HTTP status {}", status));
     }
@@ -943,8 +1282,16 @@ pub fn http_respond(conn: i64, status: i64, headers: &[(String, String)], body: 
     let res = lookup(conn)?;
     match &*res {
         Resource::Reply(slot) => {
-            let sender = slot.lock().unwrap().take().ok_or_else(|| "a response was already sent for this request".to_string())?;
-            let delivered = sender.send(ResponseMsg { status, headers: headers.to_vec(), body: body.as_bytes().to_vec() });
+            let sender = slot
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| "a response was already sent for this request".to_string())?;
+            let delivered = sender.send(ResponseMsg {
+                status,
+                headers: headers.to_vec(),
+                body: body.as_bytes().to_vec(),
+            });
             close(conn)?;
             delivered.map_err(|_| "http_respond: the client connection is gone".to_string())
         }
@@ -985,7 +1332,9 @@ pub fn percent_decode(s: &str) -> String {
                 i += 1;
             }
             b'%' if i + 2 < bytes.len() => {
-                let decoded = std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok());
+                let decoded = std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok());
                 match decoded {
                     Some(b) => {
                         out.push(b);
@@ -1025,13 +1374,19 @@ mod keep_alive_tests {
     #[test]
     fn http11_is_persistent_unless_close_is_requested() {
         assert!(request_wants_keep_alive("HTTP/1.1", &[]));
-        assert!(!request_wants_keep_alive("HTTP/1.1", &[("Connection".into(), "keep-alive, close".into())]));
+        assert!(!request_wants_keep_alive(
+            "HTTP/1.1",
+            &[("Connection".into(), "keep-alive, close".into())]
+        ));
     }
 
     #[test]
     fn http10_requires_explicit_keep_alive() {
         assert!(!request_wants_keep_alive("HTTP/1.0", &[]));
-        assert!(request_wants_keep_alive("HTTP/1.0", &[("connection".into(), "keep-alive".into())]));
+        assert!(request_wants_keep_alive(
+            "HTTP/1.0",
+            &[("connection".into(), "keep-alive".into())]
+        ));
     }
 
     #[test]
@@ -1060,13 +1415,19 @@ mod tests {
     #[test]
     fn url_parsing() {
         let u = parse_url("http://example.com:8080/a/b?x=1").unwrap();
-        assert_eq!((u.host.as_str(), u.port, u.target.as_str()), ("example.com", 8080, "/a/b?x=1"));
+        assert_eq!(
+            (u.host.as_str(), u.port, u.target.as_str()),
+            ("example.com", 8080, "/a/b?x=1")
+        );
         let u = parse_url("http://example.com").unwrap();
         assert_eq!((u.port, u.target.as_str()), (80, "/"));
         let u = parse_url("https://example.com/x").unwrap();
         assert_eq!((u.scheme.as_str(), u.port), ("https", 443));
         let u = parse_url("h2c://[::1]:9000/p").unwrap();
-        assert_eq!((u.scheme.as_str(), u.host.as_str(), u.port), ("h2c", "::1", 9000));
+        assert_eq!(
+            (u.scheme.as_str(), u.host.as_str(), u.port),
+            ("h2c", "::1", 9000)
+        );
         assert!(parse_url("ftp://example.com").is_err());
     }
 
@@ -1074,12 +1435,18 @@ mod tests {
     fn percent_coding() {
         assert_eq!(percent_decode("a%20b+c%2"), "a b c%2");
         assert_eq!(percent_encode("a b/é"), "a%20b%2F%C3%A9");
-        assert_eq!(parse_query("a=1&b=x%20y&a=2").get("a"), Some(&Data::Str("2".into())));
+        assert_eq!(
+            parse_query("a=1&b=x%20y&a=2").get("a"),
+            Some(&Data::Str("2".into()))
+        );
     }
 
     #[test]
     fn chunked_decoding() {
-        assert_eq!(decode_chunked(b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n").unwrap(), b"hello world");
+        assert_eq!(
+            decode_chunked(b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n").unwrap(),
+            b"hello world"
+        );
         assert!(decode_chunked(b"zz\r\n").is_err());
     }
 
@@ -1125,14 +1492,25 @@ mod tests {
                 Some(Data::Str(s)) => s.clone(),
                 _ => String::new(),
             };
-            let Some(Data::Int(conn)) = req.get("conn") else { panic!("no conn") };
-            http_respond(*conn, 201, &[("X-Test".to_string(), "yes".to_string())], &format!("got:{}", body)).unwrap();
+            let Some(Data::Int(conn)) = req.get("conn") else {
+                panic!("no conn")
+            };
+            http_respond(
+                *conn,
+                201,
+                &[("X-Test".to_string(), "yes".to_string())],
+                &format!("got:{}", body),
+            )
+            .unwrap();
         });
         let url = format!("http://127.0.0.1:{}/echo?x=1", port);
         let resp = http_request("POST", &url, &[], "payload", 5000).unwrap();
         assert_eq!(resp.get("status"), Some(&Data::Int(201)));
         assert_eq!(resp.get("body"), Some(&Data::Str("got:payload".into())));
-        assert_eq!(resp.get("headers").unwrap().get("x-test"), Some(&Data::Str("yes".into())));
+        assert_eq!(
+            resp.get("headers").unwrap().get("x-test"),
+            Some(&Data::Str("yes".into()))
+        );
         server.join().unwrap();
         close(listener).unwrap();
     }
@@ -1144,8 +1522,12 @@ mod tests {
         let worker = thread::spawn(move || {
             for _ in 0..2 {
                 let req = http_accept(server).unwrap();
-                let Some(Data::Str(path)) = req.get("path").cloned() else { panic!("missing path") };
-                let Some(Data::Int(conn)) = req.get("conn").cloned() else { panic!("missing response token") };
+                let Some(Data::Str(path)) = req.get("path").cloned() else {
+                    panic!("missing path")
+                };
+                let Some(Data::Int(conn)) = req.get("conn").cloned() else {
+                    panic!("missing response token")
+                };
                 http_respond(conn, 200, &[], &format!("served:{}", path)).unwrap();
             }
         });
@@ -1153,7 +1535,10 @@ mod tests {
         let first = http_client_request(client, "GET", "/first", &[], "").unwrap();
         let second = http_client_request(client, "GET", "/second", &[], "").unwrap();
         assert_eq!(first.get("body"), Some(&Data::Str("served:/first".into())));
-        assert_eq!(second.get("body"), Some(&Data::Str("served:/second".into())));
+        assert_eq!(
+            second.get("body"),
+            Some(&Data::Str("served:/second".into()))
+        );
         http_client_close(client).unwrap();
         worker.join().unwrap();
         close(server).unwrap();
@@ -1166,14 +1551,36 @@ mod tests {
         let worker = thread::spawn(move || {
             for _ in 0..2 {
                 let req = http_accept(server).unwrap();
-                let Some(Data::Str(path)) = req.get("path").cloned() else { panic!("no path") };
-                let Some(Data::Int(conn)) = req.get("conn").cloned() else { panic!("no conn") };
+                let Some(Data::Str(path)) = req.get("path").cloned() else {
+                    panic!("no path")
+                };
+                let Some(Data::Int(conn)) = req.get("conn").cloned() else {
+                    panic!("no conn")
+                };
                 http_respond(conn, 200, &[], &format!("hi {}", path)).unwrap();
             }
         });
         // Two clients at once: the acceptor thread must not serialise connection handling.
-        let a = thread::spawn(move || http_request("GET", &format!("http://127.0.0.1:{}/a", port), &[], "", 5000).unwrap());
-        let b = thread::spawn(move || http_request("GET", &format!("http://127.0.0.1:{}/b", port), &[], "", 5000).unwrap());
+        let a = thread::spawn(move || {
+            http_request(
+                "GET",
+                &format!("http://127.0.0.1:{}/a", port),
+                &[],
+                "",
+                5000,
+            )
+            .unwrap()
+        });
+        let b = thread::spawn(move || {
+            http_request(
+                "GET",
+                &format!("http://127.0.0.1:{}/b", port),
+                &[],
+                "",
+                5000,
+            )
+            .unwrap()
+        });
         let (ra, rb) = (a.join().unwrap(), b.join().unwrap());
         assert_eq!(ra.get("body"), Some(&Data::Str("hi /a".into())));
         assert_eq!(rb.get("body"), Some(&Data::Str("hi /b".into())));
@@ -1197,15 +1604,35 @@ mod tests {
         let worker = thread::spawn(move || {
             let req = http_accept(server).unwrap();
             assert_eq!(req.get("version"), Some(&Data::Str("HTTP/2".into())));
-            let Some(Data::Int(conn)) = req.get("conn").cloned() else { panic!("no conn") };
-            let Some(Data::Str(body)) = req.get("body").cloned() else { panic!("no body") };
-            http_respond(conn, 201, &[("x-seen".to_string(), "yes".to_string())], &format!("echo:{}", body)).unwrap();
+            let Some(Data::Int(conn)) = req.get("conn").cloned() else {
+                panic!("no conn")
+            };
+            let Some(Data::Str(body)) = req.get("body").cloned() else {
+                panic!("no body")
+            };
+            http_respond(
+                conn,
+                201,
+                &[("x-seen".to_string(), "yes".to_string())],
+                &format!("echo:{}", body),
+            )
+            .unwrap();
         });
-        let resp = http_request("POST", &format!("h2c://127.0.0.1:{}/h2", port), &[], "payload", 5000).unwrap();
+        let resp = http_request(
+            "POST",
+            &format!("h2c://127.0.0.1:{}/h2", port),
+            &[],
+            "payload",
+            5000,
+        )
+        .unwrap();
         assert_eq!(resp.get("status"), Some(&Data::Int(201)));
         assert_eq!(resp.get("version"), Some(&Data::Str("HTTP/2".into())));
         assert_eq!(resp.get("body"), Some(&Data::Str("echo:payload".into())));
-        assert_eq!(resp.get("headers").unwrap().get("x-seen"), Some(&Data::Str("yes".into())));
+        assert_eq!(
+            resp.get("headers").unwrap().get("x-seen"),
+            Some(&Data::Str("yes".into()))
+        );
         worker.join().unwrap();
         close(server).unwrap();
     }

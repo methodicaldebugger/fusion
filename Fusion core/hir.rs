@@ -4,13 +4,13 @@
 HIR — a higher-level intermediate representation
 HIR stands for High-level Intermediate Representation.
 
-It is another representation of the program, 
-usually designed to be easier for later compiler stages to analyze 
+It is another representation of the program,
+usually designed to be easier for later compiler stages to analyze
 and transform than the original AST.
 
 Why have one?
 Source code often contains convenient syntax
- that is complicated to implement repeatedly throughout the compiler. 
+ that is complicated to implement repeatedly throughout the compiler.
  HIR can simplify that syntax while preserving the program's meaning.
 
  HIR can also include information that the AST lacks or leaves unresolved, such as:
@@ -42,7 +42,6 @@ pub struct HirProject {
     /// Backend-oriented control-flow bodies derived from the source-preserving HIR.
     pub bodies: Vec<HirBody>,
 }
-
 
 /// A function, method, or module entry body in a backend-oriented control-flow form.
 /// Source-preserving HIR remains available alongside this representation during migration.
@@ -83,12 +82,26 @@ impl HirBasicBlock {
     /// Successor block IDs in deterministic source order.
     pub fn successors(&self) -> Vec<u32> {
         match &self.terminator {
-            HirTerminator::Open | HirTerminator::Return(_) | HirTerminator::Unreachable => Vec::new(),
+            HirTerminator::Open | HirTerminator::Return(_) | HirTerminator::Unreachable => {
+                Vec::new()
+            }
             HirTerminator::Goto(target) => vec![*target],
-            HirTerminator::Branch { then_block, else_block, .. } => vec![*then_block, *else_block],
-            HirTerminator::Match { arms, fallback, .. } => arms.iter().map(|arm| arm.block).chain(std::iter::once(*fallback)).collect(),
-            HirTerminator::For { body, exit, .. } | HirTerminator::ForEach { body, exit, .. } => vec![*body, *exit],
-            HirTerminator::Break(target) | HirTerminator::Continue(target) => target.iter().copied().collect(),
+            HirTerminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => vec![*then_block, *else_block],
+            HirTerminator::Match { arms, fallback, .. } => arms
+                .iter()
+                .map(|arm| arm.block)
+                .chain(std::iter::once(*fallback))
+                .collect(),
+            HirTerminator::For { body, exit, .. } | HirTerminator::ForEach { body, exit, .. } => {
+                vec![*body, *exit]
+            }
+            HirTerminator::Break(target) | HirTerminator::Continue(target) => {
+                target.iter().copied().collect()
+            }
         }
     }
 }
@@ -151,10 +164,31 @@ pub struct HirPatternBinding {
 pub enum HirTerminator {
     Open,
     Goto(u32),
-    Branch { condition: HirExpression, then_block: u32, else_block: u32 },
-    Match { value: HirExpression, arms: Vec<HirMatchTarget>, fallback: u32 },
-    For { variable: String, local: HirLocalId, start: HirExpression, end: HirExpression, body: u32, exit: u32 },
-    ForEach { variable: String, local: HirLocalId, iterable: HirExpression, body: u32, exit: u32 },
+    Branch {
+        condition: HirExpression,
+        then_block: u32,
+        else_block: u32,
+    },
+    Match {
+        value: HirExpression,
+        arms: Vec<HirMatchTarget>,
+        fallback: u32,
+    },
+    For {
+        variable: String,
+        local: HirLocalId,
+        start: HirExpression,
+        end: HirExpression,
+        body: u32,
+        exit: u32,
+    },
+    ForEach {
+        variable: String,
+        local: HirLocalId,
+        iterable: HirExpression,
+        body: u32,
+        exit: u32,
+    },
     Return(Option<HirExpression>),
     Break(Option<u32>),
     Continue(Option<u32>),
@@ -171,8 +205,6 @@ pub struct HirModule {
     pub private_symbols: Vec<String>,
     pub statements: Vec<HirStatement>,
 }
-
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirCallKind {
@@ -216,11 +248,27 @@ pub struct HirResolvedLocalType {
 /// preserves primitive, container, tuple, generic and nominal distinctions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HirType {
-    Num, Float, Bool, String, Void, File, TcpStream,
-    Array(Box<HirType>), Tuple(Vec<HirType>),
-    Iterator(Box<HirType>), HashMap(Box<HirType>, Box<HirType>),
-    Option(Box<HirType>), Result(Box<HirType>, Box<HirType>), Task(Box<HirType>),
-    Nominal(HirDefinitionId), Applied { constructor: Box<HirType>, arguments: Vec<HirType> }, Generic(String), Unknown,
+    Num,
+    Float,
+    Bool,
+    String,
+    Void,
+    File,
+    TcpStream,
+    Array(Box<HirType>),
+    Tuple(Vec<HirType>),
+    Iterator(Box<HirType>),
+    HashMap(Box<HirType>, Box<HirType>),
+    Option(Box<HirType>),
+    Result(Box<HirType>, Box<HirType>),
+    Task(Box<HirType>),
+    Nominal(HirDefinitionId),
+    Applied {
+        constructor: Box<HirType>,
+        arguments: Vec<HirType>,
+    },
+    Generic(String),
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -268,7 +316,11 @@ pub enum HirStatement {
         span: Span,
     },
 
-    UninitializedVariable { name: String, declared_type: Option<String>, span: Span },
+    UninitializedVariable {
+        name: String,
+        declared_type: Option<String>,
+        span: Span,
+    },
 
     ConstDeclaration {
         identity: Option<HirDefinitionId>,
@@ -284,17 +336,39 @@ pub enum HirStatement {
         span: Span,
     },
 
-    Block { statements: Vec<HirStatement>, span: Span },
+    Block {
+        statements: Vec<HirStatement>,
+        span: Span,
+    },
 
     Function(HirFunction),
 
-    Trait { identity: Option<HirDefinitionId>, name: String, methods: Vec<HirTraitMethod>, span: Span },
+    Trait {
+        identity: Option<HirDefinitionId>,
+        name: String,
+        methods: Vec<HirTraitMethod>,
+        span: Span,
+    },
 
-    Impl { trait_name: Option<String>, type_name: String, methods: Vec<HirFunction>, span: Span },
+    Impl {
+        trait_name: Option<String>,
+        type_name: String,
+        methods: Vec<HirFunction>,
+        span: Span,
+    },
 
-    Import { path: String, alias: Option<String>, selected: Vec<String>, re_exported: bool, span: Span },
+    Import {
+        path: String,
+        alias: Option<String>,
+        selected: Vec<String>,
+        re_exported: bool,
+        span: Span,
+    },
 
-    Main { body: Vec<HirStatement>, span: Span },
+    Main {
+        body: Vec<HirStatement>,
+        span: Span,
+    },
 
     Struct {
         identity: Option<HirDefinitionId>,
@@ -350,7 +424,12 @@ pub enum HirStatement {
         span: Span,
     },
 
-    ForEach { variable: String, iterable: HirExpression, body: Vec<HirStatement>, span: Span },
+    ForEach {
+        variable: String,
+        iterable: HirExpression,
+        body: Vec<HirStatement>,
+        span: Span,
+    },
 
     Match {
         expression: HirExpression,
@@ -396,12 +475,26 @@ pub enum HirPattern {
     Float(f64),
     String(String),
     Boolean(bool),
-    Variant { name: String, bindings: Vec<HirPattern> },
+    Variant {
+        name: String,
+        bindings: Vec<HirPattern>,
+    },
     Tuple(Vec<HirPattern>),
-    Struct { name: String, fields: Vec<(String, HirPattern)>, has_rest: bool },
-    At { name: String, pattern: Box<HirPattern> },
+    Struct {
+        name: String,
+        fields: Vec<(String, HirPattern)>,
+        has_rest: bool,
+    },
+    At {
+        name: String,
+        pattern: Box<HirPattern>,
+    },
     Or(Vec<HirPattern>),
-    Range { start: i64, end: i64, inclusive: bool },
+    Range {
+        start: i64,
+        end: i64,
+        inclusive: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -446,7 +539,11 @@ pub enum HirExpression {
 
     Await(Box<HirExpression>),
 
-    Conversion { kind: HirConversionKind, expression: Box<HirExpression>, target_type: String },
+    Conversion {
+        kind: HirConversionKind,
+        expression: Box<HirExpression>,
+        target_type: String,
+    },
 
     StructConstructor {
         name: String,
@@ -472,7 +569,11 @@ pub enum HirExpression {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HirConversionKind { As, From, Try }
+pub enum HirConversionKind {
+    As,
+    From,
+    Try,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirOperator {
@@ -524,8 +625,17 @@ pub enum HirDefinitionKind {
 }
 
 impl HirDefinitionId {
-    pub fn new(module: impl Into<String>, name: impl Into<String>, kind: HirDefinitionKind) -> Self {
-        Self { module: module.into(), scope: Vec::new(), name: name.into(), kind }
+    pub fn new(
+        module: impl Into<String>,
+        name: impl Into<String>,
+        kind: HirDefinitionKind,
+    ) -> Self {
+        Self {
+            module: module.into(),
+            scope: Vec::new(),
+            name: name.into(),
+            kind,
+        }
     }
 
     pub fn scoped(
@@ -534,7 +644,12 @@ impl HirDefinitionId {
         name: impl Into<String>,
         kind: HirDefinitionKind,
     ) -> Self {
-        Self { module: module.into(), scope: scope.into_iter().collect(), name: name.into(), kind }
+        Self {
+            module: module.into(),
+            scope: scope.into_iter().collect(),
+            name: name.into(),
+            kind,
+        }
     }
 }
 
@@ -561,8 +676,13 @@ impl HirSymbolIndex {
 /// different modules without making either declaration overwrite the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HirTypeShape {
-    Struct { fields: Vec<HirTypeField>, derives: Vec<String> },
-    Enum { variants: Vec<HirTypeVariant> },
+    Struct {
+        fields: Vec<HirTypeField>,
+        derives: Vec<String>,
+    },
+    Enum {
+        variants: Vec<HirTypeVariant>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -593,7 +713,9 @@ pub struct HirTypeRegistry {
 
 impl HirTypeRegistry {
     pub fn insert(&mut self, definition: HirTypeDefinition) -> bool {
-        self.definitions.insert(definition.id.clone(), definition).is_none()
+        self.definitions
+            .insert(definition.id.clone(), definition)
+            .is_none()
     }
 
     pub fn get(&self, id: &HirDefinitionId) -> Option<&HirTypeDefinition> {
@@ -632,8 +754,18 @@ mod module_identity_tests {
 
     #[test]
     fn implementation_methods_are_scoped_to_their_impl_target() {
-        let point = HirDefinitionId::scoped("geometry", ["Point".to_string()], "distance", HirDefinitionKind::Method);
-        let vector = HirDefinitionId::scoped("geometry", ["Vector".to_string()], "distance", HirDefinitionKind::Method);
+        let point = HirDefinitionId::scoped(
+            "geometry",
+            ["Point".to_string()],
+            "distance",
+            HirDefinitionKind::Method,
+        );
+        let vector = HirDefinitionId::scoped(
+            "geometry",
+            ["Vector".to_string()],
+            "distance",
+            HirDefinitionKind::Method,
+        );
         assert_ne!(point, vector);
     }
 }
@@ -651,7 +783,10 @@ mod type_registry_tests {
             id: geometry.clone(),
             is_public: true,
             shape: HirTypeShape::Struct {
-                fields: vec![HirTypeField { name: "x".into(), type_name: "num".into() }],
+                fields: vec![HirTypeField {
+                    name: "x".into(),
+                    type_name: "num".into()
+                }],
                 derives: vec!["Debug".into()],
             },
         }));
@@ -659,16 +794,24 @@ mod type_registry_tests {
             id: graphics.clone(),
             is_public: false,
             shape: HirTypeShape::Struct {
-                fields: vec![HirTypeField { name: "rgba".into(), type_name: "u32".into() }],
+                fields: vec![HirTypeField {
+                    name: "rgba".into(),
+                    type_name: "u32".into()
+                }],
                 derives: Vec::new(),
             },
         }));
         assert_eq!(registry.definitions.len(), 2);
-        assert_eq!(registry.get(&geometry).unwrap().shape,
+        assert_eq!(
+            registry.get(&geometry).unwrap().shape,
             HirTypeShape::Struct {
-                fields: vec![HirTypeField { name: "x".into(), type_name: "num".into() }],
+                fields: vec![HirTypeField {
+                    name: "x".into(),
+                    type_name: "num".into()
+                }],
                 derives: vec!["Debug".into()],
-            });
+            }
+        );
         assert!(!registry.get(&graphics).unwrap().is_public);
     }
 }

@@ -4,7 +4,7 @@
 AST — represents the program as a tree
 AST stands for Abstract Syntax Tree.
 
-It is a data structure, not necessarily a separate processing stage. 
+It is a data structure, not necessarily a separate processing stage.
 The parser usually constructs it.
 It understands operator precendece, multiplication has precedence over addition.
 Real ASTs often also contain source locations, which help produce useful error messages.
@@ -104,12 +104,26 @@ pub enum PatternKind {
     Float(f64),
     String(String),
     Boolean(bool),
-    Variant { name: String, bindings: Vec<Pattern> },
+    Variant {
+        name: String,
+        bindings: Vec<Pattern>,
+    },
     Tuple(Vec<Pattern>),
-    Struct { name: String, fields: Vec<(String, Pattern)>, has_rest: bool },
-    At { name: String, pattern: Box<Pattern> },
+    Struct {
+        name: String,
+        fields: Vec<(String, Pattern)>,
+        has_rest: bool,
+    },
+    At {
+        name: String,
+        pattern: Box<Pattern>,
+    },
     Or(Vec<Pattern>),
-    Range { start: i64, end: i64, inclusive: bool },
+    Range {
+        start: i64,
+        end: i64,
+        inclusive: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -278,7 +292,10 @@ pub enum Expression {
         span: Span,
     },
 
-    Tuple { elements: Vec<Expression>, span: Span },
+    Tuple {
+        elements: Vec<Expression>,
+        span: Span,
+    },
 
     Identifier {
         name: String,

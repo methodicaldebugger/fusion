@@ -27,7 +27,8 @@ mod imp {
     #[derive(Clone)]
     pub struct ServerTls;
 
-    const MISSING: &str = "HTTPS needs TLS support: rebuild Fusion with `cargo build --features tls`";
+    const MISSING: &str =
+        "HTTPS needs TLS support: rebuild Fusion with `cargo build --features tls`";
 
     pub fn available() -> bool {
         false
@@ -70,25 +71,39 @@ mod imp {
             .map_err(|e| format!("TLS configuration: {}", e))?
             .with_root_certificates(roots)
             .with_no_client_auth();
-        config.alpn_protocols = if offer_h2 { vec![b"h2".to_vec(), b"http/1.1".to_vec()] } else { vec![b"http/1.1".to_vec()] };
-        let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| format!("invalid server name '{}': {}", host, e))?;
-        let mut conn = rustls::ClientConnection::new(Arc::new(config), name).map_err(|e| format!("TLS handshake setup: {}", e))?;
+        config.alpn_protocols = if offer_h2 {
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        } else {
+            vec![b"http/1.1".to_vec()]
+        };
+        let name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| format!("invalid server name '{}': {}", host, e))?;
+        let mut conn = rustls::ClientConnection::new(Arc::new(config), name)
+            .map_err(|e| format!("TLS handshake setup: {}", e))?;
         while conn.is_handshaking() {
-            conn.complete_io(&mut tcp).map_err(|e| format!("TLS handshake with '{}' failed: {}", host, e))?;
+            conn.complete_io(&mut tcp)
+                .map_err(|e| format!("TLS handshake with '{}' failed: {}", host, e))?;
         }
-        let alpn = conn.alpn_protocol().map(|p| String::from_utf8_lossy(p).into_owned());
-        Ok(Connected { stream: Box::new(rustls::StreamOwned::new(conn, tcp)), alpn })
+        let alpn = conn
+            .alpn_protocol()
+            .map(|p| String::from_utf8_lossy(p).into_owned());
+        Ok(Connected {
+            stream: Box::new(rustls::StreamOwned::new(conn, tcp)),
+            alpn,
+        })
     }
 
     pub fn server_config(cert_pem: &str, key_pem: &str) -> Result<ServerTls, String> {
-        let cert_file = std::fs::File::open(cert_pem).map_err(|e| format!("open certificate '{}': {}", cert_pem, e))?;
+        let cert_file = std::fs::File::open(cert_pem)
+            .map_err(|e| format!("open certificate '{}': {}", cert_pem, e))?;
         let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("read certificate '{}': {}", cert_pem, e))?;
         if certs.is_empty() {
             return Err(format!("no certificates found in '{}'", cert_pem));
         }
-        let key_file = std::fs::File::open(key_pem).map_err(|e| format!("open private key '{}': {}", key_pem, e))?;
+        let key_file = std::fs::File::open(key_pem)
+            .map_err(|e| format!("open private key '{}': {}", key_pem, e))?;
         let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
             .map_err(|e| format!("read private key '{}': {}", key_pem, e))?
             .ok_or_else(|| format!("no private key found in '{}'", key_pem))?;
@@ -103,12 +118,19 @@ mod imp {
     }
 
     pub fn accept(config: &ServerTls, mut tcp: TcpStream) -> Result<Connected, String> {
-        let mut conn = rustls::ServerConnection::new(config.clone()).map_err(|e| format!("TLS accept: {}", e))?;
+        let mut conn = rustls::ServerConnection::new(config.clone())
+            .map_err(|e| format!("TLS accept: {}", e))?;
         while conn.is_handshaking() {
-            conn.complete_io(&mut tcp).map_err(|e| format!("TLS handshake failed: {}", e))?;
+            conn.complete_io(&mut tcp)
+                .map_err(|e| format!("TLS handshake failed: {}", e))?;
         }
-        let alpn = conn.alpn_protocol().map(|p| String::from_utf8_lossy(p).into_owned());
-        Ok(Connected { stream: Box::new(rustls::StreamOwned::new(conn, tcp)), alpn })
+        let alpn = conn
+            .alpn_protocol()
+            .map(|p| String::from_utf8_lossy(p).into_owned());
+        Ok(Connected {
+            stream: Box::new(rustls::StreamOwned::new(conn, tcp)),
+            alpn,
+        })
     }
 }
 

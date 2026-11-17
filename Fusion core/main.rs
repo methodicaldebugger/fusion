@@ -13,9 +13,13 @@ fn usage() {
     eprintln!("  fusion run <file.fusion> [--concurrent-async]");
     eprintln!("  fusion check <file.fusion>");
     eprintln!("  fusion emit-llvm <file.fusion> [-o output.ll]");
-    eprintln!("  fusion emit-package-llvm <file.fusion> --package-source-root <src-dir> [-o package.ll]");
+    eprintln!(
+        "  fusion emit-package-llvm <file.fusion> --package-source-root <src-dir> [-o package.ll]"
+    );
     eprintln!("  fusion emit-entrypoint-llvm <file.fusion> [-o entrypoint.ll]");
-    eprintln!("  fusion package-interface <file.fusion> --package-source-root <src-dir> [-o output.fpi]");
+    eprintln!(
+        "  fusion package-interface <file.fusion> --package-source-root <src-dir> [-o output.fpi]"
+    );
     eprintln!("  fusion package-declarations <input.fpi> [-o declarations.ll]");
     eprintln!("  fusion link-llvm <input.ll> [additional.ll ...] [-o output]");
     eprintln!("  fusion build <file.fusion> [-o output] [--package-root alias=src-path]");
@@ -34,10 +38,16 @@ fn write_or_print(path: Option<&str>, data: &str) -> Result<(), String> {
     }
 }
 
-fn run_interpreter(path: &str, concurrent_async: bool, package_roots: &std::collections::BTreeMap<String, PathBuf>) -> Result<(), String> {
+fn run_interpreter(
+    path: &str,
+    concurrent_async: bool,
+    package_roots: &std::collections::BTreeMap<String, PathBuf>,
+) -> Result<(), String> {
     let program = fusion::compile_project_with_package_roots(path, package_roots.clone())?;
     let mut interpreter = fusion::interpreter::Interpreter::new();
-    interpreter.set_concurrent_async(concurrent_async || std::env::var("FUSION_CONCURRENT_ASYNC").map_or(false, |v| v == "1"));
+    interpreter.set_concurrent_async(
+        concurrent_async || std::env::var("FUSION_CONCURRENT_ASYNC").map_or(false, |v| v == "1"),
+    );
     interpreter.execute(&program);
 
     for line in interpreter.output() {
@@ -121,17 +131,28 @@ fn link_llvm(inputs: &[String], output: &str) -> Result<(), String> {
     }
     let clang = find_clang()?;
     let mut command = Command::new(&clang);
-    command.args(linker_config::FLAGS).args(inputs).arg("-o").arg(output);
+    command
+        .args(linker_config::FLAGS)
+        .args(inputs)
+        .arg("-o")
+        .arg(output);
     let status = command
         .status()
         .map_err(|e| format!("could not start clang at '{}': {}", clang.display(), e))?;
     if !status.success() {
-        return Err(format!("clang failed while linking LLVM IR (using '{}')", clang.display()));
+        return Err(format!(
+            "clang failed while linking LLVM IR (using '{}')",
+            clang.display()
+        ));
     }
     Ok(())
 }
 
-fn build(source: &str, output: &str, package_roots: &std::collections::BTreeMap<String, PathBuf>) -> Result<(), String> {
+fn build(
+    source: &str,
+    output: &str,
+    package_roots: &std::collections::BTreeMap<String, PathBuf>,
+) -> Result<(), String> {
     let ll = fusion::emit_llvm_project_with_package_roots(source, package_roots.clone())?;
     let base = std::env::temp_dir().join(format!(
         "fusion-{}-{}.ll",
@@ -182,18 +203,23 @@ fn main() -> ExitCode {
                     eprintln!("invalid or duplicate --package-source-root");
                     return ExitCode::from(2);
                 }
-            },
+            }
             "--package-root" => {
                 let spec = args.next().unwrap_or_default();
                 let Some((alias, path)) = spec.split_once('=') else {
                     eprintln!("--package-root expects alias=path");
                     return ExitCode::from(2);
                 };
-                if alias.is_empty() || path.is_empty() || package_roots.insert(alias.to_string(), PathBuf::from(path)).is_some() {
+                if alias.is_empty()
+                    || path.is_empty()
+                    || package_roots
+                        .insert(alias.to_string(), PathBuf::from(path))
+                        .is_some()
+                {
                     eprintln!("invalid or duplicate --package-root alias");
                     return ExitCode::from(2);
                 }
-            },
+            }
             _ if command == "link-llvm" && !a.starts_with('-') => llvm_inputs.push(a.clone()),
             _ => {
                 eprintln!("unknown option '{}'", a);
@@ -204,28 +230,33 @@ fn main() -> ExitCode {
 
     let result = match command.as_str() {
         "run" => run_interpreter(&path, concurrent_async, &package_roots),
-        "check" => fusion::compile_project_with_package_roots(&path, package_roots.clone()).map(|_| {
-            println!("ok: {}", path);
-        }),
-        "emit-llvm" => {
-            fusion::emit_llvm_project_with_package_roots(&path, package_roots.clone()).and_then(|ll| write_or_print(output.as_deref(), &ll))
+        "check" => {
+            fusion::compile_project_with_package_roots(&path, package_roots.clone()).map(|_| {
+                println!("ok: {}", path);
+            })
         }
-        "emit-package-llvm" => {
-            match package_source_root.as_deref() {
-                Some(root) => fusion::emit_llvm_package_with_package_roots(&path, package_roots.clone(), root)
-                    .and_then(|ir| write_or_print(output.as_deref(), &ir)),
-                None => Err("emit-package-llvm requires --package-source-root".into()),
+        "emit-llvm" => fusion::emit_llvm_project_with_package_roots(&path, package_roots.clone())
+            .and_then(|ll| write_or_print(output.as_deref(), &ll)),
+        "emit-package-llvm" => match package_source_root.as_deref() {
+            Some(root) => {
+                fusion::emit_llvm_package_with_package_roots(&path, package_roots.clone(), root)
+                    .and_then(|ir| write_or_print(output.as_deref(), &ir))
             }
+            None => Err("emit-package-llvm requires --package-source-root".into()),
+        },
+        "emit-entrypoint-llvm" => {
+            fusion::emit_llvm_entrypoint_with_package_roots(&path, package_roots.clone())
+                .and_then(|ir| write_or_print(output.as_deref(), &ir))
         }
-        "emit-entrypoint-llvm" => fusion::emit_llvm_entrypoint_with_package_roots(&path, package_roots.clone())
-            .and_then(|ir| write_or_print(output.as_deref(), &ir)),
-        "package-interface" => {
-            match package_source_root.as_deref() {
-                Some(root) => fusion::emit_package_interface_with_package_roots(&path, package_roots.clone(), root)
-                    .and_then(|interface| write_or_print(output.as_deref(), &interface)),
-                None => Err("package-interface requires --package-source-root".into()),
-            }
-        }
+        "package-interface" => match package_source_root.as_deref() {
+            Some(root) => fusion::emit_package_interface_with_package_roots(
+                &path,
+                package_roots.clone(),
+                root,
+            )
+            .and_then(|interface| write_or_print(output.as_deref(), &interface)),
+            None => Err("package-interface requires --package-source-root".into()),
+        },
         "package-declarations" => fs::read_to_string(&path)
             .map_err(|error| format!("could not read package interface '{}': {error}", path))
             .and_then(|interface| fusion::emit_package_external_declarations(&interface))
@@ -233,7 +264,10 @@ fn main() -> ExitCode {
         "link-llvm" => link_llvm(&llvm_inputs, output.as_deref().unwrap_or("a.out")),
         "build" => build(&path, output.as_deref().unwrap_or("a.out"), &package_roots),
         "test" => {
-            let options = fusion::test_runner::Options { filter, include_ignored };
+            let options = fusion::test_runner::Options {
+                filter,
+                include_ignored,
+            };
             fusion::test_runner::run_tests(&path, &options).and_then(|summary| {
                 if summary.failed == 0 {
                     Ok(())
@@ -243,7 +277,10 @@ fn main() -> ExitCode {
             })
         }
         "bench" => {
-            let options = fusion::test_runner::Options { filter, include_ignored };
+            let options = fusion::test_runner::Options {
+                filter,
+                include_ignored,
+            };
             fusion::test_runner::run_benchmarks(&path, &options).and_then(|failed| {
                 if failed == 0 {
                     Ok(())
@@ -253,8 +290,13 @@ fn main() -> ExitCode {
             })
         }
         "doc" => {
-            let format = if html { fusion::doc_gen::Format::Html } else { fusion::doc_gen::Format::Markdown };
-            fusion::doc_gen::generate(&path, format).and_then(|text| write_or_print(output.as_deref(), &text))
+            let format = if html {
+                fusion::doc_gen::Format::Html
+            } else {
+                fusion::doc_gen::Format::Markdown
+            };
+            fusion::doc_gen::generate(&path, format)
+                .and_then(|text| write_or_print(output.as_deref(), &text))
         }
         _ => {
             usage();
@@ -277,14 +319,24 @@ mod cli_tests {
 
     #[test]
     fn link_llvm_validates_every_input_before_looking_for_clang() {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let existing = std::env::temp_dir().join(format!("fusion-existing-ir-{}-{nonce}.ll", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let existing = std::env::temp_dir().join(format!(
+            "fusion-existing-ir-{}-{nonce}.ll",
+            std::process::id()
+        ));
         std::fs::write(&existing, "; placeholder\n").unwrap();
         let missing = existing.with_extension("missing.ll");
-        let error = link_llvm(&[
-            existing.to_string_lossy().into_owned(),
-            missing.to_string_lossy().into_owned(),
-        ], "unused-output").unwrap_err();
+        let error = link_llvm(
+            &[
+                existing.to_string_lossy().into_owned(),
+                missing.to_string_lossy().into_owned(),
+            ],
+            "unused-output",
+        )
+        .unwrap_err();
         assert!(error.contains("LLVM input"));
         assert!(error.contains("does not exist"));
         let _ = std::fs::remove_file(existing);
@@ -295,9 +347,13 @@ mod cli_tests {
         let missing = std::env::temp_dir().join(format!(
             "fusion-missing-ir-{}-{}.ll",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
-        let error = link_llvm(&[missing.to_string_lossy().into_owned()], "unused-output").unwrap_err();
+        let error =
+            link_llvm(&[missing.to_string_lossy().into_owned()], "unused-output").unwrap_err();
         assert!(error.contains("LLVM input"));
         assert!(error.contains("does not exist"));
     }
