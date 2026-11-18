@@ -2413,7 +2413,7 @@ fn validate_package_link_inputs(
         if expected.llvm_type != actual_type {
             return Err(format!("cross-package data ABI mismatch for '{}': {} declares {}, but provider {} exports {}", symbol, consumer.display(), actual_type, provider_ir.display(), expected.llvm_type));
         }
-        if !expected.public && !(consumer == entrypoint && provider_interface == root_package_interface) && consumer != provider_ir {
+        if !expected.public && !(consumer == entrypoint && provider_interface == root_package_interface) && consumer.as_path() != provider_ir.as_path() {
             return Err(format!("private package data '{}' is referenced outside its owning package", symbol));
         }
     }
@@ -2757,6 +2757,76 @@ fn build_provenance_contents(
     Ok(contents)
 }
 
+/// Collect C translation units from the project's `c/` directory (recursive).
+fn foundry_c_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+        let entries = fs::read_dir(dir).map_err(|e| format!("read foreign source directory {}: {e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("read directory entry: {e}"))?;
+            let path = entry.path();
+            if path.is_dir() { walk(&path, out)?; }
+            else if path.extension().and_then(OsStr::to_str).is_some_and(|ext| ext.eq_ignore_ascii_case("c")) { out.push(path); }
+        }
+        Ok(())
+    }
+    let dir = root.join("c");
+    if !dir.is_dir() { return Ok(Vec::new()); }
+    let mut sources = Vec::new();
+    walk(&dir, &mut sources)?;
+    sources.sort();
+    Ok(sources)
+}
+
+fn c_compiler() -> Result<PathBuf, String> {
+    if let Some(cc) = env::var_os("CC") {
+        let path = PathBuf::from(cc);
+        if path.is_file() { return Ok(path); }
+        if let Some(found) = find_on_path(path.to_string_lossy().as_ref()) { return Ok(found); }
+        return Err(format!("CC is set to '{}' but the C compiler was not found", path.display()));
+    }
+    let compiler_names: &[&str] = if cfg!(windows) {
+        &["clang", "clang.exe", "gcc", "gcc.exe"]
+    } else {
+        &["clang", "gcc", "cc"]
+    };
+    for name in compiler_names {
+        if let Some(path) = find_on_path(name) { return Ok(path); }
+    }
+    Err("C sources found in project 'c/' but no C compiler detected; install Clang or GCC, or set CC".into())
+}
+
+fn compile_project_c(root: &Path, sources: &[PathBuf], out_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    if sources.is_empty() { return Ok(Vec::new()); }
+    let compiler = c_compiler()?;
+    let c_dir = root.join("c");
+    let object_dir = out_dir.join("foreign-c");
+    fs::create_dir_all(&object_dir).map_err(|e| format!("create C object directory: {e}"))?;
+    let flags: Vec<String> = env::var("FOUNDRY_CFLAGS").unwrap_or_default().split_whitespace().map(str::to_owned).collect();
+    let version = Command::new(&compiler).arg("--version").output().map(|output| {
+        format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
+    }).unwrap_or_else(|_| "<compiler-version-unavailable>".to_string());
+    let compiler_identity = fingerprint::fingerprint_fields([compiler.to_string_lossy().as_bytes(), version.as_bytes(), flags.join("\0").as_bytes()]);
+    let mut objects = Vec::new();
+    for (i, source) in sources.iter().enumerate() {
+        let rel = source.strip_prefix(&c_dir).unwrap_or(source);
+        let source_bytes = fs::read(source).map_err(|e| format!("read C source {}: {e}", source.display()))?;
+        let identity = fingerprint::fingerprint_fields([rel.to_string_lossy().as_bytes(), source_bytes.as_slice(), compiler_identity.as_bytes()]);
+        let object = object_dir.join(format!("{i}-{identity}.{}", if cfg!(windows) { "obj" } else { "o" }));
+        if !object.is_file() {
+            let temp = object.with_extension(if cfg!(windows) { "obj.tmp" } else { "o.tmp" });
+            let mut cmd = Command::new(&compiler);
+            cmd.args(&flags).arg("-c").arg(source).arg("-o").arg(&temp).current_dir(root);
+            let success = cmd.status().map_err(|e| format!("could not start C compiler '{}': {e}", compiler.display()))?.success();
+            if !success { let _ = fs::remove_file(&temp); return Err(format!("C compiler failed compiling {}", source.display())); }
+            if !temp.is_file() { return Err(format!("C compiler reported success but did not create {}", temp.display())); }
+            if object.exists() { fs::remove_file(&object).map_err(|e| format!("replace C object: {e}"))?; }
+            fs::rename(&temp, &object).map_err(|e| format!("publish C object {}: {e}", object.display()))?;
+        }
+        objects.push(object);
+    }
+    Ok(objects)
+}
+
 fn build_inner(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra: &[String], resolve: bool) -> Result<PathBuf, String> {
     if resolve {
         resolve_dependencies(p, env::var_os("FOUNDRY_OFFLINE").is_some())?;
@@ -2775,6 +2845,7 @@ fn build_inner(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra:
         p.manifest.package.name.clone()
     });
     let compiler = find_project_fusion(p, fusion)?;
+    let c_sources = foundry_c_sources(&p.root)?;
     let mut fingerprint_inputs: Vec<Vec<u8>> = Vec::new();
     fingerprint_inputs.push(b"foundry-build-key-v3".to_vec());
     fingerprint_inputs.push(p.manifest.package.name.as_bytes().to_vec());
@@ -2798,6 +2869,20 @@ fn build_inner(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra:
         }
     }
     fingerprint_inputs.extend(extra.iter().map(|x| x.as_bytes().to_vec()));
+    fingerprint_inputs.push(b"foundry-c-sources-v2".to_vec());
+    if !c_sources.is_empty() {
+        let c_compiler = c_compiler()?;
+        fingerprint_inputs.push(c_compiler.to_string_lossy().as_bytes().to_vec());
+        let c_version = Command::new(&c_compiler).arg("--version").output().map(|output| {
+            format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
+        }).unwrap_or_else(|_| "<compiler-version-unavailable>".to_string());
+        fingerprint_inputs.push(c_version.into_bytes());
+        fingerprint_inputs.push(env::var("FOUNDRY_CFLAGS").unwrap_or_default().into_bytes());
+    }
+    for source in &c_sources {
+        fingerprint_inputs.push(source.strip_prefix(&p.root).unwrap_or(source).to_string_lossy().as_bytes().to_vec());
+        fingerprint_inputs.push(fs::read(source).map_err(|e| format!("read C source {} for fingerprint: {e}", source.display()))?);
+    }
     // Keep package-level keys in dependency-first order. Each package module is
     // independently cached, while the entrypoint/runtime key follows the root
     // package key so transitive ABI changes invalidate the final link inputs.
@@ -2900,6 +2985,7 @@ fn build_inner(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra:
     }
     // Link to a sibling staging path. A failed linker must never truncate or
     // replace the last known-good executable from the previous successful build.
+    let c_objects = compile_project_c(&p.root, &c_sources, &dir)?;
     let staged_output = link_staging_path(&out);
     let _ = fs::remove_file(&staged_output);
     let mut linker = Command::new(&compiler);
@@ -2912,6 +2998,7 @@ fn build_inner(p: &Project, profile: BuildProfile, fusion: Option<&Path>, extra:
         })?;
         linker.arg(artifact);
     }
+    for object in &c_objects { linker.arg(object); }
     linker.arg("-o").arg(&staged_output);
     let link_succeeded = match run(&mut linker, &p.root) {
         Ok(succeeded) => succeeded,
@@ -4217,9 +4304,9 @@ git_dep = { git = "https://example.invalid/repo.git", tag = "v1.2.0" }
 
     #[test]
     fn manifest_rejects_multiple_dependency_sources_and_unsafe_names() {
-        let multiple = "[package]\nname = \\"demo\\"\n[dependencies]\nx = { path = \\"../x\\", version = \\"1\\" }\n";
+        let multiple = "[package]\nname = \"demo\"\n[dependencies]\nx = { path = \"../x\", version = \"1\" }\n";
         assert!(parse_manifest(multiple).is_err());
-        let unsafe_name = "[package]\nname = \\"demo\\"\n[dependencies]\n\\"../escape\\" = \\"1\\"\n";
+        let unsafe_name = "[package]\nname = \"demo\"\n[dependencies]\n\"../escape\" = \"1\"\n";
         assert!(parse_manifest(unsafe_name).is_err());
     }
 

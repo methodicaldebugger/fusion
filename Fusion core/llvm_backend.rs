@@ -503,8 +503,15 @@ impl LLVMBackend {
                         && statement_index < module.statement_end
                 })
                 .map(|module| module.name.clone());
-            if let Statement::Function { name, .. } = stmt {
-                self.emit_function(stmt, name, None)?;
+            if let Statement::Function {
+                name,
+                foreign_abi,
+                ..
+            } = stmt
+            {
+                if foreign_abi.is_none() {
+                    self.emit_function(stmt, name, None)?;
+                }
             } else if let Statement::Impl {
                 type_name, methods, ..
             } = stmt
@@ -721,8 +728,12 @@ entry:
                     parameters,
                     return_type,
                     body,
+                    foreign_abi,
                     ..
                 } => {
+                    if foreign_abi.is_some() {
+                        continue;
+                    }
                     if self.functions.contains_key(name) {
                         continue;
                     }

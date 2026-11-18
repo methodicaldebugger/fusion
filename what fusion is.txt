@@ -101,10 +101,10 @@ The general principle is to recommend only as much integration as necessary. The
 This crate defines the language/toolchain-neutral vocabulary for crossing the Fusion/foreign boundary. It deliberately contains no compiler process management. Foundry resolves *what* a project needs. The toolchain orchestrator decides *how/with which tools* to build it.
 
 There are 5 layers of interoperability:
-1. Native ABI: the foreign code is compiled into a static or shared library and linked into the Fusion binary. Layer 1 has two forms: dynamic load for the interpreter and static link for AOT. The foreign code is called directly from Fusion code, and vice versa, using the platform's native ABI. Excellent interoperability. Very little overhead.
-2. Managed runtime: means a GC’d VM such as the JVM or CLR, loaded in-process, with handle tables and thread attach. Is very powerful, but requires runtime integration.
+1. Native ABI: the foreign code is compiled into a static or shared library and linked into the Fusion binary. Layer 1 has two forms: dynamic load for the interpreter and static link for AOT. The foreign code is called directly from Fusion code, and vice versa, using the platform's native ABI. Excellent interoperability. Very little overhead. Used for the C and Swift languages.
+2. Managed runtime: means a GC’d VM such as the JVM or CLR, loaded in-process, with handle tables and thread attach. Is very powerful, but requires runtime integration. Used for the Kotlin and C# languages.
 3. Embedded runtime: means an interpreter such as CPython or Lua embedded in-process, with reference-count bridging and the GIL. It has more overhead, but is potentially extremely useful.
-4. Process: the foreign code is compiled into a separate executable that is launched by the Fusion process. The foreign code is called from Fusion code via inter-process communication (IPC), and vice versa. The foreign library runs independently.
+4. Process: the foreign code is compiled into a separate executable that is launched by the Fusion process. The foreign code is called from Fusion code via inter-process communication (IPC), and vice versa. The foreign library runs independently. Used for the python language.
 5. WebAssembly: the foreign code is compiled into a WebAssembly module that is loaded into the Fusion process, and called via the WebAssembly runtime. a very portable integration mechanism.
 
 foundry.toml could eventually specify something conceptually like:

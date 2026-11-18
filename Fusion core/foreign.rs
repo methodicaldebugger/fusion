@@ -7,6 +7,81 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Explicit ABI contract for a Phase 4 foreign declaration. This model is
+/// intentionally independent of Fusion's general type system until lowering is
+/// implemented in the next milestone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForeignAbiType {
+    Void,
+    I8, U8, I16, U16, I32, U32, I64, U64,
+    F32, F64,
+    /// A raw pointer whose pointee is not interpreted by Fusion.
+    OpaquePointer,
+}
+
+impl ForeignAbiType {
+    /// Map the Phase 4 C declaration spelling to the supported ABI subset.
+    pub fn from_type_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "void" => Self::Void,
+            "i8" => Self::I8,
+            "u8" => Self::U8,
+            "i16" => Self::I16,
+            "u16" => Self::U16,
+            "i32" => Self::I32,
+            "u32" => Self::U32,
+            "i64" => Self::I64,
+            "u64" => Self::U64,
+            "f32" => Self::F32,
+            "f64" => Self::F64,
+            "*opaque" => Self::OpaquePointer,
+            _ => return None,
+        })
+    }
+
+    /// Whether this type is allowed as a parameter in the initial C ABI subset.
+    pub fn is_parameter_supported(&self) -> bool {
+        !matches!(self, Self::Void)
+    }
+
+    /// Whether this type is allowed as a return type in the initial C ABI subset.
+    pub fn is_return_supported(&self) -> bool {
+        true
+    }
+}
+
+/// Language-level declaration metadata. Phase 4.2 defines and validates the
+/// declaration shape; invocation lowering is intentionally not implemented yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignFunctionDecl {
+    pub source_name: String,
+    pub link_name: String,
+    pub parameters: Vec<ForeignAbiType>,
+    pub return_type: ForeignAbiType,
+    pub calling_convention: ForeignCallingConvention,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForeignCallingConvention {
+    /// The platform's C ABI (the only supported convention in Phase 4).
+    C,
+}
+
+impl ForeignFunctionDecl {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.source_name.trim().is_empty() {
+            return Err("foreign function name cannot be empty".into());
+        }
+        if self.link_name.trim().is_empty() {
+            return Err("foreign symbol name cannot be empty".into());
+        }
+        if let Some(index) = self.parameters.iter().position(|p| !p.is_parameter_supported()) {
+            return Err(format!("foreign parameter {} cannot use void", index + 1));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ForeignKind {
     C,

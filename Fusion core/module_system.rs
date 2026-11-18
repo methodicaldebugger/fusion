@@ -9656,6 +9656,8 @@ mod hir_structural_type_tests {
             return_type: Some("Item".into()),
             body: Vec::new(),
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let module = ModuleUnit {

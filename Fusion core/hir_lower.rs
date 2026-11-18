@@ -319,8 +319,17 @@ impl HirLowerer {
                 return_type,
                 body,
                 is_async,
+                foreign_abi,
                 span,
+                ..
             } => {
+                if foreign_abi.is_some() {
+                    self.declare(name);
+                    return Ok(HirStatement::Block {
+                        statements: Vec::new(),
+                        span: *span,
+                    });
+                }
                 let identity = self.identity(name, HirDefinitionKind::Function);
                 let function = self.lower_function(
                     name,
@@ -441,6 +450,7 @@ impl HirLowerer {
                         body,
                         is_async,
                         span: method_span,
+                        ..
                     } = method
                     else {
                         return Err(
@@ -843,6 +853,8 @@ mod tests {
                 span,
             }],
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let structure = Statement::Struct {
@@ -866,6 +878,8 @@ mod tests {
                 span,
             }],
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let implementation = Statement::Impl {
@@ -1051,6 +1065,8 @@ mod tests {
             return_type: None,
             body: vec![],
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let make_module = |name: &str| crate::module_system::ModuleUnit {
@@ -1116,6 +1132,8 @@ mod tests {
             return_type: None,
             body: vec![],
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let main = Statement::Main {
@@ -1201,6 +1219,8 @@ mod tests {
             return_type: None,
             body: vec![],
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let main = Statement::Main {
@@ -1265,6 +1285,8 @@ mod tests {
             return_type: Some("Self".into()),
             body: vec![],
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span,
         };
         let implementation = Statement::Impl {

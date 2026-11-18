@@ -43,6 +43,8 @@ pub struct FunctionType {
 pub struct TypeEnvironment {
     pub scopes: Vec<HashMap<String, VariableInfo>>,
     pub functions: HashMap<String, FunctionType>,
+    /// Foreign declarations are known for diagnostics but cannot be invoked until native lowering exists.
+    pub foreign_functions: HashSet<String>,
     pub structs: HashMap<String, StructDefinition>,
     pub enums: HashMap<String, EnumDefinition>,
     /// Authoritative project definitions indexed by stable HIR declaration ID.
@@ -204,6 +206,7 @@ impl TypeChecker {
             environment: TypeEnvironment {
                 scopes: vec![HashMap::new()],
                 functions,
+                foreign_functions: HashSet::new(),
                 structs: HashMap::new(),
                 enums: HashMap::new(),
                 structs_by_id: HashMap::new(),
@@ -511,6 +514,7 @@ impl TypeChecker {
             "TcpStream" => Ok(Type::TcpStream),
 
             "unknown" => Ok(Type::Unknown),
+            "*opaque" => Ok(Type::Generic("*opaque".to_string())),
 
             _ if name.ends_with("[]") => {
                 let inner = &name[..name.len() - 2];
@@ -582,6 +586,9 @@ impl TypeChecker {
         generic_parameters: &[String],
         span: Span,
     ) -> Result<Type, FusionError> {
+        if name == "*opaque" {
+            return Ok(Type::Generic("*opaque".to_string()));
+        }
         if name == "Self" {
             return Ok(Type::Unknown);
         }
@@ -1551,6 +1558,16 @@ impl TypeChecker {
         generic_arguments: &[String],
         span: Span,
     ) -> Result<Type, FusionError> {
+        if self.environment.foreign_functions.contains(name) {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "calling foreign function '{}' is not supported yet; native call lowering is planned for Phase 4.4",
+                    name
+                ),
+                span,
+            });
+        }
+
         if let Some(struct_definition) = self.struct_definition(name).cloned() {
             if !generic_arguments.is_empty() {
                 return Err(FusionError::Syntax {
@@ -3460,6 +3477,7 @@ impl TypeChecker {
                     body,
                     is_async,
                     span,
+                    ..
                 } => {
                     let parameter_types = parameters
                         .iter()
@@ -3851,10 +3869,60 @@ impl TypeChecker {
                 parameters,
                 return_type,
                 is_async,
+                foreign_abi,
+                link_name,
                 span,
                 ..
             } = statement
             {
+                if let Some(abi) = foreign_abi {
+                    if abi != "C" {
+                        return Err(FusionError::Syntax {
+                            message: format!("Unsupported foreign ABI '{}'; only C is supported", abi),
+                            span: *span,
+                        });
+                    }
+
+                    let abi_parameters = parameters
+                        .iter()
+                        .enumerate()
+                        .map(|(index, parameter)| {
+                            let type_name = parameter.type_name.as_deref().ok_or_else(|| {
+                                FusionError::Syntax {
+                                    message: format!("Foreign parameter {} requires an explicit ABI type", index + 1),
+                                    span: parameter.span,
+                                }
+                            })?;
+                            crate::foreign::ForeignAbiType::from_type_name(type_name).ok_or_else(|| {
+                                FusionError::Syntax {
+                                    message: format!("Unsupported C ABI parameter type '{}' for '{}'", type_name, name),
+                                    span: parameter.span,
+                                }
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    let return_name = return_type.as_deref().unwrap_or("void");
+                    let abi_return = crate::foreign::ForeignAbiType::from_type_name(return_name)
+                        .ok_or_else(|| FusionError::Syntax {
+                            message: format!("Unsupported C ABI return type '{}' for '{}'", return_name, name),
+                            span: *span,
+                        })?;
+
+                    let declaration = crate::foreign::ForeignFunctionDecl {
+                        source_name: name.clone(),
+                        link_name: link_name.clone().unwrap_or_else(|| name.clone()),
+                        parameters: abi_parameters,
+                        return_type: abi_return,
+                        calling_convention: crate::foreign::ForeignCallingConvention::C,
+                    };
+                    declaration.validate().map_err(|message| FusionError::Syntax {
+                        message,
+                        span: *span,
+                    })?;
+                    self.environment.foreign_functions.insert(name.clone());
+                }
+
                 if self.environment.functions.contains_key(name) {
                     return Err(FusionError::Syntax {
                         message: format!("Duplicate function '{}'", name),
@@ -3936,17 +4004,21 @@ impl TypeChecker {
                     return_type,
                     body,
                     is_async,
+                    foreign_abi,
                     span,
+                    ..
                 } => {
-                    self.check_function_body(
-                        name,
-                        generic_parameters,
-                        parameters,
-                        return_type.as_ref(),
-                        body,
-                        *is_async,
-                        *span,
-                    )?;
+                    if foreign_abi.is_none() {
+                        self.check_function_body(
+                            name,
+                            generic_parameters,
+                            parameters,
+                            return_type.as_ref(),
+                            body,
+                            *is_async,
+                            *span,
+                        )?;
+                    }
                 }
 
                 Statement::Trait { methods, span, .. } => {
@@ -4386,4 +4458,55 @@ mod hir_nominal_identity_tests {
         }];
         assert!(!checker.block_returns(&statements));
     }
+}
+
+
+#[cfg(test)]
+mod foreign_declaration_typecheck_tests {
+    use super::*;
+    use crate::lexer::{BlockMode, Lexer};
+    use crate::parser::Parser;
+
+    #[test]
+    fn registers_a_valid_c_foreign_signature() {
+        let source = "extern \"C\" {\n    fn fusion_helper(value: i32) -> i32;\n}\nmain:\n    print(1)\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("source should parse");
+
+        let mut checker = TypeChecker::new();
+        checker.check(&program).expect("foreign signature should type-check");
+
+        let signature = checker.environment.functions.get("fusion_helper")
+            .expect("foreign function should be registered");
+        assert_eq!(signature.parameters, vec![Type::Generic("i32".into())]);
+        assert_eq!(signature.return_type, Type::Generic("i32".into()));
+    }
+
+    #[test]
+    fn rejects_void_foreign_parameters() {
+        let source = "extern \"C\" {\n    fn invalid(value: void);\n}\nmain:\n    print(1)\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("source should parse");
+
+        let mut checker = TypeChecker::new();
+        assert!(checker.check(&program).is_err());
+    }
+
+    #[test]
+    fn rejects_foreign_invocation_until_native_call_lowering_exists() {
+        let source = "extern \"C\" {\n    fn fusion_helper(value: i32) -> i32;\n}\nmain:\n    print(fusion_helper(21))\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("source should parse");
+
+        let mut checker = TypeChecker::new();
+        let error = checker.check(&program).expect_err("foreign calls are not lowered yet");
+        assert!(error.to_string().contains("Phase 4.4"));
+    }
+
 }

@@ -41,6 +41,8 @@ pub struct Parser {
     current_function_return_type: Option<Option<String>>,
     function_depth: usize,
     loop_depth: usize,
+    /// Additional declarations produced by a single `extern` block.
+    pending_statements: Vec<Statement>,
 }
 
 impl Parser {
@@ -55,6 +57,7 @@ impl Parser {
             current_function_return_type: None,
             function_depth: 0,
             loop_depth: 0,
+            pending_statements: Vec::new(),
         }
     }
 
@@ -235,6 +238,15 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<String, ParseError> {
+        if self.consume(&Token::Star) {
+            return match self.current() {
+                Token::Identifier(name) if name == "opaque" => {
+                    self.advance();
+                    Ok("*opaque".to_string())
+                }
+                _ => self.error("Only '*opaque' pointer types are supported in foreign declarations"),
+            };
+        }
         if self.consume(&Token::LeftParen) {
             let mut items = Vec::new();
             if self.current() != &Token::RightParen {
@@ -326,6 +338,10 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_statement(&mut self) -> Result<Option<Statement>, ParseError> {
+        if !self.pending_statements.is_empty() {
+            return Ok(Some(self.pending_statements.remove(0)));
+        }
+
         match self.current() {
             Token::Pub => {
                 self.advance();
@@ -521,6 +537,13 @@ impl Parser {
             Token::Async => Ok(Some(self.parse_async_function()?)),
 
             Token::From => Ok(Some(self.parse_selective_import()?)),
+
+            Token::Identifier(name) if name == "extern" => {
+                if self.function_depth > 0 {
+                    return self.error("Foreign declarations are only allowed at the top level");
+                }
+                Ok(Some(self.parse_foreign_block()?))
+            }
 
             Token::Await => self.error("'await' must be used as an expression"),
 
@@ -1932,11 +1955,133 @@ impl Parser {
                 return_type,
                 body,
                 is_async: true,
+                foreign_abi: None,
+                link_name: None,
                 span: Span::new(start, span.end),
             }),
 
             _ => unreachable!(),
         }
+    }
+
+    /// Parse a block of C ABI declarations. Each prototype is represented as a
+    /// function declaration in the AST; additional declarations are queued for
+    /// the ordinary top-level parser loop.
+    fn parse_foreign_block(&mut self) -> Result<Statement, ParseError> {
+        let block_start = self.current_span().start;
+        self.advance(); // extern
+
+        let abi = match self.current() {
+            Token::String(name) if name == "C" => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+            Token::String(_) => return self.error("Only extern \"C\" is supported"),
+            _ => return self.error("Expected ABI string after 'extern' (for example, extern \"C\")"),
+        };
+
+        if !self.consume(&Token::LeftBrace) {
+            return self.error("Expected '{' after extern ABI");
+        }
+
+        self.skip_newlines();
+        let mut declarations = Vec::new();
+
+        while self.current() != &Token::RightBrace && self.current() != &Token::Eof {
+            let declaration_start = self.current_span().start;
+            if !self.consume(&Token::Fn) {
+                return self.error("Expected a function prototype inside extern block");
+            }
+
+            let name = match self.current() {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+                _ => return self.error("Expected foreign function name after 'fn'"),
+            };
+
+            if !self.consume(&Token::LeftParen) {
+                return self.error("Expected '(' after foreign function name");
+            }
+
+            let mut parameters = Vec::new();
+            while self.current() != &Token::RightParen && self.current() != &Token::Eof {
+                let parameter_start = self.current_span().start;
+                let name_span = self.current_span();
+                let parameter_name = match self.current() {
+                    Token::Identifier(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    }
+                    _ => return self.error("Expected foreign parameter name"),
+                };
+
+                if !self.consume(&Token::Colon) {
+                    return self.error("Foreign parameters require an explicit ABI type");
+                }
+                let type_name = self.parse_type()?;
+                parameters.push(Parameter {
+                    name: parameter_name,
+                    name_span,
+                    type_name: Some(type_name),
+                    span: self.span_from(parameter_start),
+                });
+
+                if self.consume(&Token::Comma) {
+                    if self.current() == &Token::RightParen {
+                        break;
+                    }
+                } else if self.current() != &Token::RightParen {
+                    return self.error("Expected ',' or ')' after foreign parameter");
+                }
+            }
+
+            if !self.consume(&Token::RightParen) {
+                return self.error("Expected ')' after foreign parameters");
+            }
+
+            let return_type = if self.consume(&Token::Arrow) {
+                Some(self.parse_type()?)
+            } else {
+                Some("void".to_string())
+            };
+
+            if !self.consume(&Token::Semicolon) {
+                return self.error("Expected ';' after foreign function prototype");
+            }
+
+            let span = self.span_from(declaration_start);
+            declarations.push(Statement::Function {
+                name: name.clone(),
+                generic_parameters: Vec::new(),
+                parameters,
+                return_type,
+                body: Vec::new(),
+                is_async: false,
+                foreign_abi: Some(abi.clone()),
+                link_name: Some(name),
+                span,
+            });
+
+            self.skip_newlines();
+        }
+
+        if !self.consume(&Token::RightBrace) {
+            return self.error("Expected '}' to close extern block");
+        }
+        if declarations.is_empty() {
+            return self.error("extern block must contain at least one function prototype");
+        }
+
+        let mut declarations = declarations.into_iter();
+        let first = declarations.next().expect("non-empty declarations checked");
+        self.pending_statements.extend(declarations);
+        let _ = block_start;
+        Ok(first)
     }
 
     fn parse_function(&mut self) -> Result<Statement, ParseError> {
@@ -2118,6 +2263,8 @@ impl Parser {
             return_type,
             body,
             is_async: false,
+            foreign_abi: None,
+            link_name: None,
             span: self.span_from(start),
         })
     }
@@ -3127,7 +3274,7 @@ impl Parser {
 
         self.skip_newlines();
 
-        while self.current() != &Token::Eof {
+        while self.current() != &Token::Eof || !self.pending_statements.is_empty() {
             match self.parse_statement()? {
                 Some(statement) => {
                     statements.push(statement);
@@ -3211,5 +3358,59 @@ mod inferred_let_parser_tests {
         let tokens = lexer.tokenize().expect("expression/type braces should lex");
         let mut parser = Parser::new(tokens);
         parser.parse().expect("struct braces should not select file block style");
+    }
+}
+
+
+#[cfg(test)]
+mod foreign_declaration_parser_tests {
+    use super::*;
+    use crate::lexer::{BlockMode, Lexer};
+
+    #[test]
+    fn parses_multiple_c_abi_declarations_and_opaque_handles() {
+        let source = r#"extern "C" {
+    fn fusion_helper(value: i32) -> i32;
+    fn fusion_release(handle: *opaque);
+}
+main:
+    print("foreign declarations parsed")
+"#;
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("foreign source should lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("foreign declarations should parse");
+
+        assert_eq!(program.statements.len(), 3);
+        let Statement::Function {
+            name,
+            parameters,
+            return_type,
+            foreign_abi,
+            link_name,
+            ..
+        } = &program.statements[0] else {
+            panic!("expected first foreign function");
+        };
+        assert_eq!(name, "fusion_helper");
+        assert_eq!(parameters[0].type_name.as_deref(), Some("i32"));
+        assert_eq!(return_type.as_deref(), Some("i32"));
+        assert_eq!(foreign_abi.as_deref(), Some("C"));
+        assert_eq!(link_name.as_deref(), Some("fusion_helper"));
+
+        let Statement::Function { parameters, return_type, .. } = &program.statements[1] else {
+            panic!("expected second foreign function");
+        };
+        assert_eq!(parameters[0].type_name.as_deref(), Some("*opaque"));
+        assert_eq!(return_type.as_deref(), Some("void"));
+    }
+
+    #[test]
+    fn rejects_non_c_foreign_abis() {
+        let source = "extern \"Python\" { fn run(); }\nmain:\n    print(1)\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        assert!(parser.parse().is_err());
     }
 }

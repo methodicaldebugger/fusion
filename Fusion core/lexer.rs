@@ -101,6 +101,7 @@ pub enum Token {
     Hash,
     RightBracket,
     Comma,
+    Semicolon,
     Colon,
     Dot,
     DotDot,
@@ -179,6 +180,35 @@ impl Lexer {
             }
 
             let declaration = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+
+            // Foreign declaration groups use braces regardless of the file's
+            // ordinary function/block style. Skip the complete group while
+            // detecting that style so a `fn` prototype inside `extern "C"`
+            // is not mistaken for a Fusion function definition.
+            if declaration.starts_with("extern ") {
+                let mut depth = 0usize;
+                let mut opened = false;
+                while index < lines.len() {
+                    for ch in lines[index].chars() {
+                        match ch {
+                            '{' => {
+                                depth += 1;
+                                opened = true;
+                            }
+                            '}' if opened => {
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
+                    }
+                    index += 1;
+                    if opened && depth == 0 {
+                        break;
+                    }
+                }
+                continue;
+            }
+
             let is_block_declaration = declaration.starts_with("main")
                 || declaration.starts_with("fn ")
                 || declaration.starts_with("async fn ")
@@ -623,12 +653,15 @@ impl Lexer {
                             && self.input[start..].iter().position(|c| *c == '}').is_some_and(|end| {
                                 !self.input[start..start + end].contains(&'\n')
                             });
-                        let block_header = ["main", "fn ", "async fn ", "if ", "else", "while ", "for ", "match ", "trait ", "impl "]
+                        let block_header = ["main", "fn ", "async fn ", "extern ", "if ", "else", "while ", "for ", "match ", "trait ", "impl "]
                             .iter().any(|prefix| trimmed.starts_with(prefix));
                         let named_literal = !trimmed.starts_with("struct ")
                             && !block_header
                             && trimmed.chars().last().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
-                        if !inline_declaration && !named_literal {
+                        // Block headers (including `extern "C"`) are allowed
+                        // to open brace-delimited blocks even when the file's
+                        // ordinary Fusion syntax uses indentation.
+                        if !inline_declaration && !block_header && !named_literal {
                             return self.error("Braces are not allowed in indentation mode; use ':' for blocks");
                         }
                     }
@@ -647,7 +680,10 @@ impl Lexer {
 
                     return Ok(Spanned::new(Token::RightBrace, start, self.position));
                 }
-                ';' => return self.error("semicolons are not allowed in Fusion"),
+                ';' => {
+                    self.advance();
+                    return Ok(Spanned::new(Token::Semicolon, start, self.position));
+                }
                 '"' => {
                     return Ok(Spanned::new(
                         Token::String(self.read_string()?),

@@ -95,6 +95,8 @@ fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
             span,
         }],
         is_async: false,
+            foreign_abi: None,
+            link_name: None,
         span,
     };
     Statement::Impl {

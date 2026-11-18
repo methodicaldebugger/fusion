@@ -154,6 +154,10 @@ pub enum Statement {
         return_type: Option<String>,
         body: Vec<Statement>,
         is_async: bool,
+        /// Present for a declaration supplied by a foreign ABI rather than a Fusion body.
+        foreign_abi: Option<String>,
+        /// Native linker symbol; defaults to the source-level function name.
+        link_name: Option<String>,
         span: Span,
     },
 

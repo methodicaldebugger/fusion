@@ -1,7 +1,7 @@
 This folder(Shared ecosystem infrastructure) is downloaded, whenever an ecosystem plugin is required. Inside of it, are 3 folders.
 The first folder is "toolchain-orchestrator", the second "static analyser", third "fusion-interop-model".
 It is the job of these folders to make the next ecosystem plugin easier to install/integrate(not just the first).
-The other ecosystem folders like C, C++, C#, java, golang, Kotlin, Swift, nim, zig, contain their respective language peculiarities(unique properties/features).
+The other ecosystem folders like C, C#, Kotlin, Swift, Python contain their respective language peculiarities(unique properties/features).
 This folder is agnostic to the ecosystem plugins, it merely enables fusion to be integration/interoperability ready.
 Below are the former readme.md's for the relevant folders.
 
@@ -123,9 +123,9 @@ This crate defines the language/toolchain-neutral vocabulary for crossing the Fu
 
 the toolchain orchestrator decides *how/with which tools* to build it.
 
-There are 5 layers of interoperability:
-1. Native ABI: the foreign code is compiled into a static or shared library and linked into the Fusion binary. The foreign code is called directly from Fusion code, and vice versa, using the platform's native ABI.
-2. Managed runtime: the foreign code is compiled into a library that is loaded into the Fusion process, and called via a managed runtime (e.g. JVM, CLR, etc.). The foreign code is called from Fusion code via the managed runtime's interop facilities, and vice versa.
-3. Embedded runtime: the foreign code is compiled into a library that is loaded into the Fusion process, and called via an embedded runtime.
-4. Process: the foreign code is compiled into a separate executable that is launched by the Fusion process. The foreign code is called from Fusion code via inter-process communication (IPC), and vice versa.
-5. WebAssembly: the foreign code is compiled into a WebAssembly module that is loaded into the Fusion process, and called via the WebAssembly runtime.
+here are 5 layers of interoperability:
+1. Native ABI: the foreign code is compiled into a static or shared library and linked into the Fusion binary. Layer 1 has two forms: dynamic load for the interpreter and static link for AOT. The foreign code is called directly from Fusion code, and vice versa, using the platform's native ABI. Excellent interoperability. Very little overhead. Used for the C and Swift languages.
+2. Managed runtime: means a GC’d VM such as the JVM or CLR, loaded in-process, with handle tables and thread attach. Is very powerful, but requires runtime integration. Used for the Kotlin and C# languages.
+3. Embedded runtime: means an interpreter such as CPython or Lua embedded in-process, with reference-count bridging and the GIL. It has more overhead, but is potentially extremely useful.
+4. Process: the foreign code is compiled into a separate executable that is launched by the Fusion process. The foreign code is called from Fusion code via inter-process communication (IPC), and vice versa. The foreign library runs independently. Used for the python language.
+5. WebAssembly: the foreign code is compiled into a WebAssembly module that is loaded into the Fusion process, and called via the WebAssembly runtime. a very portable integration mechanism.

@@ -1000,6 +1000,23 @@ impl Interpreter {
 
     /// Calls a registered top-level function by name with already-evaluated arguments.
     pub fn call_function_by_name(&mut self, name: &str, values: Vec<Value>) -> Value {
+        if self.program.as_deref().is_some_and(|program| {
+            program.statements.iter().any(|statement| {
+                matches!(
+                    statement,
+                    Statement::Function {
+                        name: declared_name,
+                        foreign_abi: Some(_),
+                        ..
+                    } if declared_name == name
+                )
+            })
+        }) {
+            panic!(
+                "Foreign function '{}' cannot be called by the interpreter; interpreter FFI is not implemented",
+                name
+            );
+        }
         let symbol = self
             .resolve_function_symbol(name)
             .unwrap_or_else(|| panic!("Unknown function '{}'", name));
@@ -1134,9 +1151,13 @@ impl Interpreter {
                 body,
                 generic_parameters,
                 is_async,
+                foreign_abi,
                 ..
             } = statement
             {
+                if foreign_abi.is_some() {
+                    continue;
+                }
                 if self.functions.contains_key(name) {
                     panic!("Duplicate function '{}'", name);
                 }
