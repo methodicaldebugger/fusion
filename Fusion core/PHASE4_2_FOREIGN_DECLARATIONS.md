@@ -62,7 +62,9 @@ rejected until native call lowering is implemented.
 This update does not yet emit C `declare` statements or native calls. Those belong
 to Phase 4.4.
 
-## Next step
+## Follow-on milestones
 
-Implement exact LLVM ABI type mapping and native call lowering, including link
-symbol handling, then add a Fusion-source-to-C acceptance test that prints `42`.
+Phase 4.3 defines and validates the ABI-safe type subset; see
+`PHASE4_3_ABI_SAFE_TYPES.md`. Phase 4.4 will implement exact LLVM ABI type
+mapping and native call lowering, including link symbol handling, then add a
+Fusion-source-to-C acceptance test that prints `42`.

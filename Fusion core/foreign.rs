@@ -40,13 +40,25 @@ impl ForeignAbiType {
     }
 
     /// Whether this type is allowed as a parameter in the initial C ABI subset.
+    /// `void` is deliberately excluded: C functions cannot accept a void value.
     pub fn is_parameter_supported(&self) -> bool {
-        !matches!(self, Self::Void)
+        matches!(
+            self,
+            Self::I8 | Self::U8 | Self::I16 | Self::U16
+                | Self::I32 | Self::U32 | Self::I64 | Self::U64
+                | Self::F32 | Self::F64 | Self::OpaquePointer
+        )
     }
 
     /// Whether this type is allowed as a return type in the initial C ABI subset.
+    /// All supported scalar/pointer types and `void` are valid return types.
     pub fn is_return_supported(&self) -> bool {
-        true
+        matches!(
+            self,
+            Self::Void | Self::I8 | Self::U8 | Self::I16 | Self::U16
+                | Self::I32 | Self::U32 | Self::I64 | Self::U64
+                | Self::F32 | Self::F64 | Self::OpaquePointer
+        )
     }
 }
 
@@ -76,7 +88,10 @@ impl ForeignFunctionDecl {
             return Err("foreign symbol name cannot be empty".into());
         }
         if let Some(index) = self.parameters.iter().position(|p| !p.is_parameter_supported()) {
-            return Err(format!("foreign parameter {} cannot use void", index + 1));
+            return Err(format!("foreign parameter {} uses an unsupported ABI type", index + 1));
+        }
+        if !self.return_type.is_return_supported() {
+            return Err("foreign function uses an unsupported ABI return type".into());
         }
         Ok(())
     }

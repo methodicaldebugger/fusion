@@ -3876,6 +3876,18 @@ impl TypeChecker {
             } = statement
             {
                 if let Some(abi) = foreign_abi {
+                    if !generic_parameters.is_empty() {
+                        return Err(FusionError::Syntax {
+                            message: "generic foreign functions are not supported by the C ABI subset".into(),
+                            span: *span,
+                        });
+                    }
+                    if *is_async {
+                        return Err(FusionError::Syntax {
+                            message: "async foreign functions are not supported by the C ABI subset".into(),
+                            span: *span,
+                        });
+                    }
                     if abi != "C" {
                         return Err(FusionError::Syntax {
                             message: format!("Unsupported foreign ABI '{}'; only C is supported", abi),
@@ -3970,10 +3982,13 @@ impl TypeChecker {
                 // statements.  A function with no return statements is later
                 // normalized to `Void`.
                 let base_return_type = match return_type {
+                    Some(type_name) if foreign_abi.is_some() && type_name == "void" => Type::Void,
                     Some(type_name) => {
                         self.convert_type_with_generics(type_name, generic_parameters, *span)?
                     }
-
+                    // An omitted foreign return annotation is the C `void` return,
+                    // unlike an ordinary Fusion function whose return may be inferred.
+                    None if foreign_abi.is_some() => Type::Void,
                     None => Type::Unknown,
                 };
 
@@ -4494,6 +4509,45 @@ mod foreign_declaration_typecheck_tests {
 
         let mut checker = TypeChecker::new();
         assert!(checker.check(&program).is_err());
+    }
+
+    fn check_foreign_source(source: &str) -> Result<TypeEnvironment, String> {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().map_err(|error| error.to_string())?;
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().map_err(|error| error.to_string())?;
+        let mut checker = TypeChecker::new();
+        checker.check(&program).map_err(|error| error.to_string())?;
+        Ok(checker.environment)
+    }
+
+    #[test]
+    fn accepts_every_supported_c_abi_parameter_type() {
+        let source = "extern \"C\" {\n    fn all_types(a: i8, b: u8, c: i16, d: u16, e: i32, f: u32, g: i64, h: u64, i: f32, j: f64, k: *opaque);\n}\nmain:\n    print(1)\n";
+        check_foreign_source(source).expect("all supported C ABI parameter types should be accepted");
+    }
+
+    #[test]
+    fn accepts_supported_c_abi_return_types_and_void() {
+        let source = "extern \"C\" {\n    fn returns_void();\n    fn returns_i8() -> i8;\n    fn returns_u64() -> u64;\n    fn returns_f32() -> f32;\n    fn returns_f64() -> f64;\n    fn returns_handle() -> *opaque;\n}\nmain:\n    print(1)\n";
+        let environment = check_foreign_source(source).expect("supported C ABI return types should be accepted");
+        assert_eq!(environment.functions.get("returns_void").unwrap().return_type, Type::Void);
+    }
+
+    #[test]
+    fn rejects_types_outside_the_initial_c_abi_subset() {
+        for ty in ["i128", "u128", "isize", "usize", "string", "bool", "MyStruct"] {
+            let source = format!("extern \"C\" {{\n    fn invalid(value: {});\n}}\nmain:\n    print(1)\n", ty);
+            assert!(check_foreign_source(&source).is_err(), "type {} must be rejected", ty);
+        }
+    }
+
+    #[test]
+    fn rejects_generic_and_async_foreign_functions() {
+        for declaration in ["fn generic<T>(value: i32) -> i32;", "async fn asynchronous(value: i32) -> i32;"] {
+            let source = format!("extern \"C\" {{\n    {}\n}}\nmain:\n    print(1)\n", declaration);
+            assert!(check_foreign_source(&source).is_err(), "declaration must be rejected: {}", declaration);
+        }
     }
 
     #[test]
