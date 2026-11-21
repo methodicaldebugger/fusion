@@ -79,6 +79,9 @@ pub struct TraitMethod {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<String>,
+    /// Body of a default method; `None` for a required method. Default bodies are copied into
+    /// each implementing `impl` block by `trait_defaults::expand_trait_defaults`.
+    pub default_body: Option<Vec<Statement>>,
     pub span: Span,
 }
 

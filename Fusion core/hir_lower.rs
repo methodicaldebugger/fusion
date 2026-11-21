@@ -904,6 +904,7 @@ mod tests {
                 name: "measure".into(),
                 parameters: vec![],
                 return_type: Some("num".into()),
+                default_body: None,
                 span,
             }],
             span,

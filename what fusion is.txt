@@ -3,7 +3,7 @@ Fusion will turn your will into reality itself. You can build any type of softwa
 
 Hello everyone, I would like to build Fusion(a brand new programming language).
 Fusion is an open-source programming language and compiler project with a long-term goal of making software ecosystems interoperate through one language, one toolchain, and one developer experience. The main idea here is knowledge interoperability. "Can a programmer's knowledge transfer across ecosystems?" "Fusion aims to do for programming ecosystems what SQL did for databases: provide a common interface across many underlying implementations." Fusion becomes the application-level language while other ecosystems become implementation-level resources. TO THE PROGRAMMER IT FEELS LIKE ONE LANGUAGE.
-With fusion a developer cann build 100% of all software on this entire planet, no more installing multiple programming languages.
+With fusion a developer cann build 100% of all software on this entire planet(as it interoperates with most major ecosystems), no more installing multiple programming languages.
 
 Developers will ask: "I'll build it in Fusion. Which ecosystem is the best implementation for this specific capability?"
 When to switch to another language within Fusion? Only when you need capabilities that Fusion intentionally doesn't try to optimize for. These are almost always libraries, not entire applications. A beginner learns Fusion. An expert can access advanced ecosystems when they need them.
@@ -220,3 +220,7 @@ Crowdfunding (Indiegogo / Kickstarter): Use this to raise early non-dilutive cap
 Github Sponsors and Github bounties for ergonomic plugins.
 
 I will Trademark the Name and Logo, Open Source License: You choose how others use your code (e.g., MIT, Apache 2.0, or restrictive licenses like AGPL/GPL).
+Fusion will need some backing behind it, like more developers, software written in it, tutorials, larger ecosystem, education institutions teaching it.
+
+Fusion: one project, any ecosystem.
+Use C, Python, C#, swift, Kotlin and more together, without the glue code. Fusion handles the integration. Cloud builds handle the toolchains. The plugin community extends the reach. And when you need something we don't support yet, you can still reach for the original language.

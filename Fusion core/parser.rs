@@ -23,6 +23,7 @@ use crate::ast::*;
 use crate::errors::ParseError;
 use crate::lexer::Token;
 use crate::span::{Span, Spanned};
+use crate::type_expr::TypeExpr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockStyle {
@@ -237,57 +238,107 @@ impl Parser {
         Ok(name)
     }
 
+    /// Parse a type annotation and return its canonical source spelling.
+    ///
+    /// The AST still stores type annotations as strings (see `type_expr`), but they are always
+    /// the `Display` form of a structurally parsed `TypeExpr`, never hand-assembled text.
     fn parse_type(&mut self) -> Result<String, ParseError> {
+        Ok(self.parse_type_expr()?.to_string())
+    }
+
+    /// `type := primary ("[" "]")*`; see `type_expr` for the full grammar.
+    fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
+        let mut base = self.parse_type_primary()?;
+        while self.current() == &Token::LeftBracket {
+            self.advance();
+            if !self.consume(&Token::RightBracket) {
+                return self.error("Expected ']' after array type");
+            }
+            base = TypeExpr::Array(Box::new(base));
+        }
+        Ok(base)
+    }
+
+    /// Parse `type, type, ... [,]` up to and including `close`; the opener is already consumed.
+    fn parse_type_list(
+        &mut self,
+        close: &Token,
+        what: &str,
+    ) -> Result<Vec<TypeExpr>, ParseError> {
+        let mut items = Vec::new();
+        if self.current() != close {
+            loop {
+                items.push(self.parse_type_expr()?);
+                if !self.consume(&Token::Comma) {
+                    break;
+                }
+                if self.current() == close {
+                    break;
+                }
+            }
+        }
+        if !self.consume(close) {
+            return self.error(format!("Expected closing delimiter after {}", what));
+        }
+        Ok(items)
+    }
+
+    fn parse_type_primary(&mut self) -> Result<TypeExpr, ParseError> {
         if self.consume(&Token::Star) {
             return match self.current() {
                 Token::Identifier(name) if name == "opaque" => {
                     self.advance();
-                    Ok("*opaque".to_string())
+                    Ok(TypeExpr::OpaquePointer)
                 }
                 _ => self.error("Only '*opaque' pointer types are supported in foreign declarations"),
             };
         }
+
         if self.consume(&Token::LeftParen) {
-            let mut items = Vec::new();
-            if self.current() != &Token::RightParen {
-                loop {
-                    items.push(self.parse_type()?);
-                    if !self.consume(&Token::Comma) {
-                        break;
-                    }
-                    if self.current() == &Token::RightParen {
-                        break;
-                    }
-                }
-            }
-            if !self.consume(&Token::RightParen) {
-                return self.error("Expected ')' after tuple type");
-            }
-            if items.len() < 2 {
-                return self.error("Tuple types require at least two elements");
-            }
-            return Ok(format!("({})", items.join(", ")));
+            let items = self.parse_type_list(&Token::RightParen, "tuple type")?;
+            return match TypeExpr::from_parenthesized(items) {
+                Ok(expr) => Ok(expr),
+                Err(message) => self.error(message),
+            };
         }
-        let base = match self.current() {
+
+        if self.consume(&Token::Fn) {
+            if !self.consume(&Token::LeftParen) {
+                return self.error("Expected '(' after 'fn' in function type");
+            }
+            let params = self.parse_type_list(&Token::RightParen, "function type parameters")?;
+            let ret = if self.consume(&Token::Arrow) {
+                self.parse_type_expr()?
+            } else {
+                TypeExpr::named("void")
+            };
+            return Ok(TypeExpr::Function {
+                params,
+                ret: Box::new(ret),
+            });
+        }
+
+        let token = self.current().clone();
+        let name = match token {
             Token::NumType => {
                 self.advance();
-                "num".to_string()
+                return Ok(TypeExpr::named("num"));
             }
             Token::FloatType => {
                 self.advance();
-                "float".to_string()
+                return Ok(TypeExpr::named("float"));
             }
             Token::BoolType => {
                 self.advance();
-                "bool".to_string()
+                return Ok(TypeExpr::named("bool"));
             }
             Token::StringType => {
                 self.advance();
-                "string".to_string()
+                return Ok(TypeExpr::named("string"));
             }
-            Token::Identifier(name) => {
-                let mut name = name.clone();
+            Token::Identifier(first) => {
                 self.advance();
+                let mut name = first;
                 // Qualified user-defined types use the same dotted module path
                 // spelling as qualified value/function access (e.g. geometry.Point).
                 while self.consume(&Token::Dot) {
@@ -305,20 +356,10 @@ impl Parser {
             _ => return self.error("Expected type"),
         };
 
-        // Fusion supports both `T[]` and explicit generic collection/result
-        // spellings.  Keep the parsed representation as a string because the
-        // existing type checker owns the semantic Type representation.
-        if self.consume(&Token::LeftBracket) {
-            if !self.consume(&Token::RightBracket) {
-                return self.error("Expected ']' after array type");
-            }
-            return Ok(format!("{}[]", base));
-        }
-
+        let mut args = Vec::new();
         if self.consume(&Token::Less) {
-            let mut args = Vec::new();
             loop {
-                args.push(self.parse_type()?);
+                args.push(self.parse_type_expr()?);
                 if self.consume(&Token::Comma) {
                     continue;
                 }
@@ -327,10 +368,8 @@ impl Parser {
             if !self.consume(&Token::Greater) {
                 return self.error("Expected '>' after generic type arguments");
             }
-            return Ok(format!("{}<{}>", base, args.join(", ")));
         }
-
-        Ok(base)
+        Ok(TypeExpr::Named { name, args })
     }
 
     // ------------------------------------------------------------
@@ -2366,6 +2405,10 @@ impl Parser {
     }
 
     fn parse_trait_method(&mut self) -> Result<TraitMethod, ParseError> {
+        if self.current() == &Token::Fn && self.trait_method_has_body() {
+            return self.parse_trait_default_method();
+        }
+
         let start = self.current_span().start;
 
         if !self.consume(&Token::Fn) {
@@ -2442,8 +2485,78 @@ impl Parser {
             name,
             parameters,
             return_type,
+            default_body: None,
             span: self.span_from(start),
         })
+    }
+
+    /// True if the trait method starting at the current `fn` token has a body (a default
+    /// method) rather than being a bare signature. The signature ends after the parameter
+    /// list and optional `-> type`; a body then starts with `:` or `{`, while a required
+    /// method ends at a line break, `;`, or the end of the trait.
+    fn trait_method_has_body(&self) -> bool {
+        let mut position = self.position;
+        let mut depth = 0i32;
+        let mut parameters_done = false;
+        loop {
+            let token = match self.peek_at(position) {
+                Some(token) => token,
+                None => return false,
+            };
+            if parameters_done && depth <= 0 {
+                match token {
+                    Token::Colon | Token::LeftBrace => return true,
+                    Token::NewLine
+                    | Token::Semicolon
+                    | Token::Dedent
+                    | Token::RightBrace
+                    | Token::Eof => return false,
+                    _ => {}
+                }
+            }
+            match token {
+                Token::LeftParen | Token::LeftBracket | Token::Less => depth += 1,
+                Token::RightBracket | Token::Greater => depth -= 1,
+                Token::RightParen => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        parameters_done = true;
+                    }
+                }
+                Token::Eof => return false,
+                _ => {}
+            }
+            position += 1;
+        }
+    }
+
+    /// Parse a trait method that has a body. The body is parsed exactly like a free function
+    /// body and stored on the `TraitMethod` as a default implementation.
+    fn parse_trait_default_method(&mut self) -> Result<TraitMethod, ParseError> {
+        let start = self.current_span().start;
+        let function = self.parse_function()?;
+        match function {
+            Statement::Function {
+                name,
+                generic_parameters,
+                parameters,
+                return_type,
+                body,
+                ..
+            } => {
+                if !generic_parameters.is_empty() {
+                    return self.error("Generic default methods are not supported in traits yet");
+                }
+                Ok(TraitMethod {
+                    name,
+                    parameters,
+                    return_type,
+                    default_body: Some(body),
+                    span: self.span_from(start),
+                })
+            }
+            _ => self.error("Expected a method declaration in trait"),
+        }
     }
 
     // ------------------------------------------------------------
@@ -3306,7 +3419,9 @@ impl Parser {
             span: Span::new(program_start, program_end),
             modules: Vec::new(),
         };
-        Ok(crate::derive_expansion::expand_derives(program))
+        Ok(crate::trait_defaults::expand_trait_defaults(
+            crate::derive_expansion::expand_derives(program),
+        ))
     }
 }
 

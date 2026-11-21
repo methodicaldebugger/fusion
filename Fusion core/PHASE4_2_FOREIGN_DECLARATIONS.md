@@ -34,8 +34,8 @@ in this update. The link symbol currently defaults to the declared function name
   slices, or automatic ownership transfer
 
 The type checker rejects unsupported ABI types and `void` parameters. Foreign
-function names are registered for semantic diagnostics, but calls are explicitly
-rejected until native call lowering is implemented.
+function names are registered with their validated signatures; Phase 4.4 now
+allows calls that satisfy those signatures.
 
 ## Symbol and calling convention rules
 
@@ -52,19 +52,19 @@ rejected until native call lowering is implemented.
 - Parser: `extern "C" { ... }`, required typed parameters, optional return type,
   and restricted `*opaque` spelling.
 - AST: foreign ABI and link-name metadata on function declarations.
-- Type checker: validates the supported C ABI type matrix and registers foreign
-  declarations; rejects calls with a Phase 4.4 diagnostic.
+- Type checker: validates the supported C ABI type matrix, registers foreign
+  declarations, and checks call arity and argument compatibility.
 - HIR lowering: retains the declaration name for resolution but does not create
   a Fusion function body.
 - LLVM emission: does not emit a fake empty Fusion definition for a foreign
   declaration.
 
-This update does not yet emit C `declare` statements or native calls. Those belong
-to Phase 4.4.
+Phase 4.4 adds LLVM `declare ccc` statements and call lowering with explicit ABI
+width conversions. See `PHASE4_4_NATIVE_CALL_LOWERING.md`.
 
 ## Follow-on milestones
 
 Phase 4.3 defines and validates the ABI-safe type subset; see
-`PHASE4_3_ABI_SAFE_TYPES.md`. Phase 4.4 will implement exact LLVM ABI type
-mapping and native call lowering, including link symbol handling, then add a
-Fusion-source-to-C acceptance test that prints `42`.
+`PHASE4_3_ABI_SAFE_TYPES.md`. Phase 4.4 implements LLVM ABI type mapping and
+native call lowering. The remaining acceptance step is to run the complete
+Fusion-source-to-C build on the target Windows toolchain and verify it prints `42`.

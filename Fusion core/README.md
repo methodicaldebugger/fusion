@@ -283,3 +283,27 @@ bash scripts/phase3-real-toolchain-smoke.sh
 ```
 
 The script builds the compiler and Foundry, runs the focused cross-package aggregate and Foundry orchestration tests, builds and executes the three-package fixture through the real Foundry CLI, and verifies the generated provenance and package-cache hashes. Set `PHASE3_KEEP_WORKSPACE=1` to retain the temporary fixture workspace for inspection. The expected executable output is `7`, `9`, `failed`.
+
+
+## Type expressions
+
+Written types are parsed into the structured `type_expr::TypeExpr` (named types with generic arguments,
+`T[]`, tuples, `fn(A, B) -> R` function types and `*opaque`). The AST still stores annotations as strings, but
+that string is always the canonical `Display` form of a `TypeExpr`, and consumers re-read it with
+`TypeExpr::parse` instead of prefix tests such as `starts_with("Option<")`. The type checker converts types
+through one function (`convert_type_expr`) for both plain and generic-scoped contexts. Generic arguments and
+`[]` now compose in any order (`Option<num>[]`, `num[][]`, `HashMap<string, num>[]`). Function types are
+parsed and printed but rejected by the type checker until function values exist.
+
+Not yet migrated to `TypeExpr` (they still split the canonical spelling by hand and handle every spelling the
+parser currently produces except function types): the interpreter's `type_from_name` / `value_matches_type`,
+`module_system.rs` (`validate_hir_type_spelling`, `split_hir_type_arguments*`, the HIR type-spelling parsers),
+`hir_body.rs::lookup_type` and the LLVM backend's `type_from_name` / `llvm_type_name`.
+
+## Trait default methods
+
+A trait method written with a body is a default method. `trait_defaults::expand_trait_defaults` runs right after
+`#[derive]` expansion and copies each default into every `impl Trait for Type` that does not define it, replacing
+`Self` in the signature with `Type`. The rest of the compiler only sees ordinary impl methods. Limits: the trait
+and the impl must be in the same source file, default methods cannot be generic, and trait objects, associated
+types, supertraits and generic traits are still unimplemented.

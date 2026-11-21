@@ -23,6 +23,7 @@ fn trait_method(name: &str, params: Vec<Parameter>, return_type: &str, span: Spa
         name: name.to_string(),
         parameters: params,
         return_type: Some(return_type.to_string()),
+        default_body: None,
         span,
     }
 }

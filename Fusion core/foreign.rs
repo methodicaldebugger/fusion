@@ -62,8 +62,8 @@ impl ForeignAbiType {
     }
 }
 
-/// Language-level declaration metadata. Phase 4.2 defines and validates the
-/// declaration shape; invocation lowering is intentionally not implemented yet.
+/// Language-level declaration metadata shared by the type checker and native
+/// backend. The validated initial C subset is lowered by the Phase 4.4 backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForeignFunctionDecl {
     pub source_name: String,

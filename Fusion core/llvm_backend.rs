@@ -34,6 +34,13 @@ struct FunctionSig {
 }
 
 #[derive(Debug, Clone)]
+struct ForeignCallSig {
+    link_name: String,
+    parameters: Vec<crate::foreign::ForeignAbiType>,
+    return_type: crate::foreign::ForeignAbiType,
+}
+
+#[derive(Debug, Clone)]
 struct LoopTargets {
     break_label: String,
     continue_label: String,
@@ -44,6 +51,9 @@ pub struct LLVMBackend {
     globals: Vec<String>,
     string_ids: HashMap<String, usize>,
     functions: HashMap<String, FunctionSig>,
+    /// Foreign C declarations retain their exact ABI widths separately from
+    /// Fusion's native scalar representation (i64/double/pointer).
+    foreign_functions: HashMap<String, ForeignCallSig>,
     /// Compatibility symbol to authoritative HIR function declaration.
     function_definition_ids: HashMap<String, crate::hir::HirDefinitionId>,
     /// HIR declaration to the backend symbol assigned during lowering.
@@ -105,6 +115,7 @@ impl LLVMBackend {
             globals: Vec::new(),
             string_ids: HashMap::new(),
             functions: HashMap::new(),
+            foreign_functions: HashMap::new(),
             function_definition_ids: HashMap::new(),
             function_symbols_by_id: HashMap::new(),
             function_call_targets: HashMap::new(),
@@ -494,6 +505,7 @@ impl LLVMBackend {
     ) -> Result<String, FusionError> {
         self.collect_declarations(program)?;
         self.emit_preamble();
+        self.emit_foreign_declarations()?;
         for (statement_index, stmt) in program.statements.iter().enumerate() {
             self.current_module = program
                 .modules
@@ -732,6 +744,32 @@ entry:
                     ..
                 } => {
                     if foreign_abi.is_some() {
+                        let abi_parameters = parameters.iter().map(|parameter| {
+                            parameter.type_name.as_deref()
+                                .and_then(crate::foreign::ForeignAbiType::from_type_name)
+                                .ok_or_else(|| self.unsupported(format!(
+                                    "foreign parameter '{}' has no supported ABI type", parameter.name
+                                )))
+                        }).collect::<Result<Vec<_>, _>>()?;
+                        let abi_return = return_type.as_deref().unwrap_or("void");
+                        let abi_return = crate::foreign::ForeignAbiType::from_type_name(abi_return)
+                            .ok_or_else(|| self.unsupported(format!(
+                                "foreign function '{}' has unsupported return type '{}'", name, abi_return
+                            )))?;
+                        let link_name = match s {
+                            Statement::Function { link_name, .. } => link_name.clone().unwrap_or_else(|| name.clone()),
+                            _ => name.clone(),
+                        };
+                        let signature = ForeignCallSig {
+                            link_name,
+                            parameters: abi_parameters,
+                            return_type: abi_return,
+                        };
+                        let native_params = signature.parameters.iter()
+                            .map(Self::foreign_native_llvm_type).collect();
+                        let native_ret = Self::foreign_native_llvm_type(&signature.return_type);
+                        self.functions.insert(name.clone(), FunctionSig { params: native_params, ret: native_ret });
+                        self.foreign_functions.insert(name.clone(), signature);
                         continue;
                     }
                     if self.functions.contains_key(name) {
@@ -912,6 +950,149 @@ entry:
         Ok(())
     }
 
+    fn foreign_abi_llvm_type(ty: &crate::foreign::ForeignAbiType) -> &'static str {
+        use crate::foreign::ForeignAbiType as A;
+        match ty {
+            A::Void => "void",
+            A::I8 | A::U8 => "i8",
+            A::I16 | A::U16 => "i16",
+            A::I32 | A::U32 => "i32",
+            A::I64 | A::U64 => "i64",
+            A::F32 => "float",
+            A::F64 => "double",
+            A::OpaquePointer => "ptr",
+        }
+    }
+
+    fn foreign_native_llvm_type(ty: &crate::foreign::ForeignAbiType) -> LlType {
+        use crate::foreign::ForeignAbiType as A;
+        match ty {
+            A::Void => LlType::Void,
+            A::F32 | A::F64 => LlType::F64,
+            A::OpaquePointer => LlType::Ptr,
+            A::I8 | A::U8 | A::I16 | A::U16 | A::I32 | A::U32 | A::I64 | A::U64 => LlType::I64,
+        }
+    }
+
+    /// Preserve foreign linker symbols verbatim. Fusion's internal symbol
+    /// sanitizer deliberately prefixes `_F`, but doing that to an `extern "C"`
+    /// symbol would make the generated declaration disagree with the C object.
+    fn foreign_llvm_symbol(symbol: &str) -> String {
+        let mut chars = symbol.chars();
+        let valid_start = chars
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || matches!(c, '_' | '.' | '$'))
+            .unwrap_or(false);
+        let valid_rest = chars.all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '$')
+        });
+        if valid_start && valid_rest {
+            symbol.to_string()
+        } else {
+            format!("\"{}\"", llvm_escape(symbol))
+        }
+    }
+
+    fn emit_foreign_declarations(&mut self) -> Result<(), FusionError> {
+        let mut declarations: Vec<_> = self.foreign_functions.iter().collect();
+        declarations.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let mut emitted: HashMap<String, (Vec<String>, String)> = HashMap::new();
+        for (source_name, signature) in declarations {
+            let parameters: Vec<String> = signature.parameters.iter()
+                .map(Self::foreign_abi_llvm_type).map(str::to_string).collect();
+            let result = Self::foreign_abi_llvm_type(&signature.return_type).to_string();
+            if let Some((existing_parameters, existing_result)) = emitted.get(&signature.link_name) {
+                if existing_parameters != &parameters || existing_result != &result {
+                    return Err(self.unsupported(format!(
+                        "foreign symbol '{}' is declared with conflicting ABI signatures (including '{}')",
+                        signature.link_name, source_name
+                    )));
+                }
+                continue;
+            }
+            emitted.insert(signature.link_name.clone(), (parameters.clone(), result.clone()));
+            writeln!(self.module, "declare ccc {} @{}({})", result,
+                Self::foreign_llvm_symbol(&signature.link_name), parameters.join(", ")).unwrap();
+        }
+        if !emitted.is_empty() { self.module.push('\n'); }
+        Ok(())
+    }
+
+    fn emit_foreign_call(
+        &mut self,
+        source_name: &str,
+        arguments: &[Expression],
+        out: &mut String,
+    ) -> Result<String, FusionError> {
+        let signature = self.foreign_functions.get(source_name).cloned()
+            .ok_or_else(|| self.unsupported(format!("missing foreign ABI for '{}'", source_name)))?;
+        if arguments.len() != signature.parameters.len() {
+            return Err(self.unsupported(format!(
+                "foreign function '{}' expects {} arguments, found {}",
+                source_name, signature.parameters.len(), arguments.len()
+            )));
+        }
+
+        let mut lowered_arguments = Vec::with_capacity(arguments.len());
+        for (argument, abi_type) in arguments.iter().zip(&signature.parameters) {
+            let value = self.emit_expr(argument, out)?;
+            use crate::foreign::ForeignAbiType as A;
+            let lowered = match abi_type {
+                A::I8 | A::U8 | A::I16 | A::U16 | A::I32 | A::U32 => {
+                    let width = Self::foreign_abi_llvm_type(abi_type);
+                    let temp = self.temp();
+                    writeln!(out, "  {} = trunc i64 {} to {}", temp, value, width).unwrap();
+                    temp
+                }
+                A::I64 | A::U64 | A::F64 | A::OpaquePointer => value,
+                A::F32 => {
+                    let temp = self.temp();
+                    writeln!(out, "  {} = fptrunc double {} to float", temp, value).unwrap();
+                    temp
+                }
+                A::Void => return Err(self.unsupported("void is not a valid foreign parameter type")),
+            };
+            lowered_arguments.push(format!("{} {}", Self::foreign_abi_llvm_type(abi_type), lowered));
+        }
+
+        let result_type = Self::foreign_abi_llvm_type(&signature.return_type);
+        let call = format!("call ccc {} @{}({})", result_type,
+            Self::foreign_llvm_symbol(&signature.link_name), lowered_arguments.join(", "));
+        use crate::foreign::ForeignAbiType as A;
+        match signature.return_type {
+            A::Void => {
+                writeln!(out, "  {}", call).unwrap();
+                Ok("0".into())
+            }
+            A::I8 | A::I16 | A::I32 => {
+                let raw = self.temp();
+                writeln!(out, "  {} = {}", raw, call).unwrap();
+                let widened = self.temp();
+                writeln!(out, "  {} = sext {} {} to i64", widened, result_type, raw).unwrap();
+                Ok(widened)
+            }
+            A::U8 | A::U16 | A::U32 => {
+                let raw = self.temp();
+                writeln!(out, "  {} = {}", raw, call).unwrap();
+                let widened = self.temp();
+                writeln!(out, "  {} = zext {} {} to i64", widened, result_type, raw).unwrap();
+                Ok(widened)
+            }
+            A::I64 | A::U64 | A::F64 | A::OpaquePointer => {
+                let raw = self.temp();
+                writeln!(out, "  {} = {}", raw, call).unwrap();
+                Ok(raw)
+            }
+            A::F32 => {
+                let raw = self.temp();
+                writeln!(out, "  {} = {}", raw, call).unwrap();
+                let widened = self.temp();
+                writeln!(out, "  {} = fpext float {} to double", widened, raw).unwrap();
+                Ok(widened)
+            }
+        }
+    }
+
     fn type_from_name(&self, n: &str) -> Type {
         match n {
             "num" | "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64"
@@ -941,6 +1122,7 @@ entry:
             | Type::TcpStream
             | Type::Task(_) => "ptr".into(),
             Type::Generic(name) if matches!(name.as_str(), "f32" | "f64") => "double".into(),
+            Type::Generic(name) if name == "*opaque" => "ptr".into(),
             Type::Generic(_) | Type::Unknown => "i64".into(),
             Type::Void => "i8".into(),
         }
@@ -953,7 +1135,7 @@ entry:
         match n {
             "float" | "f32" | "f64" => LlType::F64,
             "bool" => LlType::I1,
-            "string" => LlType::Ptr,
+            "string" | "*opaque" => LlType::Ptr,
             "void" => LlType::Void,
             _ if self.type_definition_ids.contains_key(n) => LlType::Ptr,
             _ => LlType::I64,
@@ -3664,7 +3846,9 @@ entry:
             Expression::Call {
                 name, arguments, span, ..
             } => {
-                if name == "print" {
+                if self.foreign_functions.contains_key(name) {
+                    self.emit_foreign_call(name, arguments, out)
+                } else if name == "print" {
                     if arguments.len() != 1 {
                         return Err(self.unsupported("print currently takes exactly one argument"));
                     }
@@ -3855,6 +4039,7 @@ entry:
             Type::Num => LlType::I64,
             Type::Float => LlType::F64,
             Type::Generic(name) if matches!(name.as_str(), "f32" | "f64") => LlType::F64,
+            Type::Generic(name) if name == "*opaque" => LlType::Ptr,
             Type::Generic(_) => LlType::I64,
             Type::Bool => LlType::I1,
             Type::String | Type::Tuple(_) | Type::Array(_) | Type::Struct(_) | Type::Enum(_) => {
@@ -4050,6 +4235,38 @@ fn llvm_escape(s: &str) -> String {
 mod hir_layout_tests {
     use super::*;
     use crate::hir::{HirDefinitionId, HirDefinitionKind};
+
+    #[test]
+    fn emits_c_abi_declaration_and_width_converting_call() {
+        let source = "extern \"C\" {\n    fn fusion_helper(value: i32) -> i32;\n}\nmain:\n    print(fusion_helper(21))\n";
+        let mut lexer = crate::lexer::Lexer::new(source, crate::lexer::BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().expect("source should parse");
+        let ir = LLVMBackend::new().emit_program(&program).expect("foreign call should lower");
+        assert!(ir.contains("declare ccc i32 @fusion_helper(i32)"));
+        assert!(ir.contains("trunc i64 21 to i32"));
+        assert!(ir.contains("call ccc i32 @fusion_helper(i32"));
+        assert!(ir.contains("sext i32"));
+    }
+
+    #[test]
+    fn emits_c_abi_float_pointer_and_void_signatures() {
+        let source = "extern \"C\" {\n    fn consume(value: f32, handle: *opaque);\n    fn get_handle() -> *opaque;\n    fn get_unsigned() -> u32;\n    fn get_float() -> f32;\n}\nmain:\n    consume(1.5, get_handle())\n    print(get_unsigned())\n    print(get_float())\n";
+        let mut lexer = crate::lexer::Lexer::new(source, crate::lexer::BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().expect("source should parse");
+        let ir = LLVMBackend::new().emit_program(&program).expect("foreign calls should lower");
+        assert!(ir.contains("declare ccc void @consume(float, ptr)"));
+        assert!(ir.contains("declare ccc ptr @get_handle()"));
+        assert!(ir.contains("declare ccc i32 @get_unsigned()"));
+        assert!(ir.contains("declare ccc float @get_float()"));
+        assert!(ir.contains("fptrunc double 1.50000000000000000e0 to float"));
+        assert!(ir.contains("call ccc void @consume(float"));
+        assert!(ir.contains("zext i32"));
+        assert!(ir.contains("fpext float"));
+    }
 
     #[test]
     fn llvm_emits_named_struct_and_enum_layouts_from_hir_ids() {

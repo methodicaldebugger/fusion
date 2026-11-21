@@ -1,2 +1,6 @@
+extern "C" {
+    fn fusion_helper(value: i32) -> i32;
+}
+
 main:
-    print("Hello, world!")
+    print(fusion_helper(21))

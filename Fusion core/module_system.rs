@@ -1563,7 +1563,13 @@ fn rewrite_statement_module_calls(
             rewrite(target)?;
             rewrite(value)?;
         }
-        Statement::Function { name, body, .. } => {
+        Statement::Function { name, body, foreign_abi, link_name, .. } => {
+            // A foreign declaration's source-level name is an LLVM/linker symbol
+            // unless the declaration explicitly supplies a link_name. Preserve
+            // it before rewriting the Fusion-visible name to its module identity.
+            if foreign_abi.is_some() && link_name.is_none() {
+                *link_name = Some(name.clone());
+            }
             if let Some(mangled) = local_functions.get(name) {
                 *name = mangled.clone();
             }
@@ -2421,6 +2427,25 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn module_mangling_preserves_default_foreign_link_symbol() {
+        let p = TempProject::new();
+        p.write(
+            "main.fusion",
+            "extern \"C\" {\n    fn fusion_helper(value: i32) -> i32;\n}\nmain:\n    print(fusion_helper(21))\n",
+        );
+        let project = load_project_with_metadata(p.0.join("main.fusion")).unwrap();
+        let declaration = project.program.statements.iter().find_map(|statement| {
+            if let Statement::Function { name, foreign_abi: Some(_), link_name, .. } = statement {
+                Some((name, link_name))
+            } else {
+                None
+            }
+        }).expect("foreign declaration should remain in flattened AST");
+        assert_ne!(declaration.0, "fusion_helper");
+        assert_eq!(declaration.1.as_deref(), Some("fusion_helper"));
     }
 
     #[test]

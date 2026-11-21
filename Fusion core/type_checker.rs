@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::errors::FusionError;
 use crate::span::Span;
+use crate::type_expr::TypeExpr;
 use crate::types::{EnumDefinition, EnumVariantDefinition, StructDefinition, Type};
 use crate::wide_int::{IntKind, WideInt};
 
@@ -485,223 +486,161 @@ impl TypeChecker {
         }
     }
 
+    /// Convert a written type to a semantic `Type`.
+    ///
+    /// All type spellings go through `TypeExpr`, so there is exactly one place that knows the
+    /// type grammar and exactly one place (`convert_type_expr`) that gives it meaning.
     fn convert_type(&self, name: &str, span: Span) -> Result<Type, FusionError> {
-        if name.starts_with('(') && name.ends_with(')') {
-            let inner = &name[1..name.len() - 1];
-            let parts = Self::split_generic_arguments(inner);
-            if parts.len() < 2 {
-                return Err(FusionError::Syntax {
-                    message: "Tuple types require at least two elements".into(),
-                    span,
-                });
-            }
-            return Ok(Type::Tuple(
-                parts
-                    .iter()
-                    .map(|p| self.convert_type(p, span))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ));
-        }
-        match name {
-            "num" => Ok(Type::Num),
-            "float" => Ok(Type::Float),
-            "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128"
-            | "isize" | "usize" | "f32" | "f64" => Ok(Type::Generic(name.to_string())),
-            "bool" => Ok(Type::Bool),
-            "string" => Ok(Type::String),
-            "void" => Ok(Type::Void),
-            "File" => Ok(Type::File),
-            "TcpStream" => Ok(Type::TcpStream),
-
-            "unknown" => Ok(Type::Unknown),
-            "*opaque" => Ok(Type::Generic("*opaque".to_string())),
-
-            _ if name.ends_with("[]") => {
-                let inner = &name[..name.len() - 2];
-                Ok(Type::Array(Box::new(self.convert_type(inner, span)?)))
-            }
-
-            _ if name.starts_with("Array<") && name.ends_with('>') => {
-                let inner = &name[6..name.len() - 1];
-                Ok(Type::Array(Box::new(self.convert_type(inner, span)?)))
-            }
-
-            _ if name.starts_with("Iterator<") && name.ends_with('>') => {
-                let inner = &name[9..name.len() - 1];
-                Ok(Type::Iterator(Box::new(self.convert_type(inner, span)?)))
-            }
-
-            _ if name.starts_with("HashMap<") && name.ends_with('>') => {
-                let parts = Self::split_generic_arguments(&name[8..name.len() - 1]);
-                if parts.len() != 2 {
-                    return Err(FusionError::Syntax {
-                        message: "HashMap requires two type arguments".into(),
-                        span,
-                    });
-                }
-                Ok(Type::HashMap(
-                    Box::new(self.convert_type(parts[0], span)?),
-                    Box::new(self.convert_type(parts[1], span)?),
-                ))
-            }
-
-            _ if name.starts_with("Option<") && name.ends_with('>') => {
-                let inner = &name[7..name.len() - 1];
-                Ok(Type::Option(Box::new(self.convert_type(inner, span)?)))
-            }
-
-            _ if name.starts_with("Task<") && name.ends_with('>') => {
-                let inner = &name[5..name.len() - 1];
-                Ok(Type::Task(Box::new(self.convert_type(inner, span)?)))
-            }
-
-            _ if name.starts_with("Result<") && name.ends_with('>') => {
-                let parts = Self::split_generic_arguments(&name[7..name.len() - 1]);
-                if parts.len() != 2 {
-                    return Err(FusionError::Syntax {
-                        message: "Result requires two type arguments".into(),
-                        span,
-                    });
-                }
-                Ok(Type::Result(
-                    Box::new(self.convert_type(parts[0], span)?),
-                    Box::new(self.convert_type(parts[1], span)?),
-                ))
-            }
-
-            _ if self.environment.structs.contains_key(name) => Ok(Type::Struct(name.to_string())),
-
-            _ if self.environment.enums.contains_key(name) => Ok(Type::Enum(name.to_string())),
-
-            _ => Err(FusionError::Syntax {
-                message: format!("Unknown type '{}'", name),
-                span,
-            }),
-        }
+        self.convert_type_spelling(name, &[], false, span)
     }
 
+    /// Like `convert_type`, additionally resolving the enclosing declaration's generic
+    /// parameters and `Self` (the latter stays unchecked, as before).
     fn convert_type_with_generics(
         &self,
         name: &str,
         generic_parameters: &[String],
         span: Span,
     ) -> Result<Type, FusionError> {
-        if name == "*opaque" {
-            return Ok(Type::Generic("*opaque".to_string()));
-        }
-        if name == "Self" {
-            return Ok(Type::Unknown);
-        }
-        if generic_parameters.iter().any(|parameter| parameter == name) {
-            return Ok(Type::Generic(name.to_string()));
-        }
-
-        if let Some(inner) = name.strip_suffix("[]") {
-            return Ok(Type::Array(Box::new(self.convert_type_with_generics(
-                inner,
-                generic_parameters,
-                span,
-            )?)));
-        }
-
-        if name.starts_with("Option<") && name.ends_with('>') {
-            let inner = &name[7..name.len() - 1];
-
-            return Ok(Type::Option(Box::new(self.convert_type_with_generics(
-                inner,
-                generic_parameters,
-                span,
-            )?)));
-        }
-
-        if name.starts_with("Result<") && name.ends_with('>') {
-            let inner = &name[7..name.len() - 1];
-            let parts = Self::split_generic_arguments(inner);
-
-            if parts.len() != 2 {
-                return Err(FusionError::Syntax {
-                    message: "Result requires two type arguments".to_string(),
-                    span,
-                });
-            }
-
-            return Ok(Type::Result(
-                Box::new(self.convert_type_with_generics(parts[0], generic_parameters, span)?),
-                Box::new(self.convert_type_with_generics(parts[1], generic_parameters, span)?),
-            ));
-        }
-
-        if name.starts_with("Iterator<") && name.ends_with('>') {
-            let inner = &name[9..name.len() - 1];
-
-            return Ok(Type::Iterator(Box::new(self.convert_type_with_generics(
-                inner,
-                generic_parameters,
-                span,
-            )?)));
-        }
-
-        if name.starts_with("Array<") && name.ends_with('>') {
-            let inner = &name[6..name.len() - 1];
-            return Ok(Type::Array(Box::new(self.convert_type_with_generics(
-                inner,
-                generic_parameters,
-                span,
-            )?)));
-        }
-
-        if name.starts_with("HashMap<") && name.ends_with('>') {
-            let inner = &name[8..name.len() - 1];
-            let parts = Self::split_generic_arguments(inner);
-            if parts.len() != 2 {
-                return Err(FusionError::Syntax {
-                    message: "HashMap requires two type arguments".into(),
-                    span,
-                });
-            }
-            return Ok(Type::HashMap(
-                Box::new(self.convert_type_with_generics(parts[0], generic_parameters, span)?),
-                Box::new(self.convert_type_with_generics(parts[1], generic_parameters, span)?),
-            ));
-        }
-
-        if name.starts_with("Task<") && name.ends_with('>') {
-            let inner = &name[5..name.len() - 1];
-
-            return Ok(Type::Task(Box::new(self.convert_type_with_generics(
-                inner,
-                generic_parameters,
-                span,
-            )?)));
-        }
-
-        self.convert_type(name, span)
+        self.convert_type_spelling(name, generic_parameters, true, span)
     }
 
-    fn split_generic_arguments(value: &str) -> Vec<&str> {
-        let mut result = Vec::new();
-        let mut start = 0;
-        let mut depth = 0;
+    fn convert_type_spelling(
+        &self,
+        name: &str,
+        generic_parameters: &[String],
+        allow_self: bool,
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        match TypeExpr::parse(name) {
+            Ok(expr) => self.convert_type_expr(&expr, generic_parameters, allow_self, span),
+            Err(error) => Err(FusionError::Syntax {
+                message: format!("Invalid type '{}': {}", name, error),
+                span,
+            }),
+        }
+    }
 
-        for (index, character) in value.char_indices() {
-            match character {
-                '<' | '(' => depth += 1,
-                '>' | ')' => depth -= 1,
-                ',' if depth == 0 => {
-                    result.push(value[start..index].trim());
-                    start = index + 1;
+    fn convert_type_expr(
+        &self,
+        expr: &TypeExpr,
+        generic_parameters: &[String],
+        allow_self: bool,
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        match expr {
+            TypeExpr::OpaquePointer => Ok(Type::Generic("*opaque".to_string())),
+            TypeExpr::Array(inner) => Ok(Type::Array(Box::new(self.convert_type_expr(
+                inner,
+                generic_parameters,
+                allow_self,
+                span,
+            )?))),
+            TypeExpr::Tuple(items) => {
+                if items.len() < 2 {
+                    return Err(FusionError::Syntax {
+                        message: "Tuple types require at least two elements".into(),
+                        span,
+                    });
                 }
-                _ => {}
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(self.convert_type_expr(
+                        item,
+                        generic_parameters,
+                        allow_self,
+                        span,
+                    )?);
+                }
+                Ok(Type::Tuple(converted))
+            }
+            TypeExpr::Function { .. } => Err(FusionError::Syntax {
+                message: format!(
+                    "Function type '{}' is not supported yet: the type checker has no function values or closures",
+                    expr
+                ),
+                span,
+            }),
+            TypeExpr::Named { name, args } => {
+                self.convert_named_type(expr, name, args, generic_parameters, allow_self, span)
             }
         }
+    }
 
-        let last = value[start..].trim();
-
-        if !last.is_empty() {
-            result.push(last);
+    fn convert_named_type(
+        &self,
+        expr: &TypeExpr,
+        name: &str,
+        args: &[TypeExpr],
+        generic_parameters: &[String],
+        allow_self: bool,
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        if args.is_empty() {
+            if allow_self && name == "Self" {
+                return Ok(Type::Unknown);
+            }
+            if generic_parameters.iter().any(|parameter| parameter == name) {
+                return Ok(Type::Generic(name.to_string()));
+            }
+            return match name {
+                "num" => Ok(Type::Num),
+                "float" => Ok(Type::Float),
+                "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128"
+                | "isize" | "usize" | "f32" | "f64" => Ok(Type::Generic(name.to_string())),
+                "bool" => Ok(Type::Bool),
+                "string" => Ok(Type::String),
+                "void" => Ok(Type::Void),
+                "File" => Ok(Type::File),
+                "TcpStream" => Ok(Type::TcpStream),
+                "unknown" => Ok(Type::Unknown),
+                _ if self.environment.structs.contains_key(name) => {
+                    Ok(Type::Struct(name.to_string()))
+                }
+                _ if self.environment.enums.contains_key(name) => {
+                    Ok(Type::Enum(name.to_string()))
+                }
+                _ => Err(FusionError::Syntax {
+                    message: format!("Unknown type '{}'", name),
+                    span,
+                }),
+            };
         }
 
-        result
+        let convert_arg = |arg: &TypeExpr| -> Result<Type, FusionError> {
+            self.convert_type_expr(arg, generic_parameters, allow_self, span)
+        };
+
+        match (name, args.len()) {
+            ("Array", 1) => Ok(Type::Array(Box::new(convert_arg(&args[0])?))),
+            ("Iterator", 1) => Ok(Type::Iterator(Box::new(convert_arg(&args[0])?))),
+            ("Option", 1) => Ok(Type::Option(Box::new(convert_arg(&args[0])?))),
+            ("Task", 1) => Ok(Type::Task(Box::new(convert_arg(&args[0])?))),
+            ("HashMap", 2) => Ok(Type::HashMap(
+                Box::new(convert_arg(&args[0])?),
+                Box::new(convert_arg(&args[1])?),
+            )),
+            ("Result", 2) => Ok(Type::Result(
+                Box::new(convert_arg(&args[0])?),
+                Box::new(convert_arg(&args[1])?),
+            )),
+            ("HashMap", _) => Err(FusionError::Syntax {
+                message: "HashMap requires two type arguments".into(),
+                span,
+            }),
+            ("Result", _) => Err(FusionError::Syntax {
+                message: "Result requires two type arguments".into(),
+                span,
+            }),
+            ("Array" | "Iterator" | "Option" | "Task", _) => Err(FusionError::Syntax {
+                message: format!("{} requires one type argument", name),
+                span,
+            }),
+            _ => Err(FusionError::Syntax {
+                message: format!("Unknown type '{}'", expr),
+                span,
+            }),
+        }
     }
 
     fn substitute_generic_type(&self, ty: &Type, substitutions: &HashMap<String, Type>) -> Type {
@@ -4211,6 +4150,7 @@ mod hir_nominal_identity_tests {
                 name: "next".into(),
                 parameters: Vec::new(),
                 return_type: None,
+                default_body: None,
                 span: Span::default(),
             }],
         );
@@ -4563,4 +4503,168 @@ mod foreign_declaration_typecheck_tests {
         assert!(error.to_string().contains("Phase 4.4"));
     }
 
+}
+
+#[cfg(test)]
+mod type_expression_conversion_tests {
+    use super::*;
+    use crate::lexer::{BlockMode, Lexer};
+    use crate::parser::Parser;
+
+    fn span() -> Span {
+        Span::new(0, 0)
+    }
+
+    fn convert(name: &str) -> Result<Type, String> {
+        TypeChecker::new()
+            .convert_type(name, span())
+            .map_err(|error| error.to_string())
+    }
+
+    fn convert_generic(name: &str, generics: &[&str]) -> Result<Type, String> {
+        let generics: Vec<String> = generics.iter().map(|g| g.to_string()).collect();
+        TypeChecker::new()
+            .convert_type_with_generics(name, &generics, span())
+            .map_err(|error| error.to_string())
+    }
+
+    fn parse(source: &str) -> Result<Program, String> {
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().map_err(|error| error.to_string())?;
+        Parser::new(tokens)
+            .parse()
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn legacy_spellings_convert_exactly_as_before() {
+        assert_eq!(convert("num"), Ok(Type::Num));
+        assert_eq!(convert("num[]"), Ok(Type::Array(Box::new(Type::Num))));
+        assert_eq!(convert("Array<num>"), Ok(Type::Array(Box::new(Type::Num))));
+        assert_eq!(
+            convert("Option<string>"),
+            Ok(Type::Option(Box::new(Type::String)))
+        );
+        assert_eq!(
+            convert("Result<num, string>"),
+            Ok(Type::Result(Box::new(Type::Num), Box::new(Type::String)))
+        );
+        assert_eq!(
+            convert("HashMap<string, num>"),
+            Ok(Type::HashMap(Box::new(Type::String), Box::new(Type::Num)))
+        );
+        assert_eq!(
+            convert("(num, string)"),
+            Ok(Type::Tuple(vec![Type::Num, Type::String]))
+        );
+        assert_eq!(convert("i32"), Ok(Type::Generic("i32".into())));
+        assert_eq!(convert("*opaque"), Ok(Type::Generic("*opaque".into())));
+    }
+
+    #[test]
+    fn generics_and_arrays_now_nest_in_any_order() {
+        assert_eq!(
+            convert("Option<num>[]"),
+            Ok(Type::Array(Box::new(Type::Option(Box::new(Type::Num)))))
+        );
+        assert_eq!(
+            convert("num[][]"),
+            Ok(Type::Array(Box::new(Type::Array(Box::new(Type::Num)))))
+        );
+        assert_eq!(
+            convert("HashMap<string, num[]>[]"),
+            Ok(Type::Array(Box::new(Type::HashMap(
+                Box::new(Type::String),
+                Box::new(Type::Array(Box::new(Type::Num)))
+            ))))
+        );
+        assert_eq!(
+            convert("(num, string)[]"),
+            Ok(Type::Array(Box::new(Type::Tuple(vec![
+                Type::Num,
+                Type::String
+            ]))))
+        );
+    }
+
+    #[test]
+    fn wrong_generic_arity_is_reported() {
+        assert!(convert("HashMap<num>").unwrap_err().contains("HashMap requires two type arguments"));
+        assert!(convert("Result<num>").unwrap_err().contains("Result requires two type arguments"));
+        assert!(convert("Option<num, num>").unwrap_err().contains("Option requires one type argument"));
+        assert!(convert("Widget<num>").unwrap_err().contains("Unknown type 'Widget<num>'"));
+        assert!(convert("Widget").unwrap_err().contains("Unknown type 'Widget'"));
+    }
+
+    #[test]
+    fn generic_parameters_resolve_at_any_depth_including_tuples() {
+        assert_eq!(
+            convert_generic("T[]", &["T"]),
+            Ok(Type::Array(Box::new(Type::Generic("T".into()))))
+        );
+        assert_eq!(
+            convert_generic("Option<T>[]", &["T"]),
+            Ok(Type::Array(Box::new(Type::Option(Box::new(Type::Generic("T".into()))))))
+        );
+        // The old checker lost the generic scope inside tuples.
+        assert_eq!(
+            convert_generic("(T, num)", &["T"]),
+            Ok(Type::Tuple(vec![Type::Generic("T".into()), Type::Num]))
+        );
+        assert!(convert("T").is_err());
+    }
+
+    #[test]
+    fn self_is_only_accepted_where_generics_are_in_scope() {
+        assert_eq!(convert_generic("Self", &[]), Ok(Type::Unknown));
+        assert!(convert("Self").is_err());
+    }
+
+    #[test]
+    fn function_types_parse_but_are_rejected_with_a_clear_message() {
+        let program = parse("fn apply(f: fn(num) -> num, x: num) -> num:\n    return x\n\nmain:\n    print(1)\n")
+            .expect("function type annotations should parse");
+        match &program.statements[0] {
+            Statement::Function { parameters, .. } => {
+                assert_eq!(
+                    parameters[0].type_name.as_deref(),
+                    Some("fn(num) -> num")
+                );
+            }
+            other => panic!("expected a function, found {other:?}"),
+        }
+        let error = TypeChecker::new()
+            .check(&program)
+            .expect_err("function types need closures, which do not exist yet")
+            .to_string();
+        assert!(error.contains("not supported yet"), "{error}");
+        assert!(convert("fn(num) -> num").unwrap_err().contains("not supported yet"));
+    }
+
+    #[test]
+    fn parser_accepts_nested_array_and_generic_annotations() {
+        let program = parse(
+            "fn grid(rows: num[][], tags: Option<string>[]) -> HashMap<string, num>[]:\n    return 0\n\nmain:\n    print(1)\n",
+        )
+        .expect("nested annotations should parse");
+        match &program.statements[0] {
+            Statement::Function {
+                parameters,
+                return_type,
+                ..
+            } => {
+                assert_eq!(parameters[0].type_name.as_deref(), Some("num[][]"));
+                assert_eq!(parameters[1].type_name.as_deref(), Some("Option<string>[]"));
+                assert_eq!(return_type.as_deref(), Some("HashMap<string, num>[]"));
+            }
+            other => panic!("expected a function, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_annotations_are_syntax_errors() {
+        assert!(parse("fn f(x: Option<num) -> num:\n    return 1\n").is_err());
+        assert!(parse("fn f(x: num[) -> num:\n    return 1\n").is_err());
+        assert!(parse("fn f(x: (num)) -> num:\n    return 1\n").is_err());
+    }
 }

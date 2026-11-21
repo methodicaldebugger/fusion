@@ -28,8 +28,8 @@ fixed-width integer.
 - Generic foreign functions.
 - Asynchronous foreign functions.
 - Foreign ABIs other than `C`.
-- Foreign calls themselves remain unavailable until Phase 4.4 implements native
-  call lowering.
+- Foreign calls are now accepted when their arguments match the validated
+  declaration; Phase 4.4 lowers them to native C ABI calls.
 
 ## Pointer and ownership contract
 
@@ -42,13 +42,13 @@ safe wrapper generation.
 ## Boundary of this milestone
 
 The type checker validates declaration types and rejects unsupported declaration
-shapes. This does not yet prove that a foreign implementation matches its declared
-signature, generate C header bindings, emit LLVM declarations, or perform a call.
-Those are later build/link and Phase 4.4 lowering responsibilities. Target-specific
-LLVM ABI details must be handled when lowering and linking for the selected target.
+shapes. Phase 4.4 emits external LLVM declarations and native calls, including
+integer-width and floating-point-width conversions. This still does not prove that
+a foreign implementation matches its declared signature or generate C header
+bindings. Target-specific LLVM ABI details must be handled for the selected target.
 
 ## Tests
 
 Regression coverage includes every supported parameter type, representative
 return types including `void` and `*opaque`, unsupported type spellings, generic
-and async declarations, and the existing Phase 4.2 invocation diagnostic.
+and async declarations, and valid foreign-call type checking.
