@@ -5931,9 +5931,14 @@ fn resolve_hir_type_spelling(
     } else {
         (name, Vec::new())
     };
+    // HIR currently models Fusion numeric values with the width-neutral
+    // Num/Float categories. Keep the exact C ABI widths in ForeignAbiType;
+    // this mapping is only for structural type resolution and call checking.
     let primitive = match base.trim() {
-        "num" | "int" | "i64" | "u64" => Some(T::Num),
-        "float" | "f64" => Some(T::Float),
+        "num" | "int" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize" => Some(T::Num),
+        "float" | "f32" | "f64" => Some(T::Float),
+        "*opaque" => return Ok(T::Generic("*opaque".to_string())),
         "bool" => Some(T::Bool),
         "string" | "str" => Some(T::String),
         "void" | "unit" => Some(T::Void),
@@ -9576,6 +9581,36 @@ mod hir_trait_signature_validation_tests {
 #[cfg(test)]
 mod hir_structural_type_tests {
     use super::*;
+
+    #[test]
+    fn resolves_fixed_width_abi_types_for_hir() {
+        use crate::hir::HirType as T;
+
+        let project = empty_project();
+        for name in [
+            "i8", "i16", "i32", "i64", "i128",
+            "u8", "u16", "u32", "u64", "u128", "isize", "usize",
+        ] {
+            assert_eq!(
+                resolve_hir_type_spelling(&project, "main", Some(name), &[]).unwrap(),
+                T::Num,
+                "expected '{}' to resolve as the HIR numeric category",
+                name,
+            );
+        }
+        for name in ["f32", "f64"] {
+            assert_eq!(
+                resolve_hir_type_spelling(&project, "main", Some(name), &[]).unwrap(),
+                T::Float,
+                "expected '{}' to resolve as the HIR floating-point category",
+                name,
+            );
+        }
+        assert_eq!(
+            resolve_hir_type_spelling(&project, "main", Some("*opaque"), &[]).unwrap(),
+            T::Generic("*opaque".to_string()),
+        );
+    }
 
     #[test]
     fn generic_unification_and_substitution_cover_nested_containers() {

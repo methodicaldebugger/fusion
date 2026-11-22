@@ -1497,16 +1497,10 @@ impl TypeChecker {
         generic_arguments: &[String],
         span: Span,
     ) -> Result<Type, FusionError> {
-        if self.environment.foreign_functions.contains(name) {
-            return Err(FusionError::Syntax {
-                message: format!(
-                    "calling foreign function '{}' is not supported yet; native call lowering is planned for Phase 4.4",
-                    name
-                ),
-                span,
-            });
-        }
-
+        // Foreign functions have already been validated and registered with their
+        // ABI signatures during declaration checking. Type-check their arguments
+        // through the same FunctionType path as ordinary functions; LLVM lowering
+        // handles the foreign ABI and link_name separately.
         if let Some(struct_definition) = self.struct_definition(name).cloned() {
             if !generic_arguments.is_empty() {
                 return Err(FusionError::Syntax {
@@ -4491,17 +4485,19 @@ mod foreign_declaration_typecheck_tests {
     }
 
     #[test]
-    fn rejects_foreign_invocation_until_native_call_lowering_exists() {
-        let source = "extern \"C\" {\n    fn fusion_helper(value: i32) -> i32;\n}\nmain:\n    print(fusion_helper(21))\n";
-        let mut lexer = Lexer::new(source, BlockMode::Unknown);
-        let tokens = lexer.tokenize().expect("source should lex");
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse().expect("source should parse");
+fn accepts_foreign_invocation_for_native_call_lowering() {
+    let source = "extern \"C\" {\n    fn fusion_helper(value: i32) -> i32;\n}\nmain:\n    print(fusion_helper(21))\n";
 
-        let mut checker = TypeChecker::new();
-        let error = checker.check(&program).expect_err("foreign calls are not lowered yet");
-        assert!(error.to_string().contains("Phase 4.4"));
-    }
+    let mut lexer = Lexer::new(source, BlockMode::Unknown);
+    let tokens = lexer.tokenize().expect("source should lex");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().expect("source should parse");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check(&program)
+        .expect("valid foreign function invocation should pass type checking");
+}
 
 }
 
