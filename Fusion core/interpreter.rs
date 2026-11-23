@@ -70,9 +70,58 @@ pub struct Interpreter {
     enum_variant_definition_ids:
         HashMap<(crate::hir::HirDefinitionId, String), crate::hir::HirDefinitionId>,
     loop_depth: usize,
+    /// Number of user-function invocations currently on the interpreter's (Rust) stack.
+    call_depth: usize,
+    max_call_depth: usize,
     output: Vec<String>,
     program: Option<std::sync::Arc<Program>>,
     concurrent_async: bool,
+}
+
+/// Stack reserved for a thread that runs the interpreter. The interpreter is a recursive tree
+/// walker, so Fusion recursion consumes host stack; the default main-thread stack (1 MiB on
+/// Windows, 8 MiB on Linux) would be exhausted after a few thousand nested Fusion calls and abort
+/// the whole process without a diagnostic. The memory is reserved, not committed.
+pub const INTERPRETER_STACK_BYTES: usize = 512 * 1024 * 1024;
+
+/// Maximum nested Fusion function calls before the interpreter stops with a clear error instead
+/// of overflowing the host stack. This budgets roughly 50 KiB of host stack per Fusion call
+/// inside `INTERPRETER_STACK_BYTES`, which is generous even for unoptimised builds.
+pub const MAX_CALL_DEPTH: usize = 10_000;
+
+/// Run `work` on a thread with `INTERPRETER_STACK_BYTES` of stack and return its result.
+///
+/// Panics inside `work` are propagated unchanged, so error behaviour is the same as running
+/// `work` directly. If the thread cannot be created (for example under a tight address-space
+/// limit), `work` runs on the current thread instead.
+pub fn run_with_large_stack<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    let slot = std::sync::Mutex::new(Some(work));
+    std::thread::scope(|scope| {
+        let spawned = std::thread::Builder::new()
+            .stack_size(INTERPRETER_STACK_BYTES)
+            .spawn_scoped(scope, || {
+                let work = slot
+                    .lock()
+                    .expect("interpreter work slot poisoned")
+                    .take()
+                    .expect("interpreter work already taken");
+                work()
+            });
+        match spawned {
+            Ok(handle) => match handle.join() {
+                Ok(result) => result,
+                Err(payload) => std::panic::resume_unwind(payload),
+            },
+            Err(_) => {
+                let work = slot
+                    .lock()
+                    .expect("interpreter work slot poisoned")
+                    .take()
+                    .expect("interpreter work already taken");
+                work()
+            }
+        }
+    })
 }
 
 #[derive(Clone)]
@@ -124,6 +173,8 @@ impl Interpreter {
             struct_field_definition_ids: HashMap::new(),
             enum_variant_definition_ids: HashMap::new(),
             loop_depth: 0,
+            call_depth: 0,
+            max_call_depth: MAX_CALL_DEPTH,
             output: Vec::new(),
             program: None,
             concurrent_async: false,
@@ -132,6 +183,13 @@ impl Interpreter {
 
     pub fn output(&self) -> &[String] {
         &self.output
+    }
+
+    /// Limit nested Fusion calls for this interpreter. Use a value that fits the stack of the
+    /// thread the interpreter runs on (see `MAX_CALL_DEPTH` for the default, which assumes
+    /// `INTERPRETER_STACK_BYTES`).
+    pub fn set_max_call_depth(&mut self, depth: usize) {
+        self.max_call_depth = depth;
     }
 
     // =========================================================================
@@ -172,6 +230,9 @@ impl Interpreter {
 
     fn value_matches_type(&self, value: &Value, expected: &str) -> bool {
         match expected {
+            // The dynamically-typed escape hatch. Erased generic parameters are spelled
+            // `unknown` (see `TypeExpr::erase_generics`), so every value matches.
+            "unknown" => true,
             "num" => matches!(value, Value::Number(_)),
             "float" => matches!(value, Value::Float(_)),
             "bool" => matches!(value, Value::Boolean(_)),
@@ -794,6 +855,13 @@ impl Interpreter {
                 }
             }
         }
+        if self.call_depth >= self.max_call_depth {
+            panic!(
+                "Maximum call depth ({}) exceeded while calling '{}'; check for unbounded recursion",
+                self.max_call_depth, name
+            );
+        }
+        self.call_depth += 1;
         let previous_loop_depth = self.loop_depth;
         self.loop_depth = 0;
         self.environment.push_scope();
@@ -831,6 +899,7 @@ impl Interpreter {
         };
         self.exit_scope();
         self.loop_depth = previous_loop_depth;
+        self.call_depth -= 1;
 
         // The declared return type of an async function is its
         // source-level result type (e.g. `num`), while the runtime
@@ -2399,6 +2468,7 @@ impl Interpreter {
 
     fn value_matches_type_value(&self, value: &Value, expected: &Type) -> bool {
         match expected {
+            Type::Unknown => true,
             Type::Num => matches!(value, Value::Number(_)),
             Type::Float => matches!(value, Value::Float(_)),
             Type::Bool => matches!(value, Value::Boolean(_)),
@@ -2435,6 +2505,12 @@ impl Interpreter {
                 Value::Option(None) => true,
                 _ => false,
             },
+
+            // Generic type parameters are currently erased to the internal
+            // `Struct("unknown")` placeholder inside generic declarations.
+            // Treat that placeholder as unconstrained at runtime; concrete
+            // argument compatibility is checked by the type checker.
+            Type::Struct(expected_name) if expected_name == "unknown" => true,
 
             Type::Struct(expected_name) => match value {
                 Value::Struct { name, .. } => self.nominal_type_symbols_match(expected_name, name),
@@ -3938,5 +4014,60 @@ fn wide_binary(a: WideInt, operator: &Operator, b: WideInt) -> Value {
         Operator::GreaterEqual => Value::Boolean(a >= b),
         Operator::LessEqual => Value::Boolean(a <= b),
         Operator::And | Operator::Or => panic!("Logical operators require boolean operands"),
+    }
+}
+
+#[cfg(test)]
+mod call_depth_tests {
+    use super::*;
+
+    fn run_source(source: &str) -> Vec<String> {
+        let program = crate::compile_source(source).expect("program should compile");
+        run_with_large_stack(|| {
+            let mut interpreter = Interpreter::new();
+            interpreter.execute(&program);
+            interpreter.output().to_vec()
+        })
+    }
+
+    const DEPTH: &str = "fn depth(n: num) -> num:\n    if n == 0:\n        return 0\n    return 1 + depth(n - 1)\n\nmain:\n    print(depth(5000))\n";
+
+    #[test]
+    fn deep_recursion_within_the_limit_succeeds() {
+        assert_eq!(run_source(DEPTH), vec!["5000"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Maximum call depth")]
+    fn unbounded_recursion_stops_with_a_clear_error() {
+        run_source("fn forever(n: num) -> num:\n    return forever(n + 1)\n\nmain:\n    print(forever(0))\n");
+    }
+
+    #[test]
+    fn sequential_calls_do_not_accumulate_depth() {
+        // More calls in total than the limit allows, but never nested.
+        let source = "fn inc(n: num) -> num:\n    return n + 1\n\nmain:\n    total = 0\n    while total < 25000:\n        total = inc(total)\n    print(total)\n";
+        assert!(25_000 > MAX_CALL_DEPTH);
+        assert_eq!(run_source(source), vec!["25000"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Maximum call depth (3)")]
+    fn the_limit_is_configurable_per_interpreter() {
+        let program = crate::compile_source(DEPTH).expect("program should compile");
+        let mut interpreter = Interpreter::new();
+        interpreter.set_max_call_depth(3);
+        interpreter.execute(&program);
+    }
+
+    #[test]
+    fn run_with_large_stack_returns_the_result() {
+        assert_eq!(run_with_large_stack(|| 6 * 7), 42);
+    }
+
+    #[test]
+    #[should_panic(expected = "boom")]
+    fn run_with_large_stack_propagates_panics_unchanged() {
+        run_with_large_stack(|| -> () { panic!("boom") });
     }
 }

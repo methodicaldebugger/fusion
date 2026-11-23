@@ -44,6 +44,9 @@ pub struct Parser {
     loop_depth: usize,
     /// Additional declarations produced by a single `extern` block.
     pending_statements: Vec<Statement>,
+    /// Type parameters of the struct, enum or impl being parsed. They are erased to `unknown`
+    /// wherever they appear in a type annotation (see `TypeExpr::erase_generics`).
+    erased_type_parameters: Vec<String>,
 }
 
 impl Parser {
@@ -59,6 +62,7 @@ impl Parser {
             function_depth: 0,
             loop_depth: 0,
             pending_statements: Vec::new(),
+            erased_type_parameters: Vec::new(),
         }
     }
 
@@ -243,7 +247,42 @@ impl Parser {
     /// The AST still stores type annotations as strings (see `type_expr`), but they are always
     /// the `Display` form of a structurally parsed `TypeExpr`, never hand-assembled text.
     fn parse_type(&mut self) -> Result<String, ParseError> {
-        Ok(self.parse_type_expr()?.to_string())
+        let expr = self.parse_type_expr()?;
+        Ok(expr.erase_generics(&self.erased_type_parameters).to_string())
+    }
+
+    /// Parse an optional `<T, U>` list of type parameters after a struct, enum or impl type
+    /// name. Returns an empty list when there is none.
+    ///
+    /// Generic declarations are *erased*: inside the declaration each parameter is spelled
+    /// `unknown`, and type arguments on user types (`Stack<num>`) are dropped wherever they are
+    /// written. The arguments are accepted for readability and documentation but are not
+    /// checked; see the README section "Generic structs and enums".
+    fn parse_type_parameter_list(&mut self) -> Result<Vec<String>, ParseError> {
+        let mut parameters: Vec<String> = Vec::new();
+        if !self.consume(&Token::Less) {
+            return Ok(parameters);
+        }
+        loop {
+            match self.current() {
+                Token::Identifier(name) => {
+                    if parameters.iter().any(|existing| existing == name) {
+                        return self.error("Duplicate type parameter");
+                    }
+                    parameters.push(name.clone());
+                    self.advance();
+                }
+                _ => return self.error("Expected a type parameter name"),
+            }
+            if self.consume(&Token::Comma) {
+                continue;
+            }
+            break;
+        }
+        if !self.consume(&Token::Greater) {
+            return self.error("Expected '>' after type parameters");
+        }
+        Ok(parameters)
     }
 
     /// `type := primary ("[" "]")*`; see `type_expr` for the full grammar.
@@ -1242,6 +1281,8 @@ impl Parser {
             }
         };
 
+        let type_parameters = self.parse_type_parameter_list()?;
+
         let style = match self.current() {
             Token::Colon => {
                 self.advance();
@@ -1258,6 +1299,8 @@ impl Parser {
         // Struct field delimiters are part of the type declaration syntax, not
         // the file's executable block style. A module may therefore use
         // `struct Point { ... }` alongside indentation-style function bodies.
+        let outer_type_parameters =
+            std::mem::replace(&mut self.erased_type_parameters, type_parameters);
         let fields = match style {
             BlockStyle::Indentation => {
                 self.skip_newlines();
@@ -1268,6 +1311,7 @@ impl Parser {
 
             BlockStyle::Unknown => unreachable!(),
         };
+        self.erased_type_parameters = outer_type_parameters;
 
         Ok(Statement::Struct {
             name,
@@ -1403,6 +1447,8 @@ impl Parser {
             }
         };
 
+        let type_parameters = self.parse_type_parameter_list()?;
+
         let style = match self.current() {
             Token::Colon => {
                 self.advance();
@@ -1418,6 +1464,8 @@ impl Parser {
 
         // Enum variant delimiters are likewise independent of executable block
         // style (see parse_struct).
+        let outer_type_parameters =
+            std::mem::replace(&mut self.erased_type_parameters, type_parameters);
         let variants = match style {
             BlockStyle::Indentation => {
                 self.skip_newlines();
@@ -1428,6 +1476,7 @@ impl Parser {
 
             BlockStyle::Unknown => unreachable!(),
         };
+        self.erased_type_parameters = outer_type_parameters;
 
         Ok(Statement::Enum {
             name,
@@ -1499,8 +1548,12 @@ impl Parser {
 
             if self.consume(&Token::Comma) {
                 self.skip_newlines();
+            } else if self.current() == &Token::NewLine {
+                // In brace-style enums, variants may be separated by commas or
+                // by line breaks, matching the struct/statement formatting style.
+                self.skip_newlines();
             } else if self.current() != &Token::RightBrace {
-                return self.error("Expected ',' or '}' after enum variant");
+                return self.error("Expected ',', a newline, or '}' after enum variant");
             }
         }
 
@@ -2570,8 +2623,12 @@ impl Parser {
         let first_name =
             self.parse_qualified_identifier("Expected type or trait name after 'impl'")?;
 
+        // `impl Stack<T>:` / `impl Trait for Stack<T>:` declare the type parameters used by
+        // the methods; they are erased like the type's own (see `parse_type_parameter_list`).
+        let mut type_parameters = self.parse_type_parameter_list()?;
         let (trait_name, type_name) = if self.consume(&Token::For) {
             let type_name = self.parse_qualified_identifier("Expected type name after 'for'")?;
+            type_parameters.extend(self.parse_type_parameter_list()?);
             (Some(first_name), type_name)
         } else {
             (None, first_name)
@@ -2592,6 +2649,8 @@ impl Parser {
 
         self.use_block_style(style)?;
 
+        let outer_type_parameters =
+            std::mem::replace(&mut self.erased_type_parameters, type_parameters);
         let methods = match style {
             BlockStyle::Indentation => {
                 self.skip_newlines();
@@ -2602,6 +2661,7 @@ impl Parser {
 
             BlockStyle::Unknown => unreachable!(),
         };
+        self.erased_type_parameters = outer_type_parameters;
 
         Ok(Statement::Impl {
             trait_name,

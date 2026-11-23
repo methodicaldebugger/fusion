@@ -307,3 +307,48 @@ A trait method written with a body is a default method. `trait_defaults::expand_
 `Self` in the signature with `Type`. The rest of the compiler only sees ordinary impl methods. Limits: the trait
 and the impl must be in the same source file, default methods cannot be generic, and trait objects, associated
 types, supertraits and generic traits are still unimplemented.
+
+## Recursion limits
+
+The interpreter is a recursive tree walker, so Fusion recursion consumes host stack. `fusion run`, `fusion test`
+and `fusion bench` therefore execute on a thread with a 512 MiB reserved stack
+(`interpreter::run_with_large_stack`), and the interpreter stops with
+`Maximum call depth (10000) exceeded while calling '<name>'` instead of overflowing the host stack and aborting
+the process. Task threads (64 MiB stacks) use a proportionally lower limit. The limit is
+`interpreter::MAX_CALL_DEPTH` and can be changed per interpreter with `Interpreter::set_max_call_depth`.
+
+## Generic structs and enums
+
+```
+struct Pair<A, B>:
+    first: A
+    second: B
+
+enum Maybe<T>:
+    Just(T)
+    Nothing
+
+struct Stack<T>:
+    items: T[]
+
+impl Stack<T>:
+    fn size(self: Stack<T>) -> num:
+        return self.items.get_length()
+```
+
+Type parameters follow the struct, enum or impl type name (`struct Name<T, U>`, `enum Name<T>`,
+`impl Name<T>` and `impl Trait for Name<T>`), in both indentation and brace style.
+
+**Generics are erased, not checked.** The parser spells each parameter `unknown` inside its declaration
+(`first: unknown`) and drops type arguments on user types wherever they are written (`Pair<num, string>`
+becomes `Pair`), so the type checker, HIR passes and interpreter only ever see ordinary types. Built-in
+constructors (`Option`, `Result`, `HashMap`, `Array`, `Iterator`, `Task`) keep their arguments. Consequences:
+
+- `Pair<num, string>` is documentation only: `Pair(first: "x", second: 1)` is accepted for it.
+- Values read from an erased field have type `unknown`, which the checker accepts everywhere.
+- Explicit constructor arguments (`Stack<num>(items: [])`) are not supported; write `Stack(items: [])`.
+- Generic traits (`trait Name<T>`) and generic default methods are not supported.
+- The LLVM backend does not lower `unknown`-typed fields, so generic types are interpreter-only for now.
+
+Typed generics (checking arguments and monomorphizing for the native backend) are future work and would
+make some programs accepted today an error.

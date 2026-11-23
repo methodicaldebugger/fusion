@@ -229,7 +229,9 @@ fn main() -> ExitCode {
     }
 
     let result = match command.as_str() {
-        "run" => run_interpreter(&path, concurrent_async, &package_roots),
+        "run" => fusion::interpreter::run_with_large_stack(|| {
+            run_interpreter(&path, concurrent_async, &package_roots)
+        }),
         "check" => {
             fusion::compile_project_with_package_roots(&path, package_roots.clone()).map(|_| {
                 println!("ok: {}", path);
@@ -268,7 +270,7 @@ fn main() -> ExitCode {
                 filter,
                 include_ignored,
             };
-            fusion::test_runner::run_tests(&path, &options).and_then(|summary| {
+            fusion::interpreter::run_with_large_stack(|| fusion::test_runner::run_tests(&path, &options)).and_then(|summary| {
                 if summary.failed == 0 {
                     Ok(())
                 } else {
@@ -281,7 +283,7 @@ fn main() -> ExitCode {
                 filter,
                 include_ignored,
             };
-            fusion::test_runner::run_benchmarks(&path, &options).and_then(|failed| {
+            fusion::interpreter::run_with_large_stack(|| fusion::test_runner::run_benchmarks(&path, &options)).and_then(|failed| {
                 if failed == 0 {
                     Ok(())
                 } else {

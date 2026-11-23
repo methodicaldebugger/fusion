@@ -44,6 +44,11 @@ pub enum TypeExpr {
     OpaquePointer,
 }
 
+/// Generic type constructors that the compiler itself gives meaning to. Any other generic
+/// spelling (`Stack<num>`) names a user-declared generic type.
+pub const BUILTIN_GENERIC_CONSTRUCTORS: &[&str] =
+    &["Array", "Iterator", "Option", "Result", "HashMap", "Task"];
+
 /// A malformed type spelling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParseError {
@@ -140,6 +145,54 @@ impl TypeExpr {
                     .map(|param| param.substitute_name(from, to))
                     .collect(),
                 ret: Box::new(ret.substitute_name(from, to)),
+            },
+            TypeExpr::OpaquePointer => TypeExpr::OpaquePointer,
+        }
+    }
+
+    /// Erase user-level generics so the rest of the compiler only sees ordinary types:
+    ///
+    /// * a bare name listed in `parameters` (the enclosing struct/enum/impl's type parameters)
+    ///   becomes `unknown`, the dynamically-typed escape hatch every pass already accepts;
+    /// * generic arguments on any name that is not a built-in constructor are dropped, so
+    ///   `Stack<num>` becomes `Stack`.
+    ///
+    /// Built-in constructors (`Option`, `HashMap`, ...) keep their arguments, which are erased
+    /// recursively.
+    pub fn erase_generics(&self, parameters: &[String]) -> TypeExpr {
+        match self {
+            TypeExpr::Named { name, args } => {
+                if parameters.iter().any(|parameter| parameter == name) {
+                    return TypeExpr::named("unknown");
+                }
+                if args.is_empty() {
+                    return self.clone();
+                }
+                if BUILTIN_GENERIC_CONSTRUCTORS.contains(&name.as_str()) {
+                    TypeExpr::Named {
+                        name: name.clone(),
+                        args: args
+                            .iter()
+                            .map(|arg| arg.erase_generics(parameters))
+                            .collect(),
+                    }
+                } else {
+                    TypeExpr::named(name)
+                }
+            }
+            TypeExpr::Array(inner) => TypeExpr::Array(Box::new(inner.erase_generics(parameters))),
+            TypeExpr::Tuple(items) => TypeExpr::Tuple(
+                items
+                    .iter()
+                    .map(|item| item.erase_generics(parameters))
+                    .collect(),
+            ),
+            TypeExpr::Function { params, ret } => TypeExpr::Function {
+                params: params
+                    .iter()
+                    .map(|param| param.erase_generics(parameters))
+                    .collect(),
+                ret: Box::new(ret.erase_generics(parameters)),
             },
             TypeExpr::OpaquePointer => TypeExpr::OpaquePointer,
         }
@@ -513,6 +566,30 @@ mod tests {
         // A name that merely contains the text, or takes arguments, is left alone.
         let other = TypeExpr::parse("SelfLike<num>").unwrap();
         assert_eq!(other.substitute_name("Self", "Point"), other);
+    }
+
+    #[test]
+    fn erase_generics_replaces_parameters_and_drops_user_type_arguments() {
+        let params = vec!["T".to_string(), "E".to_string()];
+        let erase = |source: &str| {
+            TypeExpr::parse(source)
+                .unwrap()
+                .erase_generics(&params)
+                .to_string()
+        };
+        assert_eq!(erase("T"), "unknown");
+        assert_eq!(erase("T[]"), "unknown[]");
+        assert_eq!(erase("num"), "num");
+        assert_eq!(erase("Stack<num>"), "Stack");
+        assert_eq!(erase("Stack<Option<T>>[]"), "Stack[]");
+        // Built-in constructors keep their (erased) arguments.
+        assert_eq!(erase("Option<T>"), "Option<unknown>");
+        assert_eq!(erase("Result<T, E>"), "Result<unknown, unknown>");
+        assert_eq!(erase("HashMap<string, Stack<T>>"), "HashMap<string, Stack>");
+        assert_eq!(erase("(T, Pair<T, E>)"), "(unknown, Pair)");
+        assert_eq!(erase("fn(T) -> Stack<T>"), "fn(unknown) -> Stack");
+        // Names that are not parameters are untouched.
+        assert_eq!(erase("Item"), "Item");
     }
 
     #[test]

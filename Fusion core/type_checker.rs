@@ -44,8 +44,9 @@ pub struct FunctionType {
 pub struct TypeEnvironment {
     pub scopes: Vec<HashMap<String, VariableInfo>>,
     pub functions: HashMap<String, FunctionType>,
-    /// Foreign declarations are known for diagnostics but cannot be invoked until native lowering exists.
+    /// Foreign declarations retained with their validated C ABI signatures.
     pub foreign_functions: HashSet<String>,
+    pub foreign_signatures: HashMap<String, crate::foreign::ForeignFunctionDecl>,
     pub structs: HashMap<String, StructDefinition>,
     pub enums: HashMap<String, EnumDefinition>,
     /// Authoritative project definitions indexed by stable HIR declaration ID.
@@ -80,6 +81,19 @@ pub struct TypeChecker {
     pub environment: TypeEnvironment,
     current_function: Option<FunctionContext>,
     loop_depth: usize,
+}
+
+fn foreign_integer_literal_value(expression: &Expression) -> Option<i128> {
+    match expression {
+        Expression::Number { value, .. } => Some(*value as i128),
+        Expression::WideNumber { value, .. } => i128::try_from(*value).ok(),
+        Expression::Unary {
+            operator: UnaryOperator::Negate,
+            expression,
+            ..
+        } => foreign_integer_literal_value(expression)?.checked_neg(),
+        _ => None,
+    }
 }
 
 impl TypeChecker {
@@ -208,6 +222,7 @@ impl TypeChecker {
                 scopes: vec![HashMap::new()],
                 functions,
                 foreign_functions: HashSet::new(),
+                foreign_signatures: HashMap::new(),
                 structs: HashMap::new(),
                 enums: HashMap::new(),
                 structs_by_id: HashMap::new(),
@@ -1490,6 +1505,105 @@ impl TypeChecker {
         }
     }
 
+    fn validate_foreign_argument(
+        &mut self,
+        function_name: &str,
+        index: usize,
+        abi_type: &crate::foreign::ForeignAbiType,
+        argument: &Expression,
+    ) -> Result<(), FusionError> {
+        use crate::foreign::ForeignAbiType as Abi;
+
+        let argument_span = argument.span();
+        let invalid = |expected: &str, found: &str| FusionError::Syntax {
+            message: format!(
+                "Foreign argument {} to '{}' requires {}; found {}. Pass a value explicitly declared with the exact ABI type; implicit numeric conversions are not allowed.",
+                index + 1, function_name, expected, found
+            ),
+            span: argument_span,
+        };
+
+        // Integer literals are checked against the exact ABI range before LLVM
+        // lowering. Non-literal values must carry the exact fixed-width type;
+        // the general Fusion `num` type is deliberately not width-safe.
+        if let Some((bits, signed)) = match abi_type {
+            Abi::I8 => Some((8, true)),
+            Abi::U8 => Some((8, false)),
+            Abi::I16 => Some((16, true)),
+            Abi::U16 => Some((16, false)),
+            Abi::I32 => Some((32, true)),
+            Abi::U32 => Some((32, false)),
+            Abi::I64 => Some((64, true)),
+            Abi::U64 => Some((64, false)),
+            _ => None,
+        } {
+            if let Some(value) = foreign_integer_literal_value(argument) {
+                let in_range = if signed {
+                    let min = -(1i128 << (bits - 1));
+                    let max = (1i128 << (bits - 1)) - 1;
+                    value >= min && value <= max
+                } else {
+                    value >= 0 && (value as u128) <= ((1u128 << bits) - 1)
+                };
+                if !in_range {
+                    return Err(invalid(
+                        &format!("an integer in the {}-bit {} range", bits, if signed { "signed" } else { "unsigned" }),
+                        &value.to_string(),
+                    ));
+                }
+                return Ok(());
+            }
+
+            let found = self.infer_expression(argument)?;
+            let expected_name = match abi_type {
+                Abi::I8 => "i8", Abi::U8 => "u8",
+                Abi::I16 => "i16", Abi::U16 => "u16",
+                Abi::I32 => "i32", Abi::U32 => "u32",
+                Abi::I64 => "i64", Abi::U64 => "u64",
+                _ => unreachable!(),
+            };
+            if found == Type::Generic(expected_name.to_string()) {
+                return Ok(());
+            }
+            return Err(invalid(expected_name, &found.name()));
+        }
+
+        match abi_type {
+            Abi::F32 | Abi::F64 => {
+                if let Expression::Float { value, .. } = argument {
+                    let valid = value.is_finite()
+                        && (*abi_type != Abi::F32
+                            || (value.abs() <= f32::MAX as f64
+                                && (*value == 0.0 || value.abs() >= f32::from_bits(1) as f64)));
+                    if valid {
+                        return Ok(());
+                    }
+                    return Err(invalid(
+                        if *abi_type == Abi::F32 { "a finite f32 value" } else { "a finite f64 value" },
+                        &value.to_string(),
+                    ));
+                }
+                let found = self.infer_expression(argument)?;
+                let expected_name = if *abi_type == Abi::F32 { "f32" } else { "f64" };
+                if found == Type::Generic(expected_name.to_string()) {
+                    Ok(())
+                } else {
+                    Err(invalid(expected_name, &found.name()))
+                }
+            }
+            Abi::OpaquePointer => {
+                let found = self.infer_expression(argument)?;
+                if found == Type::Generic("*opaque".to_string()) {
+                    Ok(())
+                } else {
+                    Err(invalid("*opaque", &found.name()))
+                }
+            }
+            Abi::Void => Err(invalid("a non-void C ABI value", "void")),
+            _ => unreachable!("integer ABI types are handled above"),
+        }
+    }
+
     fn infer_call(
         &mut self,
         name: &str,
@@ -1538,6 +1652,29 @@ impl TypeChecker {
             }
 
             return Ok(Type::Struct(name.to_string()));
+        }
+
+        // Foreign calls use the retained ABI declaration rather than the
+        // width-neutral compatibility rules used by ordinary Fusion numerics.
+        if let Some(declaration) = self.environment.foreign_signatures.get(name).cloned() {
+            if !generic_arguments.is_empty() {
+                return Err(FusionError::Syntax {
+                    message: format!("Foreign function '{}' does not accept generic arguments", name),
+                    span,
+                });
+            }
+            if arguments.len() != declaration.parameters.len() {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Foreign function '{}' expects {} arguments, found {}",
+                        name, declaration.parameters.len(), arguments.len()
+                    ),
+                    span,
+                });
+            }
+            for (index, (abi_type, argument)) in declaration.parameters.iter().zip(arguments).enumerate() {
+                self.validate_foreign_argument(name, index, abi_type, argument)?;
+            }
         }
 
         let function = self
@@ -3865,6 +4002,7 @@ impl TypeChecker {
                         message,
                         span: *span,
                     })?;
+                    self.environment.foreign_signatures.insert(name.clone(), declaration.clone());
                     self.environment.foreign_functions.insert(name.clone());
                 }
 
@@ -4466,6 +4604,64 @@ mod foreign_declaration_typecheck_tests {
         let source = "extern \"C\" {\n    fn returns_void();\n    fn returns_i8() -> i8;\n    fn returns_u64() -> u64;\n    fn returns_f32() -> f32;\n    fn returns_f64() -> f64;\n    fn returns_handle() -> *opaque;\n}\nmain:\n    print(1)\n";
         let environment = check_foreign_source(source).expect("supported C ABI return types should be accepted");
         assert_eq!(environment.functions.get("returns_void").unwrap().return_type, Type::Void);
+    }
+
+    #[test]
+    fn checks_integer_literals_against_exact_foreign_abi_widths() {
+        for (ty, value) in [
+            ("i8", "127"),
+            ("i8", "-128"),
+            ("u8", "255"),
+            ("i16", "32767"),
+            ("u16", "65535"),
+            ("i32", "2147483647"),
+            ("u32", "4294967295"),
+            ("i64", "9223372036854775807"),
+            ("u64", "18446744073709551615"),
+        ] {
+            let source = format!(
+                "extern \"C\" {{\n    fn take(value: {});\n}}\nmain:\n    take({})\n",
+                ty, value
+            );
+            check_foreign_source(&source)
+                .unwrap_or_else(|error| panic!("{}({}) should be accepted: {}", ty, value, error));
+        }
+    }
+
+    #[test]
+    fn rejects_out_of_range_foreign_integer_literals() {
+        for (ty, value) in [
+            ("i8", "128"),
+            ("i8", "-129"),
+            ("u8", "256"),
+            ("u8", "-1"),
+            ("i16", "32768"),
+            ("u16", "65536"),
+            ("i32", "2147483648"),
+            ("u32", "4294967296"),
+            ("i64", "9223372036854775808"),
+        ] {
+            let source = format!(
+                "extern \"C\" {{\n    fn take(value: {});\n}}\nmain:\n    take({})\n",
+                ty, value
+            );
+            assert!(
+                check_foreign_source(&source).is_err(),
+                "{}({}) must be rejected as out of range",
+                ty,
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_untyped_numeric_values_at_foreign_boundaries() {
+        let source = "extern \"C\" {\n    fn take(value: i8);\n}\nmain:\n    let value = 12\n    take(value)\n";
+        let result = check_foreign_source(source);
+        assert!(
+            result.is_err(),
+            "width-neutral Fusion num values must not silently narrow to i8"
+        );
     }
 
     #[test]

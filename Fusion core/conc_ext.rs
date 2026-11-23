@@ -25,6 +25,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const STACK_SIZE: usize = 64 * 1024 * 1024;
+/// Nested Fusion calls allowed in a task interpreter: the same ~50 KiB of host stack per call
+/// that `interpreter::MAX_CALL_DEPTH` budgets, scaled to this smaller task stack.
+const TASK_MAX_CALL_DEPTH: usize = STACK_SIZE / (50 * 1024);
 
 /// A finished task: its result value and the lines it printed.
 pub type TaskOutcome = Result<(Data, Vec<String>), String>;
@@ -75,6 +78,7 @@ fn tasks() -> &'static Mutex<HashMap<i64, JoinHandle<TaskOutcome>>> {
 /// Runs `name(args...)` to completion in a fresh interpreter.
 fn execute_task(program: Arc<Program>, name: &str, args: Vec<Data>) -> TaskOutcome {
     let mut interp = Interpreter::new();
+    interp.set_max_call_depth(TASK_MAX_CALL_DEPTH);
     interp.attach_program(program.clone());
     if catch_unwind(AssertUnwindSafe(|| interp.register_declarations(&program))).is_err() {
         return Err("could not initialise task interpreter".to_string());
@@ -314,6 +318,7 @@ pub fn parallel_map(
         let name = name.to_string();
         submit_job(move || {
             let mut interp = Interpreter::new();
+            interp.set_max_call_depth(TASK_MAX_CALL_DEPTH);
             interp.attach_program(program.clone());
             if catch_unwind(AssertUnwindSafe(|| interp.register_declarations(&program))).is_err() {
                 done.complete(Err("could not initialise task interpreter".to_string()));
