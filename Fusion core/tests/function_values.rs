@@ -261,3 +261,30 @@ fn function_expression_parameters_need_types() {
         .expect_err("untyped parameter");
     assert!(error.contains("need a type"), "{error}");
 }
+
+
+#[test]
+fn generic_functions_are_values_and_infer_type_arguments_when_called() {
+    let source = "fn identity<T>(value: T) -> T:\n    return value\n\nfn apply_number(f: fn(num) -> num, value: num) -> num:\n    return f(value)\n\nmain:\n    id = identity\n    let_number: fn(num) -> num = identity\n    print(id(42))\n    print(let_number(7))\n    print(apply_number(identity, 9))\n";
+    assert_eq!(run_single_file(source), vec!["42", "7", "9"]);
+}
+
+#[test]
+fn standard_library_builtins_are_first_class_values() {
+    let source = "fn measure(f: fn(string) -> num, text: string) -> num:\n    return f(text)\n\nmain:\n    count = str_char_count\n    print(count(\"fusion\"))\n    print(measure(str_char_count, \"Fusion\"))\n    map_values = array_map\n    doubled = map_values([1, 2, 3], fn(value: num) -> num => value * 2)\n    print(doubled.access(2))\n";
+    assert_eq!(run_single_file(source), vec!["6", "6", "6"]);
+}
+
+#[test]
+fn builtin_function_values_can_be_captured_by_closures() {
+    let source = "main:\n    count = str_char_count\n    measure = fn(text: string) -> num => count(text)\n    print(measure(\"closures\"))\n";
+    assert_eq!(run_single_file(source), vec!["8"]);
+}
+
+
+#[test]
+fn generic_function_values_reject_inconsistent_type_arguments() {
+    let source = "fn same<T>(left: T, right: T) -> T:\n    return left\n\nmain:\n    callback = same\n    print(callback(1, \"not a number\"))\n";
+    let error = fusion::compile_source(source).expect_err("T must have one consistent inferred type");
+    assert!(error.contains("Type mismatch") || error.contains("expects"), "{error}");
+}

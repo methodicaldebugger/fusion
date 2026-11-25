@@ -284,7 +284,7 @@ pub fn value_to_data(value: &Value) -> Result<Data, String> {
         Value::File(_) | Value::TcpStream(_) => {
             return Err("files and streams cannot be copied".to_string())
         }
-        Value::Function(_) => return Err("function values cannot be copied".to_string()),
+        Value::Function(_) | Value::Builtin(_) => return Err("function values cannot be copied".to_string()),
     })
 }
 

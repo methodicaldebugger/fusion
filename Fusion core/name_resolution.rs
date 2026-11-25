@@ -328,6 +328,7 @@ impl Resolver {
             Expression::Identifier { name, span } => {
                 if self.lookup(name).is_none()
                     && !self.is_function_value_name(name)
+                    && !crate::stdlib_ext::is_builtin(name)
                     && name != "print"
                     && name != "input"
                     && name != "open"
@@ -363,6 +364,7 @@ impl Resolver {
                     if self.lookup(capture).is_none()
                         && !self.is_function_value_name(capture)
                         && !self.is_type_value_name(capture)
+                        && !crate::stdlib_ext::is_builtin(capture)
                     {
                         return Err(FusionError::UnknownVariable {
                             name: capture.clone(),

@@ -265,7 +265,7 @@ impl Interpreter {
             // `unknown` (see `TypeExpr::erase_generics`), so every value matches.
             "unknown" => true,
             // Function types are matched before the `T[]` rule: `fn(num) -> num[]` returns an array.
-            other if other.starts_with("fn(") => matches!(value, Value::Function(_)),
+            other if other.starts_with("fn(") => matches!(value, Value::Function(_) | Value::Builtin(_)),
             "num" => matches!(value, Value::Number(_)),
             "float" => matches!(value, Value::Float(_)),
             "bool" => matches!(value, Value::Boolean(_)),
@@ -866,12 +866,14 @@ impl Interpreter {
 
         // A variable holding a function value can be called like a function.
         if !self.functions.contains_key(name) {
-            if let Some(Value::Function(symbol)) = self.environment.get(name).cloned() {
+            if let Some(function_value @ (Value::Function(_) | Value::Builtin(_))) =
+                self.environment.get(name).cloned()
+            {
                 let values: Vec<Value> = arguments
                     .iter()
                     .map(|argument| self.evaluate(argument))
                     .collect();
-                return self.call_function_value(&Value::Function(symbol), values);
+                return self.call_function_value(&function_value, values);
             }
         }
 
@@ -1147,6 +1149,13 @@ impl Interpreter {
     /// Call a function value with already-evaluated arguments.
     pub fn call_function_value(&mut self, function: &Value, arguments: Vec<Value>) -> Value {
         match function {
+            Value::Builtin(name) => {
+                if crate::stdlib_ext::is_builtin(name) {
+                    crate::stdlib_ext::call(self, name, arguments)
+                } else {
+                    panic!("Unknown builtin function value {}", name)
+                }
+            }
             Value::Function(symbol) => {
                 if let Some(captures) = self.closure_captures.get(symbol).cloned() {
                     let function_symbol = symbol
@@ -2180,6 +2189,7 @@ impl Interpreter {
                 Some(value) => value.clone(),
                 None => match self.resolve_function_value(name) {
                     Some(symbol) => Value::Function(symbol),
+                    None if crate::stdlib_ext::is_builtin(name) => Value::Builtin(name.clone()),
                     None => panic!("Runtime error: unknown variable '{}'", name),
                 },
             },
@@ -2195,6 +2205,8 @@ impl Interpreter {
                             value.clone()
                         } else if let Some(function_symbol) = self.resolve_function_value(capture) {
                             Value::Function(function_symbol)
+                        } else if crate::stdlib_ext::is_builtin(capture) {
+                            Value::Builtin(capture.clone())
                         } else if self.structs.contains_key(capture) || self.enums.contains_key(capture) {
                             // Constructor names are captured syntactically but resolved by the
                             // normal constructor path before local function-value lookup.
@@ -2673,7 +2685,7 @@ impl Interpreter {
                 _ => false,
             },
 
-            Type::Function(_, _) => matches!(value, Value::Function(_)),
+            Type::Function(_, _) => matches!(value, Value::Function(_) | Value::Builtin(_)),
 
             Type::Result(ok, err) => match value {
                 Value::Enum {
@@ -3969,6 +3981,7 @@ fn serialize_value(v: &Value) -> String {
         | Value::TcpStream(_)
         | Value::Iterator(_)
         | Value::Function(_)
+        | Value::Builtin(_)
         | Value::None => v.to_string(),
     }
 }

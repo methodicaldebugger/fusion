@@ -40,6 +40,8 @@ pub enum Value {
 
     /// A function value: the (possibly internal) symbol of a user function.
     Function(String),
+    /// A first-class standard-library builtin, dispatched by its stable builtin name.
+    Builtin(String),
 
     None,
 }
@@ -179,6 +181,7 @@ impl std::fmt::Display for Value {
             Value::Function(symbol) => {
                 write!(f, "<function {}>", crate::function_values::display_name(symbol))
             }
+            Value::Builtin(name) => write!(f, "<builtin {}>", name),
 
             Value::None => write!(f, "none"),
         }
@@ -224,6 +227,7 @@ impl PartialEq for Value {
             (Value::File(a), Value::File(b)) => Rc::ptr_eq(a, b),
             (Value::TcpStream(a), Value::TcpStream(b)) => Rc::ptr_eq(a, b),
             (Value::Task(a), Value::Task(b)) => a == b,
+            (Value::Builtin(a), Value::Builtin(b)) => a == b,
             _ => false,
         }
     }

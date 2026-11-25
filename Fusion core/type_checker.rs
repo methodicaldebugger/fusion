@@ -468,12 +468,21 @@ impl TypeChecker {
                 Type::Function(expected_parameters, expected_return),
                 Type::Function(found_parameters, found_return),
             ) => {
-                expected_parameters.len() == found_parameters.len()
-                    && expected_parameters
-                        .iter()
-                        .zip(found_parameters)
-                        .all(|(expected, found)| self.types_compatible(expected, found))
-                    && self.types_compatible(expected_return, found_return)
+                if expected_parameters.len() != found_parameters.len() {
+                    return false;
+                }
+                let mut substitutions = HashMap::new();
+                for (expected, found) in expected_parameters.iter().zip(found_parameters) {
+                    if !Self::unify_function_value_type(found, expected, &mut substitutions) {
+                        return false;
+                    }
+                }
+                let specialized_return = self.substitute_generic_type(found_return, &substitutions);
+                self.types_compatible(expected_return, &specialized_return)
+                    && expected_parameters.iter().zip(found_parameters).all(|(expected, found)| {
+                        let specialized_found = self.substitute_generic_type(found, &substitutions);
+                        self.types_compatible(expected, &specialized_found)
+                    })
             }
 
             _ => false,
@@ -1698,9 +1707,25 @@ impl TypeChecker {
     }
 
     /// The type of `name` used as a function value: a user function visible from the function
-    /// being checked (see `function_values`). Generic functions and built-ins are not values.
+    /// being checked (see `function_values`). Generic parameters remain polymorphic in the
+    /// function signature and are inferred when the function value is called. Standard-library
+    /// builtins use the same signature table as ordinary declarations.
     fn function_value_type(&self, name: &str) -> Option<Type> {
         self.function_value_type_with_hidden_parameters(name, 0)
+    }
+
+    fn is_core_direct_call_builtin(name: &str) -> bool {
+        matches!(
+            name,
+            "input" | "open" | "print" | "array" | "hashmap" | "iterator" | "args"
+                | "read_file" | "write_file" | "file_exists" | "remove_file" | "create_dir"
+                | "list_dir" | "sleep_ms" | "now_ms" | "unix_time" | "date_utc"
+                | "random_int" | "random_float" | "process_run" | "system" | "cwd"
+                | "env_get" | "tcp_connect" | "serialize" | "__fusion_derive_debug"
+                | "__fusion_derive_eq" | "deserialize" | "format" | "hex_encode"
+                | "hex_decode" | "base64_encode" | "base64_decode" | "log_debug"
+                | "log_info" | "log_warn" | "log_error"
+        )
     }
 
     fn function_value_type_with_hidden_parameters(
@@ -1713,12 +1738,20 @@ impl TypeChecker {
             name,
         );
         for candidate in candidates {
-            if crate::stdlib_ext::is_builtin(&candidate) {
+            if Self::is_core_direct_call_builtin(&candidate)
+                && !crate::stdlib_ext::is_builtin(&candidate)
+            {
                 continue;
             }
             if let Some(function) = self.environment.functions.get(&candidate) {
-                if !function.generic_parameters.is_empty() {
-                    return None;
+                // Builtins are values only when they have a standard-library runtime
+                // implementation. Core syntax-like operations (print/open/etc.) remain
+                // direct-call-only until they receive callable runtime descriptors.
+                if crate::stdlib_ext::is_builtin(&candidate) {
+                    return Some(Type::Function(
+                        function.parameters.clone(),
+                        Box::new(function.return_type.clone()),
+                    ));
                 }
                 if hidden_parameters > function.parameters.len() {
                     return None;
@@ -1730,6 +1763,71 @@ impl TypeChecker {
             }
         }
         None
+    }
+
+    fn unify_function_value_type(
+        expected: &Type,
+        found: &Type,
+        substitutions: &mut HashMap<String, Type>,
+    ) -> bool {
+        match expected {
+            Type::Generic(name) => match substitutions.get(name) {
+                Some(existing) => existing == found,
+                None => {
+                    substitutions.insert(name.clone(), found.clone());
+                    true
+                }
+            },
+            Type::Array(inner) => match found {
+                Type::Array(found_inner) => Self::unify_function_value_type(inner, found_inner, substitutions),
+                _ => false,
+            },
+            Type::Iterator(inner) => match found {
+                Type::Iterator(found_inner) => Self::unify_function_value_type(inner, found_inner, substitutions),
+                _ => false,
+            },
+            Type::Option(inner) => match found {
+                Type::Option(found_inner) => Self::unify_function_value_type(inner, found_inner, substitutions),
+                _ => false,
+            },
+            Type::Task(inner) => match found {
+                Type::Task(found_inner) => Self::unify_function_value_type(inner, found_inner, substitutions),
+                _ => false,
+            },
+            Type::HashMap(key, value) => match found {
+                Type::HashMap(found_key, found_value) => {
+                    Self::unify_function_value_type(key, found_key, substitutions)
+                        && Self::unify_function_value_type(value, found_value, substitutions)
+                }
+                _ => false,
+            },
+            Type::Result(ok, error) => match found {
+                Type::Result(found_ok, found_error) => {
+                    Self::unify_function_value_type(ok, found_ok, substitutions)
+                        && Self::unify_function_value_type(error, found_error, substitutions)
+                }
+                _ => false,
+            },
+            Type::Tuple(items) => match found {
+                Type::Tuple(found_items) if items.len() == found_items.len() => items
+                    .iter()
+                    .zip(found_items)
+                    .all(|(a, b)| Self::unify_function_value_type(a, b, substitutions)),
+                _ => false,
+            },
+            Type::Function(parameters, result) => match found {
+                Type::Function(found_parameters, found_result)
+                    if parameters.len() == found_parameters.len() => {
+                        parameters
+                            .iter()
+                            .zip(found_parameters)
+                            .all(|(a, b)| Self::unify_function_value_type(a, b, substitutions))
+                            && Self::unify_function_value_type(result, found_result, substitutions)
+                    }
+                _ => false,
+            },
+            _ => true,
+        }
     }
 
     fn check_function_value_call(
@@ -1751,17 +1849,33 @@ impl TypeChecker {
                 span,
             });
         }
-        for (parameter, argument) in parameters.iter().zip(arguments) {
-            let argument_type = self.infer_expression(argument)?;
-            if !self.types_compatible(parameter, &argument_type) {
+        // Generic function values carry their generic variables in the function type.
+        // Infer a consistent substitution from the actual arguments, then validate the
+        // specialized signature and return its specialized result type.
+        let mut substitutions = HashMap::new();
+        let mut argument_types = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            argument_types.push(self.infer_expression(argument)?);
+        }
+        for ((parameter, argument_type), argument) in parameters
+            .iter()
+            .zip(argument_types.iter())
+            .zip(arguments.iter())
+        {
+            if !Self::unify_function_value_type(parameter, argument_type, &mut substitutions)
+                || !self.types_compatible(
+                    &self.substitute_generic_type(parameter, &substitutions),
+                    argument_type,
+                )
+            {
                 return Err(self.type_mismatch(
-                    parameter.name(),
+                    self.substitute_generic_type(parameter, &substitutions).name(),
                     argument_type.name(),
                     argument.span(),
                 ));
             }
         }
-        Ok(return_type.clone())
+        Ok(self.substitute_generic_type(return_type, &substitutions))
     }
 
     fn infer_call(
