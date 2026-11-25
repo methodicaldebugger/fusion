@@ -413,3 +413,21 @@ main:
   `array_any`, `array_all`, `array_sort_by(array, comparator)` (the comparator returns a negative, zero or
   positive number), `option_map`, `option_and_then`, `result_map`, `result_map_err`, `result_and_then`.
 - Function values cannot be sent to tasks or serialized, and the LLVM backend does not lower them yet.
+
+
+## Error propagation with `?`
+
+`?` after a `Result` expression returns early from the enclosing function with the same `Err`, and otherwise
+continues with the `Ok` payload:
+
+```
+fn double_positive(n: num) -> Result<num, string>:
+    value = parse_positive(n)?
+    return Ok(value * 2)
+```
+
+- It must end a declaration, assignment, `return` or expression statement (`value = f()?`, `value: num = f()?`,
+  `return f()?`, `f()?`). The parser rewrites the statement into `__try_N = f()`, an `if result_is_err(__try_N)`
+  early `return Err(result_unwrap_err(__try_N))`, and the original statement using `result_unwrap(__try_N)`.
+- `?` anywhere else (inside a larger expression, a condition, or a lambda body) is an error that says so.
+- The enclosing function must return a `Result`. The unwrapped value has type `unknown` until typed generics exist.

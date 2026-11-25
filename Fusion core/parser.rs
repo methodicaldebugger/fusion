@@ -50,6 +50,8 @@ pub struct Parser {
     /// Anonymous function bodies are hoisted, while closure expressions retain capture metadata.
     hoisted_functions: Vec<Statement>,
     lambda_counter: usize,
+    /// Numbers the temporaries introduced by the `?` operator.
+    try_counter: usize,
 }
 
 fn collect_expression_identifiers(expression: &Expression, output: &mut Vec<String>) {
@@ -127,6 +129,7 @@ impl Parser {
             erased_type_parameters: Vec::new(),
             hoisted_functions: Vec::new(),
             lambda_counter: 0,
+            try_counter: 0,
         }
     }
 
@@ -480,6 +483,128 @@ impl Parser {
     // ------------------------------------------------------------
 
     fn parse_statement(&mut self) -> Result<Option<Statement>, ParseError> {
+        // Statements queued by an earlier desugaring (extern blocks, `?`) come first.
+        if !self.pending_statements.is_empty() {
+            return Ok(Some(self.pending_statements.remove(0)));
+        }
+        match self.parse_statement_inner()? {
+            Some(statement) => Ok(Some(self.desugar_try_statement(statement))),
+            None => Ok(None),
+        }
+    }
+
+    fn is_try_call(expression: &Expression) -> bool {
+        matches!(
+            expression,
+            Expression::Call { name, arguments, .. } if name == "__try" && arguments.len() == 1
+        )
+    }
+
+    /// Desugar the `?` operator.
+    ///
+    /// `?` is parsed as a postfix operator producing the marker call `__try(expr)`. When that
+    /// marker is the whole value of a declaration, assignment, `return` or expression statement,
+    /// the statement is rewritten into ordinary statements:
+    ///
+    /// ```text
+    /// value = parse(text)?          __try_0 = parse(text)
+    ///                        ==>    if result_is_err(__try_0):
+    ///                                   return Err(result_unwrap_err(__try_0))
+    ///                               value = result_unwrap(__try_0)
+    /// ```
+    ///
+    /// A `?` anywhere else is left as the marker call, which the type checker reports.
+    fn desugar_try_statement(&mut self, mut statement: Statement) -> Statement {
+        let has_try = match &statement {
+            Statement::Return {
+                value: Some(value), ..
+            } => Self::is_try_call(value),
+            Statement::Assignment { value, .. } | Statement::ConstDeclaration { value, .. } => {
+                Self::is_try_call(value)
+            }
+            Statement::Expression { expression, .. } | Statement::Call { expression, .. } => {
+                Self::is_try_call(expression)
+            }
+            Statement::VariableDeclarations { declarations, .. } => {
+                declarations.len() == 1
+                    && declarations[0]
+                        .value
+                        .as_ref()
+                        .map_or(false, Self::is_try_call)
+            }
+            _ => false,
+        };
+        if !has_try {
+            return statement;
+        }
+
+        let slot: &mut Expression = match &mut statement {
+            Statement::Return {
+                value: Some(value), ..
+            } => value,
+            Statement::Assignment { value, .. } | Statement::ConstDeclaration { value, .. } => {
+                value
+            }
+            Statement::Expression { expression, .. } | Statement::Call { expression, .. } => {
+                expression
+            }
+            Statement::VariableDeclarations { declarations, .. } => declarations[0]
+                .value
+                .as_mut()
+                .expect("a `?` declaration has a value"),
+            _ => unreachable!("has_try is only true for the statement kinds above"),
+        };
+        let span = slot.span();
+        let temp = format!("__try_{}", self.try_counter);
+        self.try_counter += 1;
+
+        let identifier = || Expression::Identifier {
+            name: temp.clone(),
+            span,
+        };
+        let call = |name: &str, argument: Expression| Expression::Call {
+            name: name.to_string(),
+            arguments: vec![argument],
+            generic_arguments: Vec::new(),
+            span,
+        };
+
+        let marker = std::mem::replace(slot, call("result_unwrap", identifier()));
+        let operand = match marker {
+            Expression::Call { mut arguments, .. } => arguments.remove(0),
+            other => other,
+        };
+
+        let assign = Statement::Assignment {
+            target: identifier(),
+            value: operand,
+            span,
+        };
+        let check = Statement::If {
+            condition: call("result_is_err", identifier()),
+            body: vec![Statement::Return {
+                value: Some(call("Err", call("result_unwrap_err", identifier()))),
+                span,
+            }],
+            else_body: None,
+            span,
+        };
+
+        let is_bare_expression = matches!(
+            statement,
+            Statement::Expression { .. } | Statement::Call { .. }
+        );
+        let mut queued = vec![check];
+        if !is_bare_expression {
+            queued.push(statement);
+        }
+        for (index, queued_statement) in queued.into_iter().enumerate() {
+            self.pending_statements.insert(index, queued_statement);
+        }
+        assign
+    }
+
+    fn parse_statement_inner(&mut self) -> Result<Option<Statement>, ParseError> {
         if !self.pending_statements.is_empty() {
             return Ok(Some(self.pending_statements.remove(0)));
         }
@@ -3631,6 +3756,19 @@ impl Parser {
                     expression = Expression::Index {
                         array: Box::new(expression),
                         index: Box::new(index),
+                        span: Span::new(start, end),
+                    };
+                }
+
+                // Postfix `?`: the marker call `__try(expr)`, desugared by `parse_statement`.
+                Token::Question => {
+                    let start = expression.span().start;
+                    self.advance();
+                    let end = self.previous_span().end;
+                    expression = Expression::Call {
+                        name: "__try".to_string(),
+                        arguments: vec![expression],
+                        generic_arguments: Vec::new(),
                         span: Span::new(start, end),
                     };
                 }

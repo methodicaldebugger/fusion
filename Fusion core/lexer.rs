@@ -95,6 +95,8 @@ pub enum Token {
     Pipe,
     Bang,
     At,
+    /// `?`: error propagation, `value = parse(text)?`.
+    Question,
     LeftParen,
     RightParen,
     LeftBracket,
@@ -842,6 +844,10 @@ impl Lexer {
                 '@' => {
                     self.advance();
                     return Ok(Spanned::new(Token::At, start, self.position));
+                }
+                '?' => {
+                    self.advance();
+                    return Ok(Spanned::new(Token::Question, start, self.position));
                 }
                 '|' => {
                     self.advance();

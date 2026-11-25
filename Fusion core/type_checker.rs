@@ -1951,6 +1951,14 @@ impl TypeChecker {
             }
         }
 
+        // `?` desugars at statement level; a marker that survives was used somewhere else.
+        if name == "__try" {
+            return Err(FusionError::Syntax {
+                message: "The '?' operator can only end a declaration, assignment, return or expression statement, for example `value = parse(text)?`".into(),
+                span,
+            });
+        }
+
         // A variable (for example a parameter) holding a function value can be called.
         if !self.environment.functions.contains_key(name) {
             let function_value_type = self.lookup_variable(name).map(|info| info.ty.clone());
