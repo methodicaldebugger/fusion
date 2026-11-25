@@ -4193,9 +4193,21 @@ impl TypeChecker {
                     let declaration = crate::foreign::ForeignFunctionDecl {
                         source_name: name.clone(),
                         link_name: link_name.clone().unwrap_or_else(|| name.clone()),
-                        parameters: abi_parameters,
-                        return_type: abi_return,
+                        parameters: abi_parameters.clone(),
+                        return_type: abi_return.clone(),
                         calling_convention: crate::foreign::ForeignCallingConvention::C,
+                        parameter_pointer_contracts: abi_parameters.iter().map(|ty| {
+                            matches!(ty, crate::foreign::ForeignAbiType::OpaquePointer).then(|| crate::foreign::ForeignPointerContract {
+                                ownership: crate::foreign::ForeignPointerOwnership::Unspecified,
+                                nullable: false,
+                                destructor: None,
+                            })
+                        }).collect(),
+                        return_pointer_contract: matches!(&abi_return, crate::foreign::ForeignAbiType::OpaquePointer).then(|| crate::foreign::ForeignPointerContract {
+                            ownership: crate::foreign::ForeignPointerOwnership::Unspecified,
+                            nullable: false,
+                            destructor: None,
+                        }),
                     };
                     declaration.validate().map_err(|message| FusionError::Syntax {
                         message,

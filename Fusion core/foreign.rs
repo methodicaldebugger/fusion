@@ -62,8 +62,47 @@ impl ForeignAbiType {
     }
 }
 
+/// Ownership behavior for an opaque pointer crossing the C ABI boundary.
+///
+/// `Unspecified` is deliberately distinct from `Borrowed`: legacy declarations
+/// may omit a contract, but safety-sensitive consumers must not infer that an
+/// unspecified pointer is safe to retain or release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForeignPointerOwnership {
+    Unspecified,
+    Borrowed,
+    /// Ownership of a returned pointer is transferred to Fusion.
+    Owned,
+    /// Ownership of a parameter is transferred from Fusion to the callee.
+    Consumed,
+}
+
+/// Contract for one opaque pointer. Nullability is independent of ownership.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignPointerContract {
+    pub ownership: ForeignPointerOwnership,
+    pub nullable: bool,
+    /// Required for an `Owned` return value; names the C release function.
+    pub destructor: Option<String>,
+}
+
+impl ForeignPointerContract {
+    pub fn borrowed(nullable: bool) -> Self {
+        Self { ownership: ForeignPointerOwnership::Borrowed, nullable, destructor: None }
+    }
+
+    pub fn owned(nullable: bool, destructor: impl Into<String>) -> Self {
+        Self { ownership: ForeignPointerOwnership::Owned, nullable, destructor: Some(destructor.into()) }
+    }
+
+    pub fn consumed(nullable: bool) -> Self {
+        Self { ownership: ForeignPointerOwnership::Consumed, nullable, destructor: None }
+    }
+}
+
 /// Language-level declaration metadata shared by the type checker and native
-/// backend. The validated initial C subset is lowered by the Phase 4.4 backend.
+/// backend. Pointer contracts are kept alongside (not encoded into) the C ABI
+/// types so the LLVM signature remains ABI-compatible.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForeignFunctionDecl {
     pub source_name: String,
@@ -71,6 +110,66 @@ pub struct ForeignFunctionDecl {
     pub parameters: Vec<ForeignAbiType>,
     pub return_type: ForeignAbiType,
     pub calling_convention: ForeignCallingConvention,
+    /// One entry per parameter. `None` means the source declaration has not yet
+    /// supplied an ownership contract; non-pointer parameters must use `None`.
+    pub parameter_pointer_contracts: Vec<Option<ForeignPointerContract>>,
+    /// Present only when the return type is an opaque pointer.
+    pub return_pointer_contract: Option<ForeignPointerContract>,
+}
+
+impl ForeignFunctionDecl {
+    /// Initialize conservative, explicitly unspecified pointer contracts.
+    pub fn with_default_pointer_contracts(mut self) -> Self {
+        self.parameter_pointer_contracts = self.parameters.iter().map(|ty| {
+            matches!(ty, ForeignAbiType::OpaquePointer).then(|| ForeignPointerContract {
+                ownership: ForeignPointerOwnership::Unspecified,
+                nullable: false,
+                destructor: None,
+            })
+        }).collect();
+        self.return_pointer_contract = matches!(self.return_type, ForeignAbiType::OpaquePointer)
+            .then(|| ForeignPointerContract {
+                ownership: ForeignPointerOwnership::Unspecified,
+                nullable: false,
+                destructor: None,
+            });
+        self
+    }
+
+    pub fn set_parameter_pointer_contract(
+        &mut self,
+        index: usize,
+        contract: ForeignPointerContract,
+    ) -> Result<(), String> {
+        let Some(parameter) = self.parameters.get(index) else {
+            return Err(format!("foreign parameter index {} is out of range", index));
+        };
+        if !matches!(parameter, ForeignAbiType::OpaquePointer) {
+            return Err(format!("foreign parameter {} is not an opaque pointer", index + 1));
+        }
+        if contract.ownership == ForeignPointerOwnership::Owned {
+            return Err("a foreign parameter cannot transfer ownership to Fusion as an owned input; use Consumed to transfer ownership to the callee".into());
+        }
+        if contract.destructor.is_some() {
+            return Err("parameter pointer contracts cannot declare a destructor".into());
+        }
+        if self.parameter_pointer_contracts.len() != self.parameters.len() {
+            self.parameter_pointer_contracts = self.parameters.iter().map(|_| None).collect();
+        }
+        self.parameter_pointer_contracts[index] = Some(contract);
+        Ok(())
+    }
+
+    pub fn set_return_pointer_contract(
+        &mut self,
+        contract: ForeignPointerContract,
+    ) -> Result<(), String> {
+        if !matches!(self.return_type, ForeignAbiType::OpaquePointer) {
+            return Err("a return pointer contract requires an opaque-pointer return type".into());
+        }
+        self.return_pointer_contract = Some(contract);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +191,41 @@ impl ForeignFunctionDecl {
         }
         if !self.return_type.is_return_supported() {
             return Err("foreign function uses an unsupported ABI return type".into());
+        }
+        if self.parameter_pointer_contracts.len() != self.parameters.len() {
+            return Err("foreign pointer contract count must match the parameter count".into());
+        }
+        for (index, (ty, contract)) in self.parameters.iter().zip(&self.parameter_pointer_contracts).enumerate() {
+            match (ty, contract) {
+                (ForeignAbiType::OpaquePointer, Some(contract)) => {
+                    if contract.ownership == ForeignPointerOwnership::Owned {
+                        return Err(format!("foreign parameter {} cannot use Owned; use Consumed for ownership transfer to the callee", index + 1));
+                    }
+                    if contract.destructor.is_some() {
+                        return Err(format!("foreign parameter {} cannot declare a destructor", index + 1));
+                    }
+                }
+                (ForeignAbiType::OpaquePointer, None) | (_, None) => {}
+                (_, Some(_)) => return Err(format!("foreign parameter {} has a pointer contract but is not an opaque pointer", index + 1)),
+            }
+        }
+        match (&self.return_type, &self.return_pointer_contract) {
+            (ForeignAbiType::OpaquePointer, Some(contract)) => {
+                match contract.ownership {
+                    ForeignPointerOwnership::Owned => {
+                        let destructor = contract.destructor.as_deref().unwrap_or("").trim();
+                        if destructor.is_empty() {
+                            return Err("owned foreign pointer return requires a non-empty destructor symbol".into());
+                        }
+                    }
+                    _ if contract.destructor.is_some() => {
+                        return Err("only an Owned foreign pointer return may declare a destructor".into());
+                    }
+                    _ => {}
+                }
+            }
+            (ForeignAbiType::OpaquePointer, None) | (_, None) => {}
+            (_, Some(_)) => return Err("foreign return pointer contract requires an opaque-pointer return type".into()),
         }
         Ok(())
     }
@@ -182,5 +316,68 @@ impl ForeignLibrary {
             args.push(format!("-l{}", lib));
         }
         args
+    }
+}
+
+
+#[cfg(test)]
+mod pointer_contract_tests {
+    use super::*;
+
+    fn declaration() -> ForeignFunctionDecl {
+        ForeignFunctionDecl {
+            source_name: "open_handle".into(),
+            link_name: "open_handle".into(),
+            parameters: vec![ForeignAbiType::OpaquePointer],
+            return_type: ForeignAbiType::OpaquePointer,
+            calling_convention: ForeignCallingConvention::C,
+            parameter_pointer_contracts: vec![Some(ForeignPointerContract::borrowed(false))],
+            return_pointer_contract: Some(ForeignPointerContract::owned(false, "close_handle")),
+        }
+    }
+
+    #[test]
+    fn owned_pointer_return_requires_destructor() {
+        let mut decl = declaration();
+        decl.return_pointer_contract = Some(ForeignPointerContract {
+            ownership: ForeignPointerOwnership::Owned,
+            nullable: false,
+            destructor: None,
+        });
+        assert!(decl.validate().unwrap_err().contains("requires a non-empty destructor"));
+    }
+
+    #[test]
+    fn nullability_is_independent_of_ownership() {
+        let mut decl = declaration();
+        decl.return_pointer_contract = Some(ForeignPointerContract::owned(true, "close_handle"));
+        assert!(decl.validate().is_ok());
+        decl.parameter_pointer_contracts[0] = Some(ForeignPointerContract::borrowed(true));
+        assert!(decl.validate().is_ok());
+    }
+
+    #[test]
+    fn consumed_parameter_models_transfer_to_callee() {
+        let mut decl = declaration();
+        decl.parameter_pointer_contracts[0] = Some(ForeignPointerContract::consumed(false));
+        assert!(decl.validate().is_ok());
+    }
+
+    #[test]
+    fn owned_parameter_is_rejected_as_ambiguous_direction() {
+        let mut decl = declaration();
+        decl.parameter_pointer_contracts[0] = Some(ForeignPointerContract {
+            ownership: ForeignPointerOwnership::Owned,
+            nullable: false,
+            destructor: None,
+        });
+        assert!(decl.validate().unwrap_err().contains("cannot use Owned"));
+    }
+
+    #[test]
+    fn pointer_contract_cannot_be_attached_to_scalar() {
+        let mut decl = declaration();
+        decl.parameters[0] = ForeignAbiType::I32;
+        assert!(decl.validate().unwrap_err().contains("not an opaque pointer"));
     }
 }
