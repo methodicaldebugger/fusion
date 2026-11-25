@@ -18,6 +18,8 @@ pub enum Type {
     File,
     TcpStream,
     Task(Box<Type>),
+    /// A function value: parameter types and return type.
+    Function(Vec<Type>, Box<Type>),
     Void,
     Unknown,
 }
@@ -57,6 +59,15 @@ impl Type {
             Type::File => "File".into(),
             Type::TcpStream => "TcpStream".into(),
             Type::Task(i) => format!("Task<{}>", i.name()),
+            Type::Function(parameters, return_type) => format!(
+                "fn({}) -> {}",
+                parameters
+                    .iter()
+                    .map(|parameter| parameter.name())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                return_type.name()
+            ),
             Type::Void => "void".into(),
             Type::Unknown => "unknown".into(),
         }

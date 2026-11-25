@@ -1120,7 +1120,8 @@ entry:
             | Type::Enum(_)
             | Type::File
             | Type::TcpStream
-            | Type::Task(_) => "ptr".into(),
+            | Type::Task(_)
+            | Type::Function(_, _) => "ptr".into(),
             Type::Generic(name) if matches!(name.as_str(), "f32" | "f64") => "double".into(),
             Type::Generic(name) if name == "*opaque" => "ptr".into(),
             Type::Generic(_) | Type::Unknown => "i64".into(),

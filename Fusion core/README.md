@@ -352,3 +352,64 @@ constructors (`Option`, `Result`, `HashMap`, `Array`, `Iterator`, `Task`) keep t
 
 Typed generics (checking arguments and monomorphizing for the native backend) are future work and would
 make some programs accepted today an error.
+
+## Option and Result values
+
+`Some(x)`, `None`, `Ok(x)` and `Err(e)` build the built-in `Option<T>` and `Result<T, E>` values, and `match`
+takes them apart:
+
+```
+fn parse_positive(n: num) -> Result<num, string>:
+    if n > 0:
+        return Ok(n)
+    return Err("not positive")
+
+match parse_positive(7):
+    Ok(v) => print(v)
+    Err(e) => print(e)
+```
+
+- Patterns may also be written qualified (`Option::Some(x)`, `Result::Err(e)`) and nested
+  (`Some(Ok(v))`). A `match` over an `Option` or `Result` must cover both variants or use a wildcard; a
+  refutable nested pattern such as `Some(Ok(v))` does not by itself cover `Some`.
+- Helpers: `option_is_some`, `option_is_none`, `option_unwrap`, `option_unwrap_or`, `result_is_ok`,
+  `result_is_err`, `result_unwrap`, `result_unwrap_err`, `result_unwrap_or`.
+- `None` is parsed as the call `None()`. The constructors are ordinary built-in functions
+  (`stdlib_ext.rs`) whose type arguments are `unknown`, so `Some(5)` is accepted wherever `Option<num>` is
+  expected, and `Err("x")` wherever `Result<num, string>` is.
+- A `Result` value is the runtime enum `Result` with variants `Ok` / `Err`. A program that declares its own
+  `enum Result` shares that runtime name.
+- Not implemented yet: the `?` operator and methods such as `.map` (no closures).
+
+## Function values and anonymous functions
+
+Functions are values. A function's name, used where a variable is expected, is a function value; its type is
+written `fn(num) -> num`:
+
+```
+fn double(x: num) -> num:
+    return x * 2
+
+fn apply(f: fn(num) -> num, x: num) -> num:
+    return f(x)
+
+main:
+    print(apply(double, 21))                          # 42
+    g = fn(x: num) -> num => x + 1                    # anonymous function
+    print(g(4))                                       # 5
+    squares = array_map([1, 2, 3], fn(x: num) -> num => x * x)
+```
+
+- An anonymous function is `fn(params) [-> type] => expression`. Parameters need types. The parser hoists it into
+  a private function `__lambda_N` of the enclosing module, so it behaves exactly like a named function.
+- **No capture.** An anonymous function cannot use local variables of the code around it (that is an
+  "unknown variable" error); pass them as parameters instead.
+- Function values resolve relative to the function that names them (its own module first, then the entry
+  module), so two modules may each have an `add_one`. To pass a function from another module, wrap it:
+  `fn(x: num) -> num => math.add_one(x)`.
+- Variables of function type are called like functions: `f(x)`. Generic functions and built-ins cannot be used
+  as values.
+- Higher-order built-ins: `array_map`, `array_filter`, `array_fold(array, initial, f)`, `array_for_each`,
+  `array_any`, `array_all`, `array_sort_by(array, comparator)` (the comparator returns a negative, zero or
+  positive number), `option_map`, `option_and_then`, `result_map`, `result_map_err`, `result_and_then`.
+- Function values cannot be sent to tasks or serialized, and the LLVM backend does not lower them yet.

@@ -3891,6 +3891,39 @@ pub fn validate_hir_type_references(project: &Project) -> Result<(), String> {
     Ok(())
 }
 
+/// Replace every function type in `expr` by `unknown`, first passing each parameter and return
+/// type of every function type to `check`. The HIR passes model function values as `unknown`.
+fn erase_function_types(
+    expr: &crate::type_expr::TypeExpr,
+    check: &mut dyn FnMut(&crate::type_expr::TypeExpr) -> Result<(), String>,
+) -> Result<crate::type_expr::TypeExpr, String> {
+    use crate::type_expr::TypeExpr as X;
+    Ok(match expr {
+        X::Function { params, ret } => {
+            for param in params {
+                check(param)?;
+            }
+            check(ret)?;
+            X::named("unknown")
+        }
+        X::Named { name, args } => X::Named {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| erase_function_types(arg, check))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        X::Array(inner) => X::Array(Box::new(erase_function_types(inner, check)?)),
+        X::Tuple(items) => X::Tuple(
+            items
+                .iter()
+                .map(|item| erase_function_types(item, check))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        X::OpaquePointer => X::OpaquePointer,
+    })
+}
+
 fn validate_hir_type_spelling(
     project: &Project,
     module: &str,
@@ -3899,6 +3932,15 @@ fn validate_hir_type_spelling(
     let name = spelling.trim();
     if name.is_empty() {
         return Err("empty type name".into());
+    }
+    if name.contains("->") {
+        // A type that mentions a function type: validate the function's parameter and return
+        // types, then validate the rest of the spelling with each function type read as `unknown`.
+        let expr = crate::type_expr::TypeExpr::parse(name).map_err(|error| error.to_string())?;
+        let erased = erase_function_types(&expr, &mut |part| {
+            validate_hir_type_spelling(project, module, &part.to_string())
+        })?;
+        return validate_hir_type_spelling(project, module, &erased.to_string());
     }
 
     const BUILTINS: &[&str] = &[
@@ -5898,6 +5940,12 @@ fn resolve_hir_type_spelling(
     let name = raw.trim();
     if generics.iter().any(|g| g == name) {
         return Ok(T::Generic(name.to_string()));
+    }
+    if name.contains("->") {
+        // Function types are opaque to the HIR passes (`unknown`).
+        let expr = crate::type_expr::TypeExpr::parse(name).map_err(|error| error.to_string())?;
+        let erased = erase_function_types(&expr, &mut |_| Ok(()))?;
+        return resolve_hir_type_spelling(project, module, Some(&erased.to_string()), generics);
     }
     if let Some(inner) = name.strip_suffix("[]") {
         return Ok(T::Array(Box::new(resolve_hir_type_spelling(

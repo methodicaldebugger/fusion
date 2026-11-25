@@ -80,6 +80,8 @@ struct FunctionContext {
 pub struct TypeChecker {
     pub environment: TypeEnvironment,
     current_function: Option<FunctionContext>,
+    /// Symbol of the function whose body is being checked; function values resolve relative to it.
+    current_function_symbol: Option<String>,
     loop_depth: usize,
 }
 
@@ -237,6 +239,7 @@ impl TypeChecker {
                 nominal_type_ids: HashMap::new(),
             },
             current_function: None,
+            current_function_symbol: None,
             loop_depth: 0,
         }
     }
@@ -461,6 +464,17 @@ impl TypeChecker {
             (Type::Task(expected_inner), Type::Task(found_inner)) => {
                 self.types_compatible(expected_inner, found_inner)
             }
+            (
+                Type::Function(expected_parameters, expected_return),
+                Type::Function(found_parameters, found_return),
+            ) => {
+                expected_parameters.len() == found_parameters.len()
+                    && expected_parameters
+                        .iter()
+                        .zip(found_parameters)
+                        .all(|(expected, found)| self.types_compatible(expected, found))
+                    && self.types_compatible(expected_return, found_return)
+            }
 
             _ => false,
         }
@@ -569,13 +583,21 @@ impl TypeChecker {
                 }
                 Ok(Type::Tuple(converted))
             }
-            TypeExpr::Function { .. } => Err(FusionError::Syntax {
-                message: format!(
-                    "Function type '{}' is not supported yet: the type checker has no function values or closures",
-                    expr
-                ),
-                span,
-            }),
+            TypeExpr::Function { params, ret } => {
+                let mut converted = Vec::with_capacity(params.len());
+                for param in params {
+                    converted.push(self.convert_type_expr(
+                        param,
+                        generic_parameters,
+                        allow_self,
+                        span,
+                    )?);
+                }
+                Ok(Type::Function(
+                    converted,
+                    Box::new(self.convert_type_expr(ret, generic_parameters, allow_self, span)?),
+                ))
+            }
             TypeExpr::Named { name, args } => {
                 self.convert_named_type(expr, name, args, generic_parameters, allow_self, span)
             }
@@ -690,6 +712,14 @@ impl TypeChecker {
             Type::Task(inner) => {
                 Type::Task(Box::new(self.substitute_generic_type(inner, substitutions)))
             }
+
+            Type::Function(parameters, return_type) => Type::Function(
+                parameters
+                    .iter()
+                    .map(|parameter| self.substitute_generic_type(parameter, substitutions))
+                    .collect(),
+                Box::new(self.substitute_generic_type(return_type, substitutions)),
+            ),
 
             _ => ty.clone(),
         }
@@ -957,6 +987,59 @@ impl TypeChecker {
     // Pattern checking
     // ---------------------------------------------------------------------
 
+    const OPTION_VARIANTS: &'static [&'static str] = &["Some", "None"];
+    const RESULT_VARIANTS: &'static [&'static str] = &["Ok", "Err"];
+
+    /// The variants a `match` must cover for the built-in sum types, or `None` for other types.
+    fn builtin_variant_names(ty: &Type) -> Option<&'static [&'static str]> {
+        match ty {
+            Type::Option(_) => Some(Self::OPTION_VARIANTS),
+            Type::Result(_, _) => Some(Self::RESULT_VARIANTS),
+            _ => None,
+        }
+    }
+
+    fn check_builtin_variant_pattern(
+        &self,
+        name: &str,
+        names: &[Pattern],
+        expected: &Type,
+        span: Span,
+    ) -> Result<Vec<(String, Type)>, FusionError> {
+        let (variant, payload): (&str, Option<&Type>) = match (expected, name) {
+            (Type::Option(inner), "Option::Some") => ("Some", Some(inner.as_ref())),
+            (Type::Option(_), "Option::None") => ("None", None),
+            (Type::Result(ok, _), "Result::Ok") => ("Ok", Some(ok.as_ref())),
+            (Type::Result(_, err), "Result::Err") => ("Err", Some(err.as_ref())),
+            _ => {
+                return Err(FusionError::Syntax {
+                    message: format!(
+                        "Pattern '{}' cannot match a value of type {}",
+                        name,
+                        expected.name()
+                    ),
+                    span,
+                });
+            }
+        };
+        let expected_bindings = usize::from(payload.is_some());
+        if names.len() != expected_bindings {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Variant '{}' expects {} bindings, found {}",
+                    variant,
+                    expected_bindings,
+                    names.len()
+                ),
+                span,
+            });
+        }
+        match payload {
+            Some(payload_type) => self.check_pattern(&names[0], payload_type),
+            None => Ok(Vec::new()),
+        }
+    }
+
     fn check_pattern(
         &self,
         pattern: &Pattern,
@@ -1097,6 +1180,10 @@ impl TypeChecker {
                 name,
                 bindings: names,
             } => {
+                // `Some(x)` / `None` match an Option, `Ok(v)` / `Err(e)` match a Result.
+                if matches!(expected, Type::Option(_) | Type::Result(_, _)) {
+                    return self.check_builtin_variant_pattern(name, names, expected, pattern.span);
+                }
                 let enum_name = match expected {
                     Type::Enum(name) => name,
                     Type::Unknown => {
@@ -1211,10 +1298,12 @@ impl TypeChecker {
 
             Expression::String { .. } => Ok(Type::String),
 
-            Expression::Identifier { name, span } => self
-                .lookup_variable(name)
-                .map(|info| info.ty.clone())
-                .ok_or_else(|| self.unknown_variable(name, *span)),
+            Expression::Identifier { name, span } => match self.lookup_variable(name) {
+                Some(info) => Ok(info.ty.clone()),
+                None => self
+                    .function_value_type(name)
+                    .ok_or_else(|| self.unknown_variable(name, *span)),
+            },
 
             Expression::Tuple { elements, .. } => {
                 let mut types = Vec::new();
@@ -1604,6 +1693,62 @@ impl TypeChecker {
         }
     }
 
+    /// The type of `name` used as a function value: a user function visible from the function
+    /// being checked (see `function_values`). Generic functions and built-ins are not values.
+    fn function_value_type(&self, name: &str) -> Option<Type> {
+        let candidates = crate::function_values::function_value_candidates(
+            self.current_function_symbol.as_deref(),
+            name,
+        );
+        for candidate in candidates {
+            if crate::stdlib_ext::is_builtin(&candidate) {
+                continue;
+            }
+            if let Some(function) = self.environment.functions.get(&candidate) {
+                if !function.generic_parameters.is_empty() {
+                    return None;
+                }
+                return Some(Type::Function(
+                    function.parameters.clone(),
+                    Box::new(function.return_type.clone()),
+                ));
+            }
+        }
+        None
+    }
+
+    fn check_function_value_call(
+        &mut self,
+        name: &str,
+        parameters: &[Type],
+        return_type: &Type,
+        arguments: &[Expression],
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        if arguments.len() != parameters.len() {
+            return Err(FusionError::Syntax {
+                message: format!(
+                    "Function value '{}' expects {} arguments, found {}",
+                    name,
+                    parameters.len(),
+                    arguments.len()
+                ),
+                span,
+            });
+        }
+        for (parameter, argument) in parameters.iter().zip(arguments) {
+            let argument_type = self.infer_expression(argument)?;
+            if !self.types_compatible(parameter, &argument_type) {
+                return Err(self.type_mismatch(
+                    parameter.name(),
+                    argument_type.name(),
+                    argument.span(),
+                ));
+            }
+        }
+        Ok(return_type.clone())
+    }
+
     fn infer_call(
         &mut self,
         name: &str,
@@ -1674,6 +1819,20 @@ impl TypeChecker {
             }
             for (index, (abi_type, argument)) in declaration.parameters.iter().zip(arguments).enumerate() {
                 self.validate_foreign_argument(name, index, abi_type, argument)?;
+            }
+        }
+
+        // A variable (for example a parameter) holding a function value can be called.
+        if !self.environment.functions.contains_key(name) {
+            let function_value_type = self.lookup_variable(name).map(|info| info.ty.clone());
+            if let Some(Type::Function(parameters, return_type)) = function_value_type {
+                return self.check_function_value_call(
+                    name,
+                    &parameters,
+                    &return_type,
+                    arguments,
+                    span,
+                );
             }
         }
 
@@ -3180,6 +3339,15 @@ impl TypeChecker {
                     // as covering an entire enum variant.
                     let finite_domain_covered = match &expression_type {
                         Type::Bool => covered_booleans.len() == 2,
+                        Type::Option(_) | Type::Result(_, _) => {
+                            Self::builtin_variant_names(&expression_type)
+                                .map(|required| {
+                                    required
+                                        .iter()
+                                        .all(|variant| covered_variants.contains(*variant))
+                                })
+                                .unwrap_or(false)
+                        }
                         Type::Enum(enum_name) => self
                             .enum_definition(enum_name)
                             .map(|definition| {
@@ -3218,6 +3386,7 @@ impl TypeChecker {
         if has_catch_all {
             return Ok(());
         }
+        let builtin_variants = Self::builtin_variant_names(&expression_type);
         match expression_type {
             Type::Enum(enum_name) => {
                 let definition =
@@ -3244,6 +3413,21 @@ impl TypeChecker {
                         message: "Non-exhaustive boolean match".into(),
                         span,
                     });
+                }
+            }
+            Type::Option(_) | Type::Result(_, _) => {
+                if let Some(required) = builtin_variants {
+                    for variant_name in required {
+                        if !covered_variants.contains(*variant_name) {
+                            return Err(FusionError::Syntax {
+                                message: format!(
+                                    "Non-exhaustive match: missing variant '{}'",
+                                    variant_name
+                                ),
+                                span,
+                            });
+                        }
+                    }
                 }
             }
             Type::Unknown => {}
@@ -3312,6 +3496,19 @@ impl TypeChecker {
                                 }
                                 covered.len() == 2
                             }
+                            Type::Option(_) | Type::Result(_, _) => {
+                                let mut covered = HashSet::new();
+                                for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
+                                    Self::collect_variant_coverage(&arm.pattern, &mut covered);
+                                }
+                                Self::builtin_variant_names(&expression_type)
+                                    .map(|required| {
+                                        required
+                                            .iter()
+                                            .all(|variant| covered.contains(*variant))
+                                    })
+                                    .unwrap_or(false)
+                            }
                             Type::Enum(ref name) => {
                                 let mut covered = HashSet::new();
                                 for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
@@ -3374,6 +3571,7 @@ impl TypeChecker {
         };
 
         let previous_function = self.current_function.take();
+        let previous_function_symbol = self.current_function_symbol.replace(name.to_string());
 
         self.current_function = Some(FunctionContext {
             declared_return_type,
@@ -3447,6 +3645,7 @@ impl TypeChecker {
 
         self.pop_scope();
         self.current_function = previous_function;
+        self.current_function_symbol = previous_function_symbol;
 
         if let Err(error) = result {
             return Err(error);
@@ -4813,7 +5012,7 @@ mod type_expression_conversion_tests {
     }
 
     #[test]
-    fn function_types_parse_but_are_rejected_with_a_clear_message() {
+    fn function_types_parse_convert_and_check() {
         let program = parse("fn apply(f: fn(num) -> num, x: num) -> num:\n    return x\n\nmain:\n    print(1)\n")
             .expect("function type annotations should parse");
         match &program.statements[0] {
@@ -4825,12 +5024,20 @@ mod type_expression_conversion_tests {
             }
             other => panic!("expected a function, found {other:?}"),
         }
-        let error = TypeChecker::new()
+        TypeChecker::new()
             .check(&program)
-            .expect_err("function types need closures, which do not exist yet")
-            .to_string();
-        assert!(error.contains("not supported yet"), "{error}");
-        assert!(convert("fn(num) -> num").unwrap_err().contains("not supported yet"));
+            .expect("a parameter of function type should type-check");
+        assert_eq!(
+            convert("fn(num) -> num"),
+            Ok(Type::Function(vec![Type::Num], Box::new(Type::Num)))
+        );
+        assert_eq!(
+            convert("fn(num, string) -> bool"),
+            Ok(Type::Function(
+                vec![Type::Num, Type::String],
+                Box::new(Type::Bool)
+            ))
+        );
     }
 
     #[test]

@@ -114,6 +114,10 @@ module) document the declaration below them.
 ## Helpers
 `option_is_some`, `option_unwrap`, `option_unwrap_or`, `map_get_or`.
 
+`Some(x)`, `None`, `Ok(x)` and `Err(e)` build `Option` and `Result` values (see the README section
+"Option and Result values"). Helpers: `option_is_none`, `result_is_ok`, `result_is_err`, `result_unwrap`,
+`result_unwrap_err`, `result_unwrap_or`.
+
 ## Function names given as strings
 
 `task_spawn`, `parallel_map` and the test runner take function names as strings. Because module

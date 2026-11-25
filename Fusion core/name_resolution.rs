@@ -305,10 +305,22 @@ impl Resolver {
         Ok(())
     }
 
+    /// A bare function identifier is a value as well as a call target. Project
+    /// compilation module-mangles function definitions, so the source spelling
+    /// may not be present in the lexical scope table. Accept it here and leave
+    /// the module-aware identity/type check to the type checker.
+    fn is_function_value_name(&self, name: &str) -> bool {
+        self.definitions.iter().any(|definition| {
+            definition.kind == DefinitionKind::Function
+                && crate::function_values::display_name(&definition.name) == name
+        })
+    }
+
     fn resolve_expression(&mut self, expr: &Expression) -> Result<(), FusionError> {
         match expr {
             Expression::Identifier { name, span } => {
                 if self.lookup(name).is_none()
+                    && !self.is_function_value_name(name)
                     && name != "print"
                     && name != "input"
                     && name != "open"

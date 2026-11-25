@@ -29,6 +29,7 @@ pub mod time_ext;
 pub mod tls_ext;
 pub mod trait_defaults;
 pub mod type_checker;
+pub mod function_values;
 pub mod type_expr;
 pub mod types;
 pub mod tz_ext;

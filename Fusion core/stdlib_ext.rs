@@ -21,7 +21,7 @@ use std::time::Duration;
 
 // Parameter / return codes:
 //   s String   n Num   f Float   b Bool   a Array<Unknown>   S Array<String>
-//   u Unknown  m HashMap   o Option<Unknown>   v Void
+//   u Unknown  m HashMap   o Option<Unknown>   r Result<Unknown, Unknown>   v Void
 const SIGS: &[(&str, &str, char)] = &[
     // text
     ("regex_is_match", "ss", 'b'),
@@ -159,6 +159,32 @@ const SIGS: &[(&str, &str, char)] = &[
     ("option_unwrap", "o", 'u'),
     ("option_unwrap_or", "ou", 'u'),
     ("map_get_or", "muu", 'u'),
+    // Option and Result constructors (`Some(x)`, `None`, `Ok(x)`, `Err(e)`) and helpers. Their
+    // type arguments are `Unknown`, which the checker accepts against any `Option<T>` /
+    // `Result<T, E>` annotation. `None` is parsed as the call `None()`.
+    ("Some", "u", 'o'),
+    ("None", "", 'o'),
+    ("Ok", "u", 'r'),
+    ("Err", "u", 'r'),
+    ("option_is_none", "o", 'b'),
+    ("result_is_ok", "r", 'b'),
+    ("result_is_err", "r", 'b'),
+    ("result_unwrap", "r", 'u'),
+    ("result_unwrap_err", "r", 'u'),
+    ("result_unwrap_or", "ru", 'u'),
+    // Higher-order functions: the second argument is a function value (`Unknown` here).
+    ("array_map", "au", 'a'),
+    ("array_filter", "au", 'a'),
+    ("array_fold", "auu", 'u'),
+    ("array_for_each", "au", 'v'),
+    ("array_any", "au", 'b'),
+    ("array_all", "au", 'b'),
+    ("array_sort_by", "au", 'a'),
+    ("option_map", "ou", 'o'),
+    ("option_and_then", "ou", 'o'),
+    ("result_map", "ru", 'r'),
+    ("result_map_err", "ru", 'r'),
+    ("result_and_then", "ru", 'r'),
     // assertions (for #[test] functions)
     ("assert", "b", 'v'),
     ("assert_msg", "bs", 'v'),
@@ -186,6 +212,7 @@ fn kind_type(code: char) -> Type {
         'S' => Type::Array(Box::new(Type::String)),
         'm' => Type::HashMap(Box::new(Type::Unknown), Box::new(Type::Unknown)),
         'o' => Type::Option(Box::new(Type::Unknown)),
+        'r' => Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
         'v' => Type::Void,
         _ => Type::Unknown,
     }
@@ -257,6 +284,7 @@ pub fn value_to_data(value: &Value) -> Result<Data, String> {
         Value::File(_) | Value::TcpStream(_) => {
             return Err("files and streams cannot be copied".to_string())
         }
+        Value::Function(_) => return Err("function values cannot be copied".to_string()),
     })
 }
 
@@ -280,6 +308,28 @@ pub fn data_to_value(data: Data) -> Value {
 // ---------------------------------------------------------------------------
 // Argument helpers (runtime errors follow the interpreter's panic convention)
 // ---------------------------------------------------------------------------
+
+fn callback_array(a: &[Value], i: usize, f: &str) -> Vec<Value> {
+    match a.get(i) {
+        Some(Value::Array(items)) => items.clone(),
+        _ => panic!("{}() expects an array as argument {}", f, i + 1),
+    }
+}
+
+fn callback_bool(value: Value, f: &str) -> bool {
+    match value {
+        Value::Boolean(flag) => flag,
+        other => panic!("{}() callback must return a bool, found {}", f, other),
+    }
+}
+
+fn result_value(variant: &str, payload: Value) -> Value {
+    Value::Enum {
+        enum_name: "Result".to_string(),
+        variant: variant.to_string(),
+        values: vec![payload],
+    }
+}
 
 fn s(a: &[Value], i: usize, f: &str) -> String {
     match a.get(i) {
@@ -888,6 +938,187 @@ pub fn call(interp: &mut Interpreter, name: &str, a: Vec<Value>) -> Value {
             Value::Option(Some(inner)) => (**inner).clone(),
             _ => a[1].clone(),
         },
+        "option_is_none" => Value::Boolean(matches!(&a[0], Value::Option(None))),
+
+        // ---- Higher-order functions (the callback is a function value) ----
+        "array_map" => {
+            let items = callback_array(&a, 0, "array_map");
+            let function = a[1].clone();
+            Value::Array(
+                items
+                    .into_iter()
+                    .map(|item| interp.call_function_value(&function, vec![item]))
+                    .collect(),
+            )
+        }
+        "array_filter" => {
+            let items = callback_array(&a, 0, "array_filter");
+            let function = a[1].clone();
+            let mut kept = Vec::new();
+            for item in items {
+                let verdict = interp.call_function_value(&function, vec![item.clone()]);
+                if callback_bool(verdict, "array_filter") {
+                    kept.push(item);
+                }
+            }
+            Value::Array(kept)
+        }
+        "array_fold" => {
+            let items = callback_array(&a, 0, "array_fold");
+            let function = a[2].clone();
+            let mut accumulator = a[1].clone();
+            for item in items {
+                accumulator = interp.call_function_value(&function, vec![accumulator, item]);
+            }
+            accumulator
+        }
+        "array_for_each" => {
+            let items = callback_array(&a, 0, "array_for_each");
+            let function = a[1].clone();
+            for item in items {
+                interp.call_function_value(&function, vec![item]);
+            }
+            Value::None
+        }
+        "array_any" => {
+            let items = callback_array(&a, 0, "array_any");
+            let function = a[1].clone();
+            let mut found = false;
+            for item in items {
+                let verdict = interp.call_function_value(&function, vec![item]);
+                if callback_bool(verdict, "array_any") {
+                    found = true;
+                    break;
+                }
+            }
+            Value::Boolean(found)
+        }
+        "array_all" => {
+            let items = callback_array(&a, 0, "array_all");
+            let function = a[1].clone();
+            let mut all = true;
+            for item in items {
+                let verdict = interp.call_function_value(&function, vec![item]);
+                if !callback_bool(verdict, "array_all") {
+                    all = false;
+                    break;
+                }
+            }
+            Value::Boolean(all)
+        }
+        "array_sort_by" => {
+            let mut items = callback_array(&a, 0, "array_sort_by");
+            let function = a[1].clone();
+            items.sort_by(|left, right| {
+                match interp.call_function_value(&function, vec![left.clone(), right.clone()]) {
+                    Value::Number(order) => order.cmp(&0),
+                    other => panic!(
+                        "array_sort_by() comparator must return a number, found {}",
+                        other
+                    ),
+                }
+            });
+            Value::Array(items)
+        }
+        "option_map" => match &a[0] {
+            Value::Option(Some(inner)) => Value::Option(Some(Box::new(
+                interp.call_function_value(&a[1], vec![(**inner).clone()]),
+            ))),
+            Value::Option(None) => Value::Option(None),
+            _ => panic!("option_map() expects an Option"),
+        },
+        "option_and_then" => match &a[0] {
+            Value::Option(Some(inner)) => {
+                interp.call_function_value(&a[1], vec![(**inner).clone()])
+            }
+            Value::Option(None) => Value::Option(None),
+            _ => panic!("option_and_then() expects an Option"),
+        },
+        "result_map" => match &a[0] {
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Ok" && values.len() == 1 =>
+            {
+                result_value("Ok", interp.call_function_value(&a[1], vec![values[0].clone()]))
+            }
+            Value::Enum { enum_name, .. } if enum_name == "Result" => a[0].clone(),
+            _ => panic!("result_map() expects a Result"),
+        },
+        "result_map_err" => match &a[0] {
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Err" && values.len() == 1 =>
+            {
+                result_value("Err", interp.call_function_value(&a[1], vec![values[0].clone()]))
+            }
+            Value::Enum { enum_name, .. } if enum_name == "Result" => a[0].clone(),
+            _ => panic!("result_map_err() expects a Result"),
+        },
+        "result_and_then" => match &a[0] {
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Ok" && values.len() == 1 =>
+            {
+                interp.call_function_value(&a[1], vec![values[0].clone()])
+            }
+            Value::Enum { enum_name, .. } if enum_name == "Result" => a[0].clone(),
+            _ => panic!("result_and_then() expects a Result"),
+        },
+
+        // ---- Option / Result constructors and helpers ----
+        // A Result is the runtime enum `Result` with variants `Ok` / `Err`, each carrying one
+        // value, so the interpreter's ordinary enum equality, printing and matching apply.
+        "Some" => Value::Option(Some(Box::new(a[0].clone()))),
+        "None" => Value::Option(None),
+        "Ok" => Value::Enum {
+            enum_name: "Result".to_string(),
+            variant: "Ok".to_string(),
+            values: vec![a[0].clone()],
+        },
+        "Err" => Value::Enum {
+            enum_name: "Result".to_string(),
+            variant: "Err".to_string(),
+            values: vec![a[0].clone()],
+        },
+        "result_is_ok" => Value::Boolean(matches!(
+            &a[0],
+            Value::Enum { enum_name, variant, .. } if enum_name == "Result" && variant == "Ok"
+        )),
+        "result_is_err" => Value::Boolean(matches!(
+            &a[0],
+            Value::Enum { enum_name, variant, .. } if enum_name == "Result" && variant == "Err"
+        )),
+        "result_unwrap" => match &a[0] {
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Ok" && values.len() == 1 =>
+            {
+                values[0].clone()
+            }
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Err" && values.len() == 1 =>
+            {
+                panic!("result_unwrap() called on Err({})", values[0])
+            }
+            _ => panic!("result_unwrap() expects a Result"),
+        },
+        "result_unwrap_err" => match &a[0] {
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Err" && values.len() == 1 =>
+            {
+                values[0].clone()
+            }
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Ok" && values.len() == 1 =>
+            {
+                panic!("result_unwrap_err() called on Ok({})", values[0])
+            }
+            _ => panic!("result_unwrap_err() expects a Result"),
+        },
+        "result_unwrap_or" => match &a[0] {
+            Value::Enum { enum_name, variant, values }
+                if enum_name == "Result" && variant == "Ok" && values.len() == 1 =>
+            {
+                values[0].clone()
+            }
+            _ => a[1].clone(),
+        },
         "map_get_or" => match &a[0] {
             Value::HashMap(entries) => entries
                 .iter()
@@ -943,11 +1174,11 @@ mod tests {
         for (name, params, ret) in SIGS {
             assert!(seen.insert(*name), "duplicate builtin {}", name);
             assert!(
-                params.chars().all(|c| "snfbaSumo".contains(c)),
+                params.chars().all(|c| "snfbaSumor".contains(c)),
                 "bad param code in {}",
                 name
             );
-            assert!("snfbaSumov".contains(*ret), "bad return code in {}", name);
+            assert!("snfbaSumorv".contains(*ret), "bad return code in {}", name);
         }
         assert_eq!(signatures().len(), SIGS.len());
     }

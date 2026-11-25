@@ -38,6 +38,9 @@ pub enum Value {
     TcpStream(Rc<RefCell<Option<TcpStream>>>),
     Task(Box<Value>),
 
+    /// A function value: the (possibly internal) symbol of a user function.
+    Function(String),
+
     None,
 }
 
@@ -172,6 +175,10 @@ impl std::fmt::Display for Value {
             Value::File(_) => write!(f, "<file>"),
             Value::TcpStream(_) => write!(f, "<tcp-stream>"),
             Value::Task(value) => write!(f, "Task({})", value),
+
+            Value::Function(symbol) => {
+                write!(f, "<function {}>", crate::function_values::display_name(symbol))
+            }
 
             Value::None => write!(f, "none"),
         }

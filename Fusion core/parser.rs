@@ -47,6 +47,9 @@ pub struct Parser {
     /// Type parameters of the struct, enum or impl being parsed. They are erased to `unknown`
     /// wherever they appear in a type annotation (see `TypeExpr::erase_generics`).
     erased_type_parameters: Vec<String>,
+    /// Anonymous functions found while parsing; they become private top-level functions.
+    hoisted_functions: Vec<Statement>,
+    lambda_counter: usize,
 }
 
 impl Parser {
@@ -63,6 +66,8 @@ impl Parser {
             loop_depth: 0,
             pending_statements: Vec::new(),
             erased_type_parameters: Vec::new(),
+            hoisted_functions: Vec::new(),
+            lambda_counter: 0,
         }
     }
 
@@ -812,7 +817,7 @@ impl Parser {
             return false;
         }
         let mut i = self.position + 2;
-        if !matches!(self.peek_at(i), Some(Token::Identifier(_) | Token::NumType | Token::FloatType | Token::BoolType | Token::StringType | Token::LeftParen)) {
+        if !matches!(self.peek_at(i), Some(Token::Identifier(_) | Token::NumType | Token::FloatType | Token::BoolType | Token::StringType | Token::LeftParen | Token::Fn)) {
             return false;
         }
         let mut angle_depth = 0usize;
@@ -1734,6 +1739,39 @@ impl Parser {
                         name: qualified,
                         fields,
                         has_rest,
+                    }
+                } else if qualified == first
+                    && matches!(first.as_str(), "Some" | "Ok" | "Err")
+                    && self.current() == &Token::LeftParen
+                {
+                    // Built-in Option/Result variants may be written without a path:
+                    // `Some(x)`, `Ok(v)`, `Err(e)` mean `Option::Some(x)`, `Result::Ok(v)`, ...
+                    self.advance();
+                    let mut bindings = Vec::new();
+                    if self.current() != &Token::RightParen {
+                        loop {
+                            bindings.push(self.parse_pattern()?);
+                            if self.consume(&Token::Comma) {
+                                if self.current() == &Token::RightParen {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    if !self.consume(&Token::RightParen) {
+                        return self.error("Expected ')' after variant pattern arguments");
+                    }
+                    let enum_name = if first == "Some" { "Option" } else { "Result" };
+                    PatternKind::Variant {
+                        name: format!("{}::{}", enum_name, first),
+                        bindings,
+                    }
+                } else if qualified == first && first == "None" {
+                    PatternKind::Variant {
+                        name: "Option::None".to_string(),
+                        bindings: Vec::new(),
                     }
                 } else if self.consume(&Token::At) {
                     let nested = self.parse_pattern_atom()?;
@@ -3085,6 +3123,80 @@ impl Parser {
     // Primary expressions
     // ------------------------------------------------------------
 
+    /// `fn(x: num) -> num => x * 2`: an anonymous function with an expression body.
+    ///
+    /// The function is hoisted into a private top-level function `__lambda_N` of the enclosing
+    /// module and the expression becomes a reference to it, so every later pass (module system,
+    /// checker, interpreter) only sees an ordinary function used as a value. It cannot capture
+    /// local variables; naming one is an "unknown variable" error.
+    fn parse_lambda_expression(&mut self) -> Result<Expression, ParseError> {
+        let start = self.current_span().start;
+        self.advance();
+        if !self.consume(&Token::LeftParen) {
+            return self.error("Expected '(' after 'fn' in a function expression");
+        }
+        let mut parameters = Vec::new();
+        if self.current() != &Token::RightParen {
+            loop {
+                let (name, name_span) = match self.current() {
+                    Token::Identifier(name) => (name.clone(), self.current_span()),
+                    _ => return self.error("Expected a parameter name"),
+                };
+                let parameter_start = self.current_span().start;
+                self.advance();
+                if !self.consume(&Token::Colon) {
+                    return self.error(
+                        "Function expression parameters need a type, e.g. fn(x: num) -> num => x * 2",
+                    );
+                }
+                let type_name = self.parse_type()?;
+                parameters.push(Parameter {
+                    name,
+                    name_span,
+                    type_name: Some(type_name),
+                    span: self.span_from(parameter_start),
+                });
+                if self.consume(&Token::Comma) {
+                    if self.current() == &Token::RightParen {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+        if !self.consume(&Token::RightParen) {
+            return self.error("Expected ')' after function expression parameters");
+        }
+        let return_type = if self.consume(&Token::Arrow) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        if !self.consume(&Token::FatArrow) {
+            return self.error("Expected '=>' before the body of a function expression");
+        }
+        let body = self.parse_expression()?;
+        let span = self.span_from(start);
+        let name = format!("__lambda_{}", self.lambda_counter);
+        self.lambda_counter += 1;
+        self.hoisted_functions.push(Statement::Function {
+            name: name.clone(),
+            generic_parameters: Vec::new(),
+            parameters,
+            return_type,
+            body: vec![Statement::Return {
+                value: Some(body),
+                span,
+            }],
+            is_async: false,
+            foreign_abi: None,
+            link_name: None,
+            span,
+        });
+        Ok(Expression::Identifier { name, span })
+    }
+
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         let mut expression = match self.current() {
             Token::Identifier(name) => {
@@ -3218,6 +3330,14 @@ impl Parser {
                                 span: self.span_from(start),
                             }
                         }
+                    } else if name == "None" {
+                        // `None` is the empty Option; it is the built-in call `None()`.
+                        Expression::Call {
+                            name,
+                            arguments: Vec::new(),
+                            generic_arguments: Vec::new(),
+                            span: self.span_from(start),
+                        }
                     } else {
                         Expression::Identifier {
                             name,
@@ -3300,6 +3420,8 @@ impl Parser {
 
                 Expression::String { value, span }
             }
+
+            Token::Fn => self.parse_lambda_expression()?,
 
             Token::LeftParen => {
                 let start = self.current_span().start;
@@ -3467,6 +3589,8 @@ impl Parser {
         if self.require_main && !self.seen_main {
             return self.error("Program must contain a 'main' declaration");
         }
+
+        statements.extend(std::mem::take(&mut self.hoisted_functions));
 
         let program_end = self
             .tokens

@@ -73,6 +73,8 @@ pub struct Interpreter {
     /// Number of user-function invocations currently on the interpreter's (Rust) stack.
     call_depth: usize,
     max_call_depth: usize,
+    /// Symbols of the user functions currently executing, innermost last.
+    call_stack: Vec<String>,
     output: Vec<String>,
     program: Option<std::sync::Arc<Program>>,
     concurrent_async: bool,
@@ -175,6 +177,7 @@ impl Interpreter {
             loop_depth: 0,
             call_depth: 0,
             max_call_depth: MAX_CALL_DEPTH,
+            call_stack: Vec::new(),
             output: Vec::new(),
             program: None,
             concurrent_async: false,
@@ -206,6 +209,18 @@ impl Interpreter {
             "string" => Type::String,
             "File" => Type::File,
             "TcpStream" => Type::TcpStream,
+            other if other.starts_with("fn(") => {
+                match crate::type_expr::TypeExpr::parse(other) {
+                    Ok(crate::type_expr::TypeExpr::Function { params, ret }) => Type::Function(
+                        params
+                            .iter()
+                            .map(|param| self.type_from_name(&param.to_string()))
+                            .collect(),
+                        Box::new(self.type_from_name(&ret.to_string())),
+                    ),
+                    _ => Type::Struct(other.to_string()),
+                }
+            }
             other if other.starts_with('(') && other.ends_with(')') => Type::Tuple(
                 split_top_level_type_list(&other[1..other.len() - 1])
                     .iter()
@@ -224,6 +239,17 @@ impl Interpreter {
             other if other.starts_with("Option<") && other.ends_with('>') => {
                 Type::Option(Box::new(self.type_from_name(&other[7..other.len() - 1])))
             }
+            other if other.starts_with("Result<") && other.ends_with('>') => {
+                match crate::type_expr::TypeExpr::parse(other) {
+                    Ok(crate::type_expr::TypeExpr::Named { args, .. }) if args.len() == 2 => {
+                        Type::Result(
+                            Box::new(self.type_from_name(&args[0].to_string())),
+                            Box::new(self.type_from_name(&args[1].to_string())),
+                        )
+                    }
+                    _ => Type::Struct(other.to_string()),
+                }
+            }
             other => Type::Struct(other.to_string()),
         }
     }
@@ -233,6 +259,8 @@ impl Interpreter {
             // The dynamically-typed escape hatch. Erased generic parameters are spelled
             // `unknown` (see `TypeExpr::erase_generics`), so every value matches.
             "unknown" => true,
+            // Function types are matched before the `T[]` rule: `fn(num) -> num[]` returns an array.
+            other if other.starts_with("fn(") => matches!(value, Value::Function(_)),
             "num" => matches!(value, Value::Number(_)),
             "float" => matches!(value, Value::Float(_)),
             "bool" => matches!(value, Value::Boolean(_)),
@@ -296,6 +324,25 @@ impl Interpreter {
                 match value {
                     Value::Option(Some(v)) => self.value_matches_type(v, inner),
                     Value::Option(None) => true,
+                    _ => false,
+                }
+            }
+
+            other if other.starts_with("Result<") && other.ends_with('>') => {
+                let args = match crate::type_expr::TypeExpr::parse(other) {
+                    Ok(crate::type_expr::TypeExpr::Named { args, .. }) if args.len() == 2 => args,
+                    _ => return false,
+                };
+                match value {
+                    Value::Enum {
+                        enum_name,
+                        variant,
+                        values,
+                    } if enum_name == "Result" && values.len() == 1 => match variant.as_str() {
+                        "Ok" => self.value_matches_type(&values[0], &args[0].to_string()),
+                        "Err" => self.value_matches_type(&values[0], &args[1].to_string()),
+                        _ => false,
+                    },
                     _ => false,
                 }
             }
@@ -812,6 +859,17 @@ impl Interpreter {
             }
         }
 
+        // A variable holding a function value can be called like a function.
+        if !self.functions.contains_key(name) {
+            if let Some(Value::Function(symbol)) = self.environment.get(name).cloned() {
+                let values: Vec<Value> = arguments
+                    .iter()
+                    .map(|argument| self.evaluate(argument))
+                    .collect();
+                return self.call_function_value(&Value::Function(symbol), values);
+            }
+        }
+
         let function = self
             .functions
             .get(name)
@@ -862,6 +920,7 @@ impl Interpreter {
             );
         }
         self.call_depth += 1;
+        self.call_stack.push(name.to_string());
         let previous_loop_depth = self.loop_depth;
         self.loop_depth = 0;
         self.environment.push_scope();
@@ -900,6 +959,7 @@ impl Interpreter {
         self.exit_scope();
         self.loop_depth = previous_loop_depth;
         self.call_depth -= 1;
+        self.call_stack.pop();
 
         // The declared return type of an async function is its
         // source-level result type (e.g. `num`), while the runtime
@@ -1068,6 +1128,40 @@ impl Interpreter {
     }
 
     /// Calls a registered top-level function by name with already-evaluated arguments.
+    /// The symbol of the user function `name` refers to when used as a value inside the
+    /// function that is currently executing (see `function_values`).
+    fn resolve_function_value(&self, name: &str) -> Option<String> {
+        crate::function_values::function_value_candidates(
+            self.call_stack.last().map(String::as_str),
+            name,
+        )
+        .into_iter()
+        .find(|candidate| self.functions.contains_key(candidate))
+    }
+
+    /// Call a function value with already-evaluated arguments.
+    pub fn call_function_value(&mut self, function: &Value, arguments: Vec<Value>) -> Value {
+        match function {
+            Value::Function(symbol) => {
+                let declaration = self
+                    .functions
+                    .get(symbol)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("Unknown function '{}'", symbol));
+                if declaration.parameters.len() != arguments.len() {
+                    panic!(
+                        "Function '{}' expects {} arguments, got {}",
+                        crate::function_values::display_name(symbol),
+                        declaration.parameters.len(),
+                        arguments.len()
+                    );
+                }
+                self.invoke_function(symbol, &declaration, arguments)
+            }
+            other => panic!("Expected a function value, found {}", other),
+        }
+    }
+
     pub fn call_function_by_name(&mut self, name: &str, values: Vec<Value>) -> Value {
         if self.program.as_deref().is_some_and(|program| {
             program.statements.iter().any(|statement| {
@@ -1900,6 +1994,20 @@ impl Interpreter {
             }
 
             // -----------------------------------------------------------------
+            // Built-in Option variants (`Some(x)` / `None`). Result values are ordinary
+            // `Value::Enum`s named `Result`, so the enum arm below matches `Ok` / `Err`.
+            // -----------------------------------------------------------------
+            (PatternKind::Variant { name, bindings }, Value::Option(option)) => {
+                match (name.as_str(), option) {
+                    ("Option::Some", Some(inner)) if bindings.len() == 1 => {
+                        self.pattern_matches(&bindings[0], inner)
+                    }
+                    ("Option::None", None) if bindings.is_empty() => Some(Vec::new()),
+                    _ => None,
+                }
+            }
+
+            // -----------------------------------------------------------------
             // Enum variant
             // -----------------------------------------------------------------
             (
@@ -2037,11 +2145,13 @@ impl Interpreter {
             // -----------------------------------------------------------------
             // Identifier
             // -----------------------------------------------------------------
-            Expression::Identifier { name, .. } => self
-                .environment
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| panic!("Runtime error: unknown variable '{}'", name)),
+            Expression::Identifier { name, .. } => match self.environment.get(name) {
+                Some(value) => value.clone(),
+                None => match self.resolve_function_value(name) {
+                    Some(symbol) => Value::Function(symbol),
+                    None => panic!("Runtime error: unknown variable '{}'", name),
+                },
+            },
 
             // -----------------------------------------------------------------
             // Array
@@ -2503,6 +2613,21 @@ impl Interpreter {
             Type::Option(inner) => match value {
                 Value::Option(Some(v)) => self.value_matches_type_value(v, inner),
                 Value::Option(None) => true,
+                _ => false,
+            },
+
+            Type::Function(_, _) => matches!(value, Value::Function(_)),
+
+            Type::Result(ok, err) => match value {
+                Value::Enum {
+                    enum_name,
+                    variant,
+                    values,
+                } if enum_name == "Result" && values.len() == 1 => match variant.as_str() {
+                    "Ok" => self.value_matches_type_value(&values[0], ok),
+                    "Err" => self.value_matches_type_value(&values[0], err),
+                    _ => false,
+                },
                 _ => false,
             },
 
@@ -3783,7 +3908,11 @@ fn serialize_value(v: &Value) -> String {
 
         Value::Task(x) => serialize_value(x),
 
-        Value::File(_) | Value::TcpStream(_) | Value::Iterator(_) | Value::None => v.to_string(),
+        Value::File(_)
+        | Value::TcpStream(_)
+        | Value::Iterator(_)
+        | Value::Function(_)
+        | Value::None => v.to_string(),
     }
 }
 fn parse_serialized(s: &str) -> Option<Value> {
