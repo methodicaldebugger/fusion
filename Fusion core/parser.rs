@@ -47,9 +47,68 @@ pub struct Parser {
     /// Type parameters of the struct, enum or impl being parsed. They are erased to `unknown`
     /// wherever they appear in a type annotation (see `TypeExpr::erase_generics`).
     erased_type_parameters: Vec<String>,
-    /// Anonymous functions found while parsing; they become private top-level functions.
+    /// Anonymous function bodies are hoisted, while closure expressions retain capture metadata.
     hoisted_functions: Vec<Statement>,
     lambda_counter: usize,
+}
+
+fn collect_expression_identifiers(expression: &Expression, output: &mut Vec<String>) {
+    match expression {
+        Expression::Identifier { name, .. } => output.push(name.clone()),
+        Expression::Closure { captures, .. } => output.extend(captures.iter().cloned()),
+        Expression::Array { elements, .. } | Expression::Tuple { elements, .. } => {
+            for element in elements {
+                collect_expression_identifiers(element, output);
+            }
+        }
+        Expression::Index { array, index, .. } => {
+            collect_expression_identifiers(array, output);
+            collect_expression_identifiers(index, output);
+        }
+        Expression::Property { object, .. }
+        | Expression::Await { expression: object, .. }
+        | Expression::Unary { expression: object, .. }
+        | Expression::Conversion { expression: object, .. } => {
+            collect_expression_identifiers(object, output);
+        }
+        Expression::MethodCall { object, arguments, .. } => {
+            collect_expression_identifiers(object, output);
+            for argument in arguments {
+                collect_expression_identifiers(argument, output);
+            }
+        }
+        Expression::Call { name, arguments, .. } => {
+            // A call target may be a local function-valued binding. Built-ins are resolved
+            // independently and do not need to be part of the lexical capture environment.
+            if !crate::stdlib_ext::is_builtin(name)
+                && !matches!(name.as_str(), "print" | "input" | "open" | "log_debug" | "log_info" | "log_warn" | "log_error" | "Some" | "None" | "Ok" | "Err")
+            {
+                output.push(name.clone());
+            }
+            for argument in arguments {
+                collect_expression_identifiers(argument, output);
+            }
+        }
+        Expression::EnumConstructor { arguments, .. } => {
+            for argument in arguments {
+                collect_expression_identifiers(argument, output);
+            }
+        }
+        Expression::StructConstructor { fields, .. } => {
+            for (_, value) in fields {
+                collect_expression_identifiers(value, output);
+            }
+        }
+        Expression::Binary { left, right, .. } => {
+            collect_expression_identifiers(left, output);
+            collect_expression_identifiers(right, output);
+        }
+        Expression::Number { .. }
+        | Expression::WideNumber { .. }
+        | Expression::Float { .. }
+        | Expression::Boolean { .. }
+        | Expression::String { .. } => {}
+    }
 }
 
 impl Parser {
@@ -3124,11 +3183,8 @@ impl Parser {
     // ------------------------------------------------------------
 
     /// `fn(x: num) -> num => x * 2`: an anonymous function with an expression body.
-    ///
-    /// The function is hoisted into a private top-level function `__lambda_N` of the enclosing
-    /// module and the expression becomes a reference to it, so every later pass (module system,
-    /// checker, interpreter) only sees an ordinary function used as a value. It cannot capture
-    /// local variables; naming one is an "unknown variable" error.
+    /// The executable body is hoisted, but the expression retains the lexical names to snapshot
+    /// into its closure environment when evaluated.
     fn parse_lambda_expression(&mut self) -> Result<Expression, ParseError> {
         let start = self.current_span().start;
         self.advance();
@@ -3178,23 +3234,55 @@ impl Parser {
         }
         let body = self.parse_expression()?;
         let span = self.span_from(start);
+        let mut captures = Vec::new();
+        collect_expression_identifiers(&body, &mut captures);
+        let parameter_names: std::collections::HashSet<String> =
+            parameters.iter().map(|parameter| parameter.name.clone()).collect();
+        captures.retain(|capture| !parameter_names.contains(capture));
+        let mut seen = std::collections::HashSet::new();
+        captures.retain(|capture| seen.insert(capture.clone()));
         let name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
+        let mut function_parameters = parameters;
+        let mut function_body = Vec::new();
+        for (index, capture) in captures.iter().enumerate() {
+            let hidden_name = format!("{}__capture_{}", name, index);
+            function_parameters.push(Parameter {
+                name: hidden_name.clone(),
+                name_span: span,
+                type_name: Some("unknown".to_string()),
+                span,
+            });
+            function_body.push(Statement::VariableDeclarations {
+                declarations: vec![VariableDeclaration {
+                    name: capture.clone(),
+                    name_span: span,
+                    declared_type: None,
+                    value: Some(Expression::Identifier {
+                        name: hidden_name,
+                        span,
+                    }),
+                    span,
+                }],
+                span,
+            });
+        }
+        function_body.push(Statement::Return {
+            value: Some(body),
+            span,
+        });
         self.hoisted_functions.push(Statement::Function {
             name: name.clone(),
             generic_parameters: Vec::new(),
-            parameters,
+            parameters: function_parameters,
             return_type,
-            body: vec![Statement::Return {
-                value: Some(body),
-                span,
-            }],
+            body: function_body,
             is_async: false,
             foreign_abi: None,
             link_name: None,
             span,
         });
-        Ok(Expression::Identifier { name, span })
+        Ok(Expression::Closure { name, captures, span })
     }
 
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {

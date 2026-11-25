@@ -55,6 +55,9 @@ pub struct Interpreter {
     enums_by_id: HashMap<crate::hir::HirDefinitionId, EnumDefinition>,
     environment: Environment,
     functions: HashMap<String, Function>,
+    /// Snapshot environments for evaluated anonymous closures, keyed by private closure symbol.
+    closure_captures: HashMap<String, Vec<Value>>,
+    next_closure_id: u64,
     structs: HashMap<String, StructDefinition>,
     structs_by_id: HashMap<crate::hir::HirDefinitionId, StructDefinition>,
     /// Stable source declaration identities for internal nominal type symbols.
@@ -164,6 +167,8 @@ impl Interpreter {
             enums_by_id: HashMap::new(),
             environment: Environment::new(),
             functions: HashMap::new(),
+            closure_captures: HashMap::new(),
+            next_closure_id: 0,
             structs: HashMap::new(),
             structs_by_id: HashMap::new(),
             type_definition_ids: HashMap::new(),
@@ -1143,6 +1148,32 @@ impl Interpreter {
     pub fn call_function_value(&mut self, function: &Value, arguments: Vec<Value>) -> Value {
         match function {
             Value::Function(symbol) => {
+                if let Some(captures) = self.closure_captures.get(symbol).cloned() {
+                    let function_symbol = symbol
+                        .split("#closure")
+                        .next()
+                        .unwrap_or(symbol)
+                        .to_string();
+                    let declaration = self
+                        .functions
+                        .get(&function_symbol)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            panic!("Unknown closure function '{}'", function_symbol)
+                        });
+                    let source_arity = declaration.parameters.len().saturating_sub(captures.len());
+                    if source_arity != arguments.len() {
+                        panic!(
+                            "Function '{}' expects {} arguments, got {}",
+                            crate::function_values::display_name(&function_symbol),
+                            source_arity,
+                            arguments.len()
+                        );
+                    }
+                    let mut all_arguments = arguments;
+                    all_arguments.extend(captures);
+                    return self.invoke_function(&function_symbol, &declaration, all_arguments);
+                }
                 let declaration = self
                     .functions
                     .get(symbol)
@@ -2152,6 +2183,32 @@ impl Interpreter {
                     None => panic!("Runtime error: unknown variable '{}'", name),
                 },
             },
+
+            Expression::Closure { name, captures, .. } => {
+                let Some(symbol) = self.resolve_function_value(name) else {
+                    panic!("Runtime error: closure function '{}' was not registered", name);
+                };
+                let captured_values: Vec<Value> = captures
+                    .iter()
+                    .map(|capture| {
+                        if let Some(value) = self.environment.get(capture) {
+                            value.clone()
+                        } else if let Some(function_symbol) = self.resolve_function_value(capture) {
+                            Value::Function(function_symbol)
+                        } else if self.structs.contains_key(capture) || self.enums.contains_key(capture) {
+                            // Constructor names are captured syntactically but resolved by the
+                            // normal constructor path before local function-value lookup.
+                            Value::None
+                        } else {
+                            panic!("Runtime error: cannot capture unknown name '{}'", capture)
+                        }
+                    })
+                    .collect();
+                let closure_id = format!("{}#closure{}", symbol, self.next_closure_id);
+                self.next_closure_id += 1;
+                self.closure_captures.insert(closure_id.clone(), captured_values);
+                Value::Function(closure_id)
+            }
 
             // -----------------------------------------------------------------
             // Array

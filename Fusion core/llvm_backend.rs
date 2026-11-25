@@ -296,6 +296,7 @@ impl LLVMBackend {
                 self.nominal_identity_for_type_name(enum_name)
             }
             Expression::Identifier { name, .. } => self.nominal_types_by_local.get(name).cloned(),
+            Expression::Closure { .. } => None,
             Expression::Call { span, .. } => self
                 .function_call_return_types
                 .get(&(
@@ -3700,6 +3701,9 @@ entry:
                     LlType::Void => Err(self.unsupported("cannot index a collection element of type void")),
                 }
             }
+            Expression::Closure { .. } => Err(self.unsupported(
+                "anonymous closure values require the native closure environment and indirect-call ABI, which are not implemented yet",
+            )),
             Expression::Identifier { name, .. } => {
                 if let Some((ty, symbol)) = self.global_constants.get(name).cloned() {
                     let value = self.temp();
@@ -4006,6 +4010,7 @@ entry:
             Expression::Float { .. } => Type::Float,
             Expression::Boolean { .. } => Type::Bool,
             Expression::String { .. } => Type::String,
+            Expression::Closure { .. } => Type::Unknown,
             Expression::Identifier { name, .. } => {
                 if let Some(items) = self.tuple_types.get(name) {
                     return Type::Tuple(items.clone());
@@ -4077,6 +4082,7 @@ entry:
                 UnaryOperator::Not => LlType::I1,
                 _ => self.expr_type(expression),
             },
+            Expression::Closure { .. } => LlType::Ptr,
             Expression::Identifier { name, .. } => self
                 .locals
                 .get(name)

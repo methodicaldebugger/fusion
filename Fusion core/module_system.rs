@@ -925,7 +925,7 @@ fn rewrite_constant_statement(
         shadowed: &HashSet<String>,
     ) {
         match e {
-            E::Identifier { name, .. } => {
+            E::Identifier { name, .. } | E::Closure { name, .. } => {
                 if !shadowed.contains(name) {
                     if let Some(mapped) = names.get(name) {
                         *name = mapped.clone();
@@ -1342,7 +1342,8 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
             | E::Float { .. }
             | E::Boolean { .. }
             | E::String { .. }
-            | E::Identifier { .. } => {}
+            | E::Identifier { .. }
+            | E::Closure { .. } => {}
         }
     }
     fn pattern(p: &mut crate::ast::Pattern, names: &HashMap<String, String>) {
@@ -1803,6 +1804,11 @@ fn rewrite_expression_module_calls(
                 }
             }
         }
+        E::Closure { name, .. } => {
+            if let Some(mangled) = local_functions.get(name) {
+                *name = mangled.clone();
+            }
+        }
         E::Call {
             name, arguments, ..
         } => {
@@ -1868,7 +1874,8 @@ fn rewrite_expression_module_calls(
         | E::Float { .. }
         | E::Boolean { .. }
         | E::String { .. }
-        | E::Identifier { .. } => {}
+        | E::Identifier { .. }
+        | E::Closure { .. } => {}
     }
     if let Some(replacement) = replacement {
         *expression = replacement;
@@ -2310,6 +2317,7 @@ fn type_references_symbol(type_name: &str, symbol: &str) -> bool {
 fn expression_references_symbol(expression: &crate::ast::Expression, symbol: &str) -> bool {
     use crate::ast::Expression as E;
     match expression {
+        E::Closure { name, .. } => name == symbol,
         E::Call {
             name, arguments, ..
         } => {
@@ -4422,7 +4430,8 @@ fn resolve_expression_type_expressions(
         | E::Float { .. }
         | E::Boolean { .. }
         | E::String { .. }
-        | E::Identifier { .. } => {}
+        | E::Identifier { .. }
+        | E::Closure { .. } => {}
     }
     Ok(())
 }
@@ -4773,7 +4782,8 @@ fn resolve_field_accesses_in_expression(
         | E::Float { .. }
         | E::Boolean { .. }
         | E::String { .. }
-        | E::Identifier { .. } => {}
+        | E::Identifier { .. }
+        | E::Closure { .. } => {}
     }
     Ok(())
 }
@@ -5471,7 +5481,8 @@ fn collect_resolved_calls_in_expression(
         | E::Float { .. }
         | E::Boolean { .. }
         | E::String { .. }
-        | E::Identifier { .. } => {}
+        | E::Identifier { .. }
+        | E::Closure { .. } => {}
     }
 
     match expression {
@@ -6581,6 +6592,7 @@ fn infer_hir_structural_type_with_locals(
     use crate::hir::HirType as T;
     match expression {
         E::Identifier { name, .. } => Ok(environment.get(name).cloned().unwrap_or(T::Unknown)),
+        E::Closure { .. } => Ok(T::Unknown),
         E::Array { elements, .. } => {
             let mut element = T::Unknown;
             for (index, value) in elements.iter().enumerate() {
@@ -7088,7 +7100,7 @@ fn infer_hir_structural_type(
                 left_type
             }
         },
-        E::Identifier { .. } | E::StructConstructor { .. } | E::EnumConstructor { .. } => {
+        E::Identifier { .. } | E::Closure { .. } | E::StructConstructor { .. } | E::EnumConstructor { .. } => {
             T::Unknown
         }
     })
@@ -7333,6 +7345,7 @@ fn infer_hir_expression_type(
             Ok(id)
         }
         E::Identifier { name, .. } => Ok(environment.get(name).cloned()),
+        E::Closure { .. } => Ok(None),
         E::Property { object, name, .. } => {
             let Some(receiver) = infer_hir_expression_type(project, module, object, environment)?
             else {
@@ -7859,7 +7872,8 @@ fn walk_expression_children(
         | E::Float { .. }
         | E::Boolean { .. }
         | E::String { .. }
-        | E::Identifier { .. } => {}
+        | E::Identifier { .. }
+        | E::Closure { .. } => {}
     }
     Ok(())
 }
@@ -8188,7 +8202,8 @@ fn validate_nominal_expression(
         | E::Float { .. }
         | E::Boolean { .. }
         | E::String { .. }
-        | E::Identifier { .. } => {}
+        | E::Identifier { .. }
+        | E::Closure { .. } => {}
     }
     Ok(())
 }

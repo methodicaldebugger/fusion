@@ -201,20 +201,47 @@ Bootstrap compiler, reproducible builds, debugging, profiling, documentation, pe
 
 Tuple types, basic patterns, and basic derives have their native-backend parity and generalization on the to-do list. module support is real, but it is not yet a fully unified module/type/package architecture. The native runtime is a major foundational gap. The archive has a beginning—particularly tracked allocations—not a finished memory-management system. C interop cannot safely expose arbitrary Fusion-managed values until we define their physical representation, lifetime, and ownership rules. concurrency primitives exist; real asynchronous execution does not. Phase 4 is a genuine new milestone. It also means we should not begin by adding a few FFI types to the parser. First we need a coherent ABI and build contract.
 
-There is a surprisingly broad standard-library implementation in the interpreter. The documentation lists: - UTF-8 validation and encoding/decoding, string operations, and a regex engine - JSON and TOML parsing/serialization - SHA-256, HMAC, constant-time comparison, and secure random utilities - Time, date, timezone, and formatting functions - TCP networking, HTTP functionality, and optional TLS/HTTP/2 support - Filesystem and process operations - Channels, task spawning, work-stealing, structured scopes, and parallel operations - A test runner, benchmark support, and documentation generation. However, the documentation describes them as Rust interpreter implementations. We still need to check feature-by-feature which ones are available from compiled native Fusion programs, how robust the APIs are, and what portability guarantees they have. That distinction is particularly important for a general-purpose language: a library available only in the interpreter is not yet a complete cross-backend standard library.
+There is a surprisingly broad standard-library implementation in the interpreter. The documentation lists: - UTF-8 validation and encoding/decoding, string operations, and a regex engine - JSON and TOML parsing/serialization - SHA-256, HMAC, constant-time comparison, and secure random utilities - Time, date, timezone, and formatting functions - TCP networking, HTTP functionality, and optional TLS/HTTP/2 support - Filesystem and process operations - Channels, task spawning, work-stealing, structured scopes, and parallel operations - A test runner, benchmark support, and documentation generation. 
+
+However, the documentation describes them as Rust interpreter implementations. We still need to check feature-by-feature which ones are available from compiled native Fusion programs, how robust the APIs are, and what portability guarantees they have. That distinction is particularly important for a general-purpose language: a library available only in the interpreter is not yet a complete cross-backend standard library.
 
 A unified type system is essential. Fusion needs to distinguish a value's logical type from its physical representation. GC, defer, and foreign resources cannot be designed independently. The plugin system should be a first-class architecture, not a collection of scripts. Foundry already has a plugin descriptor model with plugin identity, version, capabilities, and requirements. That's a useful beginning. I particularly like the idea of using WIT and the WebAssembly Component Model as a reference for the neutral interface description. We should study its type and ownership concepts, but not assume Fusion must adopt the entire model. Fusion should have reliable text processing, file I/O, process execution, and a native runtime before we seriously pursue self-hosting.
 
-Area-Already present-Still needed
-Language and type system-Tuples, fixed-width type names, casts, patterns, guards, basic derives, generics and traits in the source-Complete backend parity, stronger trait semantics, function types, nullable/optional representation, robust conversions and overflow semantics.
-Modules and packages-Recursive module loading, imports, visibility, re-exports, dependency graphs, package manifests and lockfiles-Unified HIR-based resolution, complete type/constructor namespaces, stable package interfaces, version compatibility and mature workspace/feature support.
-Native runtime-LLVM backend, some native tuple/array allocation, bounds checks, nominal type metadata-Complete heap and memory management, strings and collection runtime, closures, deterministic cleanup, GC or another defined reclamation strategy.
-C and foreign interoperability-A standalone C compilation helper and foreign-library metadata-Full FFI declarations, ABI types, ownership rules, integrated Foundry builds, native and interpreter calls, diagnostics and Windows validation.
-Async and concurrency-Threads, work-stealing pool, tasks, channels, structured scopes and cooperative cancellation-Real futures, suspension/resumption, executor integration, async I/O, cancellation-safe cleanup and foreign-runtime integration.
-Standard library-Significant interpreter-side text, data, crypto, time, network, OS and concurrency modules-Native backend parity, stable APIs, cross-platform guarantees, broader tests and documentation.
-Developer tooling-Foundry CLI, manifests, dependency resolution, cache, lockfiles, test runner, benchmarks and doc generation-Stable plugin SDK, binding-generator interface, debugger/profiler, better diagnostics, reproducible toolchains and cross-compilation.
-Self-hosting-Bootstrap documentation and a Rust-hosted compiler implementation-Native runtime completeness, sufficient language/backend parity, filesystem/process APIs, bootstrap driver, reproducible self-hosting tests.
+First-class function values are now implemented in the interpreter. However, these are not full closures. Anonymous functions cannot capture local variables.
+Generic functions and built-ins as values are also restricted. The LLVM backend represents function types as pointers, but does not yet implement general indirect function calls.
 
+Generic struct, enum, and impl declarations are now accepted by the parser. But the current implementation uses generic erasure. It replaces declared generic parameters with unknown and removes user-defined generic arguments from the type representation. This means Pair<num, string> does not yet have the same rigorous type-checking guarantees as a genuinely instantiated generic type. The LLVM backend also does not support unknown-typed fields.
+
+type_expr.rs now defines a structured TypeExpr tree supporting: - Named types and generic arguments. - Nested arrays. - Tuples. - Function types. - Opaque pointers. However, the AST itself still stores type annotations as strings. There are also remaining hand-written type parsers in the interpreter, module system, HIR and LLVM backend.
+
+Default trait methods have been added. Remaining limitations: - Trait and implementation must be in the same source file. - Generic default methods are unsupported. - Trait objects and dynamic dispatch are unsupported. - Associated types and constants are missing. - Supertraits and generic traits are missing.
+
+The remaining major language feature is ? error propagation. Also missing are convenient methods such as .map() on Option and Result, although free-function equivalents exist.
+
+The interpreter still represents: - Arrays as Vec<Value>. - Structs as maps of owned values. - Hash maps as Vec<(Value, Value)>. - Files and TCP streams using Rc<RefCell<...>>. There is no general tracing garbage collector in the source I inspected. The native backend documentation describes a program-lifetime tracked heap arena. That is not a general-purpose garbage collector and does not establish that allocations are reclaimed during long-running execution.
+
+llvm_backend.rs explicitly rejects defer: Function types are represented as LLVM pointers, but that alone does not implement indirect calls. The backend also still has incomplete aggregate, generic, async, and control-flow support. Status: Outstanding. The interpreter and native compiler do not yet implement the same language.
+
+Still major architectural work
+- Real closures with captured environments.
+- Proper generic type checking and native code generation.
+- Full native function-value calls.
+- Garbage collection and shared ownership.
+- Native defer cleanup.
+- Complete HIR-based compiler pipeline.
+- Interpreter/native semantic equivalence.
+- Real async execution.
+
+the AST compatibility path and HIR path still coexist. That creates a risk: a feature may work in the interpreter and pass its tests while remaining unsupported or behaving differently in native compilation.
+
+I would therefore add an explicit milestone:
+Phase 4.6 — Compiler consistency and language foundations
+Before expanding Phase 4.5.2 too far, we should establish:
+1. An authoritative feature matrix identifying interpreter, HIR and LLVM support.
+2. A backend conformance test suite that runs equivalent programs through both execution paths.
+3. A single authoritative type representation, gradually replacing AST type strings.
+4. A clear distinction between implemented, partially implemented and planned features.
+5. A native cleanup strategy that supports defer and foreign-resource destructors.
 
 Crowdfunding (Indiegogo / Kickstarter): Use this to raise early non-dilutive capital ($50K–$150K) from early adopters. Angels & High-Net-Worth Individuals (HNWIs), Revenue-Based Financing (RBF): Once Evergreen Technologies reaches commercial Monthly Recurring Revenue (MRR). Partnering with Tech Giants (Microsoft, Google, Apple, Oracle). Using AI models (like Gemini and ChatGPT) as hyper-specialized technical assistants drastically accelerates development.
 Github Sponsors and Github bounties for ergonomic plugins.

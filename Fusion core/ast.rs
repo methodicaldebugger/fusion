@@ -309,6 +309,13 @@ pub enum Expression {
         span: Span,
     },
 
+    /// A closure expression backed by a private hoisted function and a by-value capture list.
+    Closure {
+        name: String,
+        captures: Vec<String>,
+        span: Span,
+    },
+
     Index {
         array: Box<Expression>,
         index: Box<Expression>,
@@ -386,6 +393,7 @@ impl Expression {
             | Expression::Array { span, .. }
             | Expression::Tuple { span, .. }
             | Expression::Identifier { span, .. }
+            | Expression::Closure { span, .. }
             | Expression::Index { span, .. }
             | Expression::Property { span, .. }
             | Expression::MethodCall { span, .. }

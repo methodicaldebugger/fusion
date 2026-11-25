@@ -1298,6 +1298,10 @@ impl TypeChecker {
 
             Expression::String { .. } => Ok(Type::String),
 
+            Expression::Closure { name, captures, span } => self
+                .function_value_type_with_hidden_parameters(name, captures.len())
+                .ok_or_else(|| self.unknown_variable(name, *span)),
+
             Expression::Identifier { name, span } => match self.lookup_variable(name) {
                 Some(info) => Ok(info.ty.clone()),
                 None => self
@@ -1696,6 +1700,14 @@ impl TypeChecker {
     /// The type of `name` used as a function value: a user function visible from the function
     /// being checked (see `function_values`). Generic functions and built-ins are not values.
     fn function_value_type(&self, name: &str) -> Option<Type> {
+        self.function_value_type_with_hidden_parameters(name, 0)
+    }
+
+    fn function_value_type_with_hidden_parameters(
+        &self,
+        name: &str,
+        hidden_parameters: usize,
+    ) -> Option<Type> {
         let candidates = crate::function_values::function_value_candidates(
             self.current_function_symbol.as_deref(),
             name,
@@ -1708,8 +1720,11 @@ impl TypeChecker {
                 if !function.generic_parameters.is_empty() {
                     return None;
                 }
+                if hidden_parameters > function.parameters.len() {
+                    return None;
+                }
                 return Some(Type::Function(
-                    function.parameters.clone(),
+                    function.parameters[..function.parameters.len() - hidden_parameters].to_vec(),
                     Box::new(function.return_type.clone()),
                 ));
             }
@@ -1825,7 +1840,7 @@ impl TypeChecker {
         // A variable (for example a parameter) holding a function value can be called.
         if !self.environment.functions.contains_key(name) {
             let function_value_type = self.lookup_variable(name).map(|info| info.ty.clone());
-            if let Some(Type::Function(parameters, return_type)) = function_value_type {
+            if let Some(Type::Function(parameters, return_type)) = function_value_type.clone() {
                 return self.check_function_value_call(
                     name,
                     &parameters,
@@ -1833,6 +1848,18 @@ impl TypeChecker {
                     arguments,
                     span,
                 );
+            }
+            if matches!(function_value_type, Some(Type::Unknown))
+                && self.current_function_symbol.as_deref().is_some_and(|symbol| {
+                    crate::function_values::display_name(symbol).starts_with("__lambda_")
+                })
+            {
+                // The hidden capture parameter is intentionally dynamically typed in Stage 1.
+                // Validate its arguments normally and defer callable arity/type checks to runtime.
+                for argument in arguments {
+                    self.infer_expression(argument)?;
+                }
+                return Ok(Type::Unknown);
             }
         }
 

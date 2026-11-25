@@ -692,6 +692,9 @@ impl HirLowerer {
             Expression::Boolean { value, .. } => HirExpression::Boolean(*value),
             Expression::String { value, .. } => HirExpression::String(value.clone()),
             Expression::Identifier { name, .. } => HirExpression::Identifier(name.clone()),
+            // Preserve the hoisted code symbol in compatibility HIR. The interpreter carries
+            // captures separately; native closure environments and indirect calls are future work.
+            Expression::Closure { name, .. } => HirExpression::Identifier(name.clone()),
             Expression::Array { elements, .. } => HirExpression::Array(
                 elements
                     .iter()

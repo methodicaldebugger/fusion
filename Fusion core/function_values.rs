@@ -1,8 +1,9 @@
 //! Function names used as values.
 //!
 //! A bare identifier that is not a variable but names a function (`array_map(xs, double)`) is a
-//! function value, as is an anonymous function expression (`fn(x: num) -> num => x * 2`, which the
-//! parser hoists into an ordinary private function named `__lambda_N` of the enclosing module).
+//! function value, as is an anonymous function expression (`fn(x: num) -> num => x * 2`). The
+//! parser hoists its body into a private `__lambda_N` function while retaining a closure expression
+//! that snapshots visible lexical bindings by value when evaluated (interpreter support).
 //!
 //! In a multi-module project every function is renamed to an internal symbol that encodes its
 //! module (see `module_system::mangle_function`). A function value is resolved relative to the

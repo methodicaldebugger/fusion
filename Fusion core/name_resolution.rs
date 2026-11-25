@@ -316,6 +316,13 @@ impl Resolver {
         })
     }
 
+    fn is_type_value_name(&self, name: &str) -> bool {
+        self.definitions.iter().any(|definition| {
+            matches!(definition.kind, DefinitionKind::Struct | DefinitionKind::Enum)
+                && crate::function_values::display_name(&definition.name) == name
+        })
+    }
+
     fn resolve_expression(&mut self, expr: &Expression) -> Result<(), FusionError> {
         match expr {
             Expression::Identifier { name, span } => {
@@ -351,6 +358,20 @@ impl Resolver {
                 }
             }
             Expression::Await { expression, .. } => self.resolve_expression(expression)?,
+            Expression::Closure { captures, span, .. } => {
+                for capture in captures {
+                    if self.lookup(capture).is_none()
+                        && !self.is_function_value_name(capture)
+                        && !self.is_type_value_name(capture)
+                    {
+                        return Err(FusionError::UnknownVariable {
+                            name: capture.clone(),
+                            suggestion: None,
+                            span: *span,
+                        });
+                    }
+                }
+            },
             Expression::Call { arguments, .. } => {
                 for a in arguments {
                     self.resolve_expression(a)?;

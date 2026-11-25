@@ -150,14 +150,80 @@ main:
 }
 
 #[test]
-fn anonymous_functions_cannot_capture_local_variables() {
+fn anonymous_functions_capture_local_values_by_value() {
     let source = "main:
     k = 3
-    ys = array_map([1, 2], fn(x: num) -> num => x + k)
-    print(ys.access(0))
+    f = fn(x: num) -> num => x + k
+    k = 100
+    print(f(4))
+    values = array_map([1, 2], f)
+    print(values.access(1))
 ";
-    let error = fusion::compile_source(source).expect_err("capturing is not supported");
-    assert!(error.to_lowercase().contains("variable"), "{error}");
+    assert_eq!(run_single_file(source), vec!["7", "5"]);
+}
+
+#[test]
+fn closures_can_capture_and_call_local_function_values() {
+    let source = "fn double(value: num) -> num:
+    return value * 2
+
+main:
+    callback = double
+    apply = fn(value: num) -> num => callback(value)
+    print(apply(21))
+";
+    assert_eq!(run_single_file(source), vec!["42"]);
+}
+
+#[test]
+fn anonymous_functions_can_escape_their_creation_scope() {
+    let source = "fn make_adder(base: num) -> fn(num) -> num:
+    return fn(value: num) -> num => value + base
+
+main:
+    add_five = make_adder(5)
+    print(add_five(7))
+";
+    assert_eq!(run_single_file(source), vec!["12"]);
+}
+
+#[test]
+fn nested_anonymous_functions_capture_outer_parameters() {
+    let source = "fn make_adder(base: num) -> fn(num) -> num:
+    return fn(value: num) -> num => value + base
+
+main:
+    add_two = make_adder(2)
+    add_three = make_adder(3)
+    print(add_two(10))
+    print(add_three(10))
+";
+    assert_eq!(run_single_file(source), vec!["12", "13"]);
+}
+
+#[test]
+fn nested_closures_capture_enclosing_lambda_parameters() {
+    let source = "fn make_adder(base: num) -> fn(num) -> fn(num) -> num:
+    return fn(left: num) -> fn(num) -> num => fn(right: num) -> num => left + right + base
+
+main:
+    add_from_five = make_adder(5)
+    add_eight = add_from_five(3)
+    print(add_eight(4))
+";
+    assert_eq!(run_single_file(source), vec!["12"]);
+}
+
+#[test]
+fn captured_closures_survive_the_project_pipeline() {
+    let source = "fn make_multiplier(factor: num) -> fn(num) -> num:
+    return fn(value: num) -> num => value * factor
+
+main:
+    triple = make_multiplier(3)
+    print(triple(14))
+";
+    assert_eq!(run_project(&[("main.fusion", source)]), vec!["42"]);
 }
 
 #[test]
