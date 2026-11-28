@@ -20,246 +20,75 @@ pub struct Program {
     /// Project module metadata retained alongside the compatibility flattened AST.
     /// Ranges refer to `statements[start..end]`; standalone source has no module entries.
     pub modules: Vec<ModuleInfo>,
-    /// Structured type syntax collected from legacy annotation fields. This is the
-    /// migration bridge: consumers can use parsed trees without reparsing strings.
-    pub type_annotations: Vec<StructuredTypeAnnotation>,
 }
 
-
-/// Identifies the role of a source-level type annotation in the AST.
+/// A source type annotation stored as a structured syntax tree.
+///
+/// `spelling` is only a cached canonical display form for legacy boundaries (HIR,
+/// interpreter diagnostics and foreign adapters). Parsing and semantic type resolution
+/// use `expression`; it is never reparsed to recover the AST type structure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum TypeAnnotationRole {
-    Parameter { owner: String, name: String },
-    Return { owner: String },
-    Variable { name: String },
-    Constant { name: String },
-    StructField { owner: String, name: String },
-    EnumPayload { owner: String, variant: String, index: usize },
-    TraitParameter { trait_name: String, method: String, name: String },
-    TraitReturn { trait_name: String, method: String },
-    ImplTarget { owner: String },
+pub struct TypeAnnotation {
+    pub(crate) expression: TypeExpr,
+    spelling: String,
 }
 
-/// A structured type annotation retained in the AST with its source location.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructuredTypeAnnotation {
-    pub role: TypeAnnotationRole,
-    pub span: Span,
-    pub expression: TypeExpr,
-}
-
-impl Program {
-    /// Rebuild the structured annotation index from compatibility AST fields.
-    /// Invalid spellings are skipped here because the parser/type checker report them
-    /// through their normal diagnostics; successfully parsed source annotations are
-    /// represented exactly once per AST occurrence.
-    pub fn rebuild_type_annotations(&mut self) {
-        let mut annotations = Vec::new();
-        collect_statement_type_annotations(&self.statements, &mut annotations);
-        self.type_annotations = annotations;
+impl TypeAnnotation {
+    pub fn new(expression: TypeExpr) -> Self {
+        let spelling = expression.to_string();
+        Self { expression, spelling }
     }
 
-    /// Find a structured annotation by its role and source span.
-    pub fn type_annotation(
-        &self,
-        role: &TypeAnnotationRole,
-        span: Span,
-    ) -> Option<&StructuredTypeAnnotation> {
-        self.type_annotations
-            .iter()
-            .find(|item| item.role == *role && item.span == span)
+    pub fn parse(source: &str) -> Result<Self, crate::type_expr::TypeParseError> {
+        TypeExpr::parse(source).map(Self::new)
     }
-}
 
-fn push_type_annotation(
-    output: &mut Vec<StructuredTypeAnnotation>,
-    role: TypeAnnotationRole,
-    span: Span,
-    source: &str,
-) {
-    if let Ok(expression) = TypeExpr::parse(source) {
-        output.push(StructuredTypeAnnotation {
-            role,
-            span,
-            expression,
-        });
-    }
-}
+    pub fn expression(&self) -> &TypeExpr { &self.expression }
 
-fn collect_statement_type_annotations(
-    statements: &[Statement],
-    output: &mut Vec<StructuredTypeAnnotation>,
-) {
-    for statement in statements {
-        match statement {
-            Statement::VariableDeclarations { declarations, .. } => {
-                for declaration in declarations {
-                    if let Some(ty) = declaration.declared_type.as_deref() {
-                        push_type_annotation(
-                            output,
-                            TypeAnnotationRole::Variable {
-                                name: declaration.name.clone(),
-                            },
-                            declaration.span,
-                            ty,
-                        );
-                    }
+    pub fn as_str(&self) -> &str { &self.spelling }
+
+    /// Rewrite complete type-name tokens recursively, preserving all type structure.
+    pub fn rewrite_names(&mut self, names: &std::collections::HashMap<String, String>) {
+        fn rewrite(expr: &mut TypeExpr, names: &std::collections::HashMap<String, String>) {
+            match expr {
+                TypeExpr::Named { name, args } => {
+                    if let Some(replacement) = names.get(name) { *name = replacement.clone(); }
+                    for arg in args { rewrite(arg, names); }
                 }
-            }
-            Statement::ConstDeclaration {
-                name,
-                declared_type,
-                span,
-                ..
-            } => {
-                if let Some(ty) = declared_type.as_deref() {
-                    push_type_annotation(
-                        output,
-                        TypeAnnotationRole::Constant { name: name.clone() },
-                        *span,
-                        ty,
-                    );
+                TypeExpr::Array(inner) | TypeExpr::Reference { inner, .. } => rewrite(inner, names),
+                TypeExpr::Tuple(items) => for item in items { rewrite(item, names); },
+                TypeExpr::Function { params, ret } => {
+                    for param in params { rewrite(param, names); }
+                    rewrite(ret, names);
                 }
+                TypeExpr::OpaquePointer => {}
             }
-            Statement::Function {
-                name,
-                parameters,
-                return_type,
-                body,
-                span,
-                ..
-            } => {
-                for parameter in parameters {
-                    if let Some(ty) = parameter.type_name.as_deref() {
-                        push_type_annotation(
-                            output,
-                            TypeAnnotationRole::Parameter {
-                                owner: name.clone(),
-                                name: parameter.name.clone(),
-                            },
-                            parameter.span,
-                            ty,
-                        );
-                    }
-                }
-                if let Some(ty) = return_type.as_deref() {
-                    push_type_annotation(
-                        output,
-                        TypeAnnotationRole::Return { owner: name.clone() },
-                        *span,
-                        ty,
-                    );
-                }
-                collect_statement_type_annotations(body, output);
-            }
-            Statement::Struct { name, fields, .. } => {
-                for field in fields {
-                    push_type_annotation(
-                        output,
-                        TypeAnnotationRole::StructField {
-                            owner: name.clone(),
-                            name: field.name.clone(),
-                        },
-                        field.span,
-                        &field.type_name,
-                    );
-                }
-            }
-            Statement::Enum { name, variants, .. } => {
-                for variant in variants {
-                    for (index, ty) in variant.fields.iter().enumerate() {
-                        push_type_annotation(
-                            output,
-                            TypeAnnotationRole::EnumPayload {
-                                owner: name.clone(),
-                                variant: variant.name.clone(),
-                                index,
-                            },
-                            variant.span,
-                            ty,
-                        );
-                    }
-                }
-            }
-            Statement::Trait { name, methods, .. } => {
-                for method in methods {
-                    for parameter in &method.parameters {
-                        if let Some(ty) = parameter.type_name.as_deref() {
-                            push_type_annotation(
-                                output,
-                                TypeAnnotationRole::TraitParameter {
-                                    trait_name: name.clone(),
-                                    method: method.name.clone(),
-                                    name: parameter.name.clone(),
-                                },
-                                parameter.span,
-                                ty,
-                            );
-                        }
-                    }
-                    if let Some(ty) = method.return_type.as_deref() {
-                        push_type_annotation(
-                            output,
-                            TypeAnnotationRole::TraitReturn {
-                                trait_name: name.clone(),
-                                method: method.name.clone(),
-                            },
-                            method.span,
-                            ty,
-                        );
-                    }
-                    if let Some(body) = &method.default_body {
-                        collect_statement_type_annotations(body, output);
-                    }
-                }
-            }
-            Statement::Impl {
-                type_name,
-                methods,
-                span,
-                ..
-            } => {
-                push_type_annotation(
-                    output,
-                    TypeAnnotationRole::ImplTarget {
-                        owner: type_name.clone(),
-                    },
-                    *span,
-                    type_name,
-                );
-                collect_statement_type_annotations(methods, output);
-            }
-            Statement::Main { body, .. } => {
-                collect_statement_type_annotations(body, output);
-            }
-            Statement::Match { arms, .. } => {
-                for arm in arms {
-                    collect_statement_type_annotations(&arm.body, output);
-                }
-            }
-            Statement::If {
-                body, else_body, ..
-            } => {
-                collect_statement_type_annotations(body, output);
-                if let Some(body) = else_body {
-                    collect_statement_type_annotations(body, output);
-                }
-            }
-            Statement::While { body, .. }
-            | Statement::For { body, .. }
-            | Statement::ForEach { body, .. } => {
-                collect_statement_type_annotations(body, output);
-            }
-            Statement::Assignment { .. }
-            | Statement::Import { .. }
-            | Statement::Defer { .. }
-            | Statement::Return { .. }
-            | Statement::Break { .. }
-            | Statement::Continue { .. }
-            | Statement::Expression { .. }
-            | Statement::Call { .. } => {}
         }
+        rewrite(&mut self.expression, names);
+        self.spelling = self.expression.to_string();
     }
+}
+
+impl std::ops::Deref for TypeAnnotation {
+    type Target = str;
+    fn deref(&self) -> &Self::Target { self.as_str() }
+}
+impl std::fmt::Display for TypeAnnotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.as_str()) }
+}
+impl PartialEq<str> for TypeAnnotation {
+    fn eq(&self, other: &str) -> bool { self.as_str() == other }
+}
+impl PartialEq<&str> for TypeAnnotation {
+    fn eq(&self, other: &&str) -> bool { self.as_str() == *other }
+}
+impl From<&str> for TypeAnnotation {
+    fn from(value: &str) -> Self {
+        Self::parse(value).unwrap_or_else(|_| Self::new(TypeExpr::named(value)))
+    }
+}
+impl From<String> for TypeAnnotation {
+    fn from(value: String) -> Self { Self::from(value.as_str()) }
 }
 
 #[derive(Debug, Clone)]
@@ -286,7 +115,7 @@ pub struct ModuleInfo {
 pub struct Parameter {
     pub name: String,
     pub name_span: Span,
-    pub type_name: Option<String>,
+    pub type_name: Option<TypeAnnotation>,
     pub span: Span,
 }
 
@@ -294,7 +123,7 @@ pub struct Parameter {
 pub struct VariableDeclaration {
     pub name: String,
     pub name_span: Span,
-    pub declared_type: Option<String>,
+    pub declared_type: Option<TypeAnnotation>,
     pub value: Option<Expression>,
     pub span: Span,
 }
@@ -303,7 +132,7 @@ pub struct VariableDeclaration {
 pub struct StructField {
     pub name: String,
     pub name_span: Span,
-    pub type_name: String,
+    pub type_name: TypeAnnotation,
     pub span: Span,
 }
 
@@ -311,7 +140,7 @@ pub struct StructField {
 pub struct EnumVariant {
     pub name: String,
     pub name_span: Span,
-    pub fields: Vec<String>,
+    pub fields: Vec<TypeAnnotation>,
     pub span: Span,
 }
 
@@ -319,7 +148,7 @@ pub struct EnumVariant {
 pub struct TraitMethod {
     pub name: String,
     pub parameters: Vec<Parameter>,
-    pub return_type: Option<String>,
+    pub return_type: Option<TypeAnnotation>,
     /// Body of a default method; `None` for a required method. Default bodies are copied into
     /// each implementing `impl` block by `trait_defaults::expand_trait_defaults`.
     pub default_body: Option<Vec<Statement>>,
@@ -380,7 +209,7 @@ pub enum Statement {
     ConstDeclaration {
         name: String,
         name_span: Span,
-        declared_type: Option<String>,
+        declared_type: Option<TypeAnnotation>,
         value: Expression,
         span: Span,
     },
@@ -395,7 +224,7 @@ pub enum Statement {
         name: String,
         generic_parameters: Vec<String>,
         parameters: Vec<Parameter>,
-        return_type: Option<String>,
+        return_type: Option<TypeAnnotation>,
         body: Vec<Statement>,
         is_async: bool,
         /// Present for a declaration supplied by a foreign ABI rather than a Fusion body.
@@ -438,7 +267,7 @@ pub enum Statement {
 
     Impl {
         trait_name: Option<String>,
-        type_name: String,
+        type_name: TypeAnnotation,
         methods: Vec<Statement>,
         span: Span,
     },
@@ -573,7 +402,7 @@ pub enum Expression {
         object: Box<Expression>,
         method: String,
         arguments: Vec<Expression>,
-        generic_arguments: Vec<String>,
+        generic_arguments: Vec<TypeAnnotation>,
         span: Span,
     },
 
@@ -585,7 +414,7 @@ pub enum Expression {
     Call {
         name: String,
         arguments: Vec<Expression>,
-        generic_arguments: Vec<String>,
+        generic_arguments: Vec<TypeAnnotation>,
         span: Span,
     },
 
@@ -618,7 +447,7 @@ pub enum Expression {
     Conversion {
         kind: ConversionKind,
         expression: Box<Expression>,
-        target_type: String,
+        target_type: TypeAnnotation,
         span: Span,
     },
 }
@@ -711,4 +540,30 @@ pub enum UnaryOperator {
     Negate,
     Not,
     Deref,
+}
+
+#[cfg(test)]
+mod structured_annotation_tests {
+    use super::TypeAnnotation;
+    use crate::type_expr::TypeExpr;
+    use std::collections::HashMap;
+
+    #[test]
+    fn annotation_rewrites_nested_type_names_without_string_reparsing() {
+        let expression = TypeExpr::parse(
+            "fn(geo.Point[], Option<geo.Point>) -> &geo.Point",
+        )
+        .expect("type expression should parse");
+        let mut annotation = TypeAnnotation::new(expression);
+        let names = HashMap::from([("geo.Point".to_string(), "geometry.Point".to_string())]);
+
+        annotation.rewrite_names(&names);
+
+        assert_eq!(
+            annotation.expression.to_string(),
+            "fn(geometry.Point[], Option<geometry.Point>) -> &geometry.Point"
+        );
+        let canonical = annotation.expression.to_string();
+        assert_eq!(annotation.as_str(), canonical.as_str());
+    }
 }

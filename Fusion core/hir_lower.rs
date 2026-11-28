@@ -72,7 +72,7 @@ impl HirLowerer {
                     .ok()
                     .flatten()
                     .map(|identity| format!("{}::{}", identity.module, identity.name))
-                    .unwrap_or_else(|| type_name.clone());
+                    .unwrap_or_else(|| type_name.to_string());
                     let trait_scope = if let Some(trait_name) = trait_name {
                         let resolved = if let Some((qualifier, name)) = trait_name.split_once('.') {
                             crate::module_system::resolve_qualified_definition(
@@ -99,7 +99,7 @@ impl HirLowerer {
                         "inherent".to_string()
                     };
                     impl_scopes.insert(
-                        (type_name.clone(), trait_name.clone()),
+                        (type_name.to_string(), trait_name.clone()),
                         vec![trait_scope, receiver_scope],
                     );
                 }
@@ -172,7 +172,7 @@ impl HirLowerer {
         name: &str,
         generic_parameters: &[String],
         parameters: &[Parameter],
-        return_type: &Option<String>,
+        return_type: &Option<TypeAnnotation>,
         body: &[Statement],
         is_async: bool,
         span: Span,
@@ -185,7 +185,7 @@ impl HirLowerer {
                 self.declare(&parameter.name);
                 HirParameter {
                     name: parameter.name.clone(),
-                    type_name: parameter.type_name.clone(),
+                    type_name: parameter.type_name.as_deref().map(str::to_owned),
                     span: parameter.span,
                 }
             })
@@ -197,7 +197,7 @@ impl HirLowerer {
             name: name.to_string(),
             generic_parameters: generic_parameters.to_vec(),
             parameters: lowered_parameters,
-            return_type: return_type.clone(),
+            return_type: return_type.as_deref().map(str::to_owned),
             is_async,
             body: lowered_body?,
             span,
@@ -272,7 +272,7 @@ impl HirLowerer {
                         self.declare(&declaration.name);
                         HirStatement::VariableDeclaration {
                             name: declaration.name.clone(),
-                            declared_type: declaration.declared_type.clone(),
+                            declared_type: declaration.declared_type.as_deref().map(str::to_owned),
                             value,
                             span: declaration.span,
                         }
@@ -280,7 +280,7 @@ impl HirLowerer {
                         self.declare(&declaration.name);
                         HirStatement::UninitializedVariable {
                             name: declaration.name.clone(),
-                            declared_type: declaration.declared_type.clone(),
+                            declared_type: declaration.declared_type.as_deref().map(str::to_owned),
                             span: declaration.span,
                         }
                     };
@@ -307,7 +307,7 @@ impl HirLowerer {
                 Ok(HirStatement::ConstDeclaration {
                     identity: self.identity(name, HirDefinitionKind::Constant),
                     name: name.clone(),
-                    declared_type: declared_type.clone(),
+                    declared_type: declared_type.as_deref().map(str::to_owned),
                     value,
                     span: *span,
                 })
@@ -364,7 +364,7 @@ impl HirLowerer {
                             )
                         }),
                         name: field.name.clone(),
-                        type_name: field.type_name.clone(),
+                        type_name: field.type_name.to_string(),
                         span: field.span,
                     })
                     .collect(),
@@ -390,7 +390,7 @@ impl HirLowerer {
                             )
                         }),
                         name: variant.name.clone(),
-                        fields: variant.fields.clone(),
+                        fields: variant.fields.iter().map(ToString::to_string).collect(),
                         span: variant.span,
                     })
                     .collect(),
@@ -419,11 +419,11 @@ impl HirLowerer {
                             .iter()
                             .map(|parameter| HirParameter {
                                 name: parameter.name.clone(),
-                                type_name: parameter.type_name.clone(),
+                                type_name: parameter.type_name.as_deref().map(str::to_owned),
                                 span: parameter.span,
                             })
                             .collect(),
-                        return_type: method.return_type.clone(),
+                        return_type: method.return_type.as_deref().map(str::to_owned),
                         span: method.span,
                     })
                     .collect();
@@ -459,12 +459,12 @@ impl HirLowerer {
                     };
                     let scope = self
                         .impl_scopes
-                        .get(&(type_name.clone(), trait_name.clone()))
+                        .get(&(type_name.to_string(), trait_name.clone()))
                         .cloned()
                         .unwrap_or_else(|| {
                             vec![
                                 trait_name.clone().unwrap_or_else(|| "inherent".into()),
-                                type_name.clone(),
+                                type_name.to_string(),
                             ]
                         });
                     let identity = self.module.as_ref().map(|module| {
@@ -488,7 +488,7 @@ impl HirLowerer {
                 }
                 Ok(HirStatement::Impl {
                     trait_name: trait_name.clone(),
-                    type_name: type_name.clone(),
+                    type_name: type_name.to_string(),
                     methods: lowered_methods,
                     span: *span,
                 })
@@ -721,7 +721,10 @@ impl HirLowerer {
                     .iter()
                     .map(|argument| self.lower_expression(argument))
                     .collect::<Result<_, _>>()?,
-                generic_arguments: generic_arguments.clone(),
+                generic_arguments: generic_arguments
+                    .iter()
+                    .map(|ty| ty.expression().clone())
+                    .collect(),
                 span: *span,
             },
             Expression::StructConstructor { name, fields, .. } => {
@@ -785,7 +788,10 @@ impl HirLowerer {
                     .iter()
                     .map(|argument| self.lower_expression(argument))
                     .collect::<Result<_, _>>()?,
-                generic_arguments: generic_arguments.clone(),
+                generic_arguments: generic_arguments
+                    .iter()
+                    .map(|ty| ty.expression().clone())
+                    .collect(),
                 span: *span,
             },
             Expression::Conversion {
@@ -800,7 +806,7 @@ impl HirLowerer {
                     ConversionKind::Try => HirConversionKind::Try,
                 },
                 expression: Box::new(self.lower_expression(expression)?),
-                target_type: target_type.clone(),
+                target_type: target_type.expression().clone(),
             },
         })
     }
@@ -917,7 +923,6 @@ mod tests {
             statements: statements.clone(),
             span,
             modules: vec![],
-            type_annotations: Vec::new(),
         };
         let project = crate::module_system::Project {
             entry_module: "crate".into(),
@@ -1041,7 +1046,6 @@ mod tests {
             }],
             span,
             modules: vec![],
-            type_annotations: Vec::new(),
         };
         let mut lowerer = HirLowerer::new();
         let hir = lowerer.lower_program(&program).unwrap();
@@ -1094,8 +1098,7 @@ mod tests {
                 statements: vec![function],
                 span,
                 modules: vec![],
-                type_annotations: Vec::new(),
-            },
+                },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
         let alpha = match &lowered.modules[0].statements[0] {
@@ -1193,8 +1196,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
-                type_annotations: Vec::new(),
-            },
+                },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
         assert_eq!(lowered.resolved_calls.len(), 1);
@@ -1266,8 +1268,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
-                type_annotations: Vec::new(),
-            },
+                },
         };
         let error = HirLowerer::lower_project(&project).unwrap_err();
         assert!(error.contains("nominal type"));
@@ -1355,8 +1356,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
-                type_annotations: Vec::new(),
-            },
+                },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
         assert_eq!(lowered.resolved_calls.len(), 1);
@@ -1366,6 +1366,25 @@ mod tests {
         assert_eq!(call.declaration.name, "duplicate");
         assert_eq!(call.receiver_type.as_ref().unwrap().name, "Point");
         assert_eq!(call.return_type.as_ref().unwrap().name, "Point");
+    }
+
+    #[test]
+    fn expression_lowering_preserves_structured_generic_arguments() {
+        let span = Span::new(1, 10);
+        let expression = Expression::Call {
+            name: "identity".into(),
+            arguments: vec![Expression::Number { value: 1, span }],
+            generic_arguments: vec![TypeAnnotation::parse(
+                "Pair<Option<num>, fn(string) -> bool>",
+            ).unwrap()],
+            span,
+        };
+        let lowered = HirLowerer::new().lower_expression(&expression).unwrap();
+        let HirExpression::Call { generic_arguments, .. } = lowered else {
+            panic!("expected lowered call expression");
+        };
+        assert_eq!(generic_arguments.len(), 1);
+        assert_eq!(generic_arguments[0].to_string(), "Pair<Option<num>, fn(string) -> bool>");
     }
 
     #[test]
@@ -1405,8 +1424,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
-                type_annotations: Vec::new(),
-            },
+                },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
         assert_eq!(lowered.resolved_calls.len(), 1);

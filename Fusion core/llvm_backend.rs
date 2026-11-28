@@ -533,7 +533,7 @@ impl LLVMBackend {
                     if let Statement::Function { name, .. } = method {
                         let identity = self
                             .method_definition_ids
-                            .get(&(type_name.clone(), name.clone()))
+                            .get(&(type_name.to_string(), name.clone()))
                             .cloned();
                         if let Some(identity) = identity {
                             let symbol = self
@@ -807,7 +807,7 @@ entry:
                         {
                             let identity = self
                                 .method_definition_ids
-                                .get(&(type_name.clone(), name.clone()))
+                                .get(&(type_name.to_string(), name.clone()))
                                 .cloned();
                             let Some(identity) = identity else {
                                 continue;
@@ -5795,6 +5795,7 @@ mod hir_layout_tests {
             argument_types: vec![None],
             return_type: None,
             generic_parameters: vec![],
+            explicit_generic_arguments: vec![],
             is_async: false,
             receiver_hir_type: None,
             parameter_hir_types: vec![HirType::Num],
@@ -5876,6 +5877,7 @@ mod hir_layout_tests {
             argument_types: vec![None],
             return_type: None,
             generic_parameters: vec![],
+            explicit_generic_arguments: vec![],
             is_async: false,
             receiver_hir_type: Some(HirType::Nominal(receiver_id.clone())),
             parameter_hir_types: vec![HirType::Num],

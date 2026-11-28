@@ -6,9 +6,8 @@
 //! `T[][]`) and meant every consumer carried its own slightly different parser.
 //!
 //! `TypeExpr` is the parser and semantic front-end's structural representation of a written
-//! type. The compatibility AST still stores its canonical `Display` spelling in legacy String
-//! fields; this module is the single grammar used to produce and consume those spellings. The
-//! staged AST migration will replace those compatibility fields with `TypeExpr` directly.
+//! type. AST annotation nodes store this tree directly; canonical display spellings are produced
+//! only at compatibility boundaries such as HIR serialization and diagnostics.
 //!
 //! `TypeExpr::parse(&expr.to_string()) == Ok(expr)` for every expression the parser can build.
 //!
@@ -164,8 +163,8 @@ impl TypeExpr {
     /// written type structure, including arguments to user-defined generic types.
     ///
     /// This is still a compatibility operation: generic user types are not yet represented as
-    /// parameterized semantic `Type` values, so the checker currently resolves their nominal
-    /// constructor while retaining the arguments in the AST spelling for later generic checking.
+    /// parameterized semantic `Type` values, so declaration-local parameters are normalized to
+    /// `unknown` while the surrounding structured type tree and user-type arguments are retained.
     pub fn erase_generics(&self, parameters: &[String]) -> TypeExpr {
         match self {
             TypeExpr::Named { name, args } => {
@@ -209,7 +208,8 @@ impl TypeExpr {
     pub fn mentions(&self, symbol: &str) -> bool {
         match self {
             TypeExpr::Named { name, args } => {
-                name == symbol || args.iter().any(|arg| arg.mentions(symbol))
+                (name == symbol || name.rsplit('.').next() == Some(symbol))
+                    || args.iter().any(|arg| arg.mentions(symbol))
             }
             TypeExpr::Array(inner) => inner.mentions(symbol),
             TypeExpr::Tuple(items) => items.iter().any(|item| item.mentions(symbol)),

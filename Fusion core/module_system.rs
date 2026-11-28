@@ -477,9 +477,7 @@ pub fn load_project_with_package_roots(
         statements: loader.statements,
         span,
         modules: module_info,
-        type_annotations: Vec::new(),
     };
-    program.rebuild_type_annotations();
     Ok(Project {
         entry_module: "crate".into(),
         modules: loader.modules,
@@ -1261,6 +1259,10 @@ fn rewrite_type_spelling(value: &mut String, names: &HashMap<String, String>) {
     *value = output;
 }
 
+fn rewrite_type_annotation(value: &mut crate::ast::TypeAnnotation, names: &HashMap<String, String>) {
+    value.rewrite_names(names);
+}
+
 fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<String, String>) {
     use crate::ast::{Expression as E, PatternKind as P, Statement as S};
     fn expr(e: &mut E, names: &HashMap<String, String>) {
@@ -1292,7 +1294,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
                 ..
             } => {
                 expr(expression, names);
-                rewrite_type_spelling(target_type, names);
+                rewrite_type_annotation(target_type, names);
             }
             E::MethodCall {
                 object,
@@ -1305,7 +1307,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
                     expr(x, names);
                 }
                 for t in generic_arguments {
-                    rewrite_type_spelling(t, names);
+                    rewrite_type_annotation(t, names);
                 }
             }
             E::Call {
@@ -1317,7 +1319,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
                     expr(x, names);
                 }
                 for t in generic_arguments {
-                    rewrite_type_spelling(t, names);
+                    rewrite_type_annotation(t, names);
                 }
             }
             E::StructConstructor { name, fields, .. } => {
@@ -1390,7 +1392,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
         S::VariableDeclarations { declarations, .. } => {
             for d in declarations {
                 if let Some(t) = &mut d.declared_type {
-                    rewrite_type_spelling(t, names);
+                    rewrite_type_annotation(t, names);
                 }
                 if let Some(v) = &mut d.value {
                     expr(v, names);
@@ -1403,7 +1405,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
             ..
         } => {
             if let Some(t) = declared_type {
-                rewrite_type_spelling(t, names);
+                rewrite_type_annotation(t, names);
             }
             expr(value, names);
         }
@@ -1419,11 +1421,11 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
         } => {
             for p in parameters {
                 if let Some(t) = &mut p.type_name {
-                    rewrite_type_spelling(t, names);
+                    rewrite_type_annotation(t, names);
                 }
             }
             if let Some(t) = return_type {
-                rewrite_type_spelling(t, names);
+                rewrite_type_annotation(t, names);
             }
             block(body, names);
         }
@@ -1432,7 +1434,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
                 *name = n.clone();
             }
             for f in fields {
-                rewrite_type_spelling(&mut f.type_name, names);
+                rewrite_type_annotation(&mut f.type_name, names);
             }
         }
         S::Enum { name, variants, .. } => {
@@ -1441,7 +1443,7 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
             }
             for v in variants {
                 for t in &mut v.fields {
-                    rewrite_type_spelling(t, names);
+                    rewrite_type_annotation(t, names);
                 }
             }
         }
@@ -1450,18 +1452,18 @@ fn rewrite_statement_type_names(statement: &mut Statement, names: &HashMap<Strin
             for m in methods {
                 for p in &mut m.parameters {
                     if let Some(t) = &mut p.type_name {
-                        rewrite_type_spelling(t, names);
+                        rewrite_type_annotation(t, names);
                     }
                 }
                 if let Some(t) = &mut m.return_type {
-                    rewrite_type_spelling(t, names);
+                    rewrite_type_annotation(t, names);
                 }
             }
         }
         S::Impl {
             type_name, methods, ..
         } => {
-            rewrite_type_spelling(type_name, names);
+            rewrite_type_annotation(type_name, names);
             block(methods, names);
         }
         S::Match {
@@ -2231,18 +2233,22 @@ fn statement_references_symbol(statement: &Statement, symbol: &str) -> bool {
     use crate::ast::Statement as S;
     match statement {
         S::VariableDeclarations { declarations, .. } => declarations.iter().any(|d| {
-            d.value
-                .as_ref()
-                .is_some_and(|e| expression_references_symbol(e, symbol))
+            d.declared_type.as_ref().is_some_and(|ty| ty.expression.mentions(symbol))
+                || d.value
+                    .as_ref()
+                    .is_some_and(|e| expression_references_symbol(e, symbol))
         }),
-        S::ConstDeclaration { value, .. } => expression_references_symbol(value, symbol),
+        S::ConstDeclaration { declared_type, value, .. } => {
+            declared_type.as_ref().is_some_and(|ty| ty.expression.mentions(symbol))
+                || expression_references_symbol(value, symbol)
+        },
         S::Assignment { target, value, .. } => {
             expression_references_symbol(target, symbol)
                 || expression_references_symbol(value, symbol)
         }
         S::Function { parameters, return_type, body, .. } => {
-            parameters.iter().any(|parameter| parameter.type_name.as_deref().is_some_and(|ty| type_references_symbol(ty, symbol)))
-                || return_type.as_deref().is_some_and(|ty| type_references_symbol(ty, symbol))
+            parameters.iter().any(|parameter| parameter.type_name.as_ref().is_some_and(|ty| ty.expression.mentions(symbol)))
+                || return_type.as_ref().is_some_and(|ty| ty.expression.mentions(symbol))
                 || body.iter().any(|s| statement_references_symbol(s, symbol))
         }
         S::Main { body, .. } => body.iter().any(|s| statement_references_symbol(s, symbol)),
@@ -2296,14 +2302,14 @@ fn statement_references_symbol(statement: &Statement, symbol: &str) -> bool {
         S::Expression { expression, .. } | S::Call { expression, .. } => {
             expression_references_symbol(expression, symbol)
         }
-        S::Struct { fields, .. } => fields.iter().any(|field| type_references_symbol(&field.type_name, symbol)),
-        S::Enum { variants, .. } => variants.iter().any(|variant| variant.fields.iter().any(|ty| type_references_symbol(ty, symbol))),
+        S::Struct { fields, .. } => fields.iter().any(|field| field.type_name.expression.mentions(symbol)),
+        S::Enum { variants, .. } => variants.iter().any(|variant| variant.fields.iter().any(|ty| ty.expression.mentions(symbol))),
         S::Trait { methods, .. } => methods.iter().any(|method| {
-            method.parameters.iter().any(|parameter| parameter.type_name.as_deref().is_some_and(|ty| type_references_symbol(ty, symbol)))
-                || method.return_type.as_deref().is_some_and(|ty| type_references_symbol(ty, symbol))
+            method.parameters.iter().any(|parameter| parameter.type_name.as_ref().is_some_and(|ty| ty.expression.mentions(symbol)))
+                || method.return_type.as_ref().is_some_and(|ty| ty.expression.mentions(symbol))
         }),
         S::Impl { methods, type_name, trait_name, .. } => {
-            type_references_symbol(type_name, symbol)
+            type_name.expression.mentions(symbol)
                 || trait_name.as_deref().is_some_and(|name| type_references_symbol(name, symbol))
                 || methods.iter().any(|method| statement_references_symbol(method, symbol))
         }
@@ -2322,20 +2328,18 @@ fn expression_references_symbol(expression: &crate::ast::Expression, symbol: &st
     match expression {
         E::Closure { name, .. } => name == symbol,
         E::Call {
-            name, arguments, ..
+            name, arguments, generic_arguments, ..
         } => {
             name == symbol
-                || arguments
-                    .iter()
-                    .any(|e| expression_references_symbol(e, symbol))
+                || generic_arguments.iter().any(|ty| ty.expression().mentions(symbol))
+                || arguments.iter().any(|e| expression_references_symbol(e, symbol))
         }
         E::MethodCall {
-            object, arguments, ..
+            object, arguments, generic_arguments, ..
         } => {
             expression_references_symbol(object, symbol)
-                || arguments
-                    .iter()
-                    .any(|e| expression_references_symbol(e, symbol))
+                || generic_arguments.iter().any(|ty| ty.expression().mentions(symbol))
+                || arguments.iter().any(|e| expression_references_symbol(e, symbol))
         }
         E::StructConstructor { name, fields, .. } => {
             name == symbol
@@ -2366,10 +2370,11 @@ fn expression_references_symbol(expression: &crate::ast::Expression, symbol: &st
         }
         | E::Unary {
             expression: object, ..
-        }
-        | E::Conversion {
-            expression: object, ..
         } => expression_references_symbol(object, symbol),
+        E::Conversion { expression: object, target_type, .. } => {
+            target_type.expression.mentions(symbol)
+                || expression_references_symbol(object, symbol)
+        }
         E::Binary { left, right, .. } => {
             expression_references_symbol(left, symbol)
                 || expression_references_symbol(right, symbol)
@@ -2888,14 +2893,14 @@ pub fn hir_symbol_index(project: &Project) -> crate::hir::HirSymbolIndex {
                             }).unwrap_or_else(|| name.clone())
                         }
                     }).unwrap_or_else(|| "inherent".into());
-                    let receiver_scope = if module.statements.iter().any(|item| matches!(item, Statement::Struct { name: local, .. } | Statement::Enum { name: local, .. } if local == type_name)) {
+                    let receiver_scope = if module.statements.iter().any(|item| matches!(item, Statement::Struct { name: local, .. } | Statement::Enum { name: local, .. } if local == type_name.as_str())) {
                         format!("{}::{}", module.name, type_name)
                     } else {
                         module.imports.iter().find_map(|import| {
                             let target = resolve_import_target(&project.modules, module, &import.path)?;
                             find_exported_type_provider(&project.modules, target, type_name, &mut HashSet::new())
                                 .map(|provider| format!("{}::{}", provider.name, type_name))
-                        }).unwrap_or_else(|| type_name.clone())
+                        }).unwrap_or_else(|| type_name.to_string())
                     };
                     let scope = vec![trait_scope, receiver_scope];
                     for method in methods {
@@ -3086,7 +3091,7 @@ pub fn backend_method_definition_ids(
                 ..
             } = statement
             {
-                let Some(receiver_id) = type_ids.get(type_name) else {
+                let Some(receiver_id) = type_ids.get(type_name.as_str()) else {
                     continue;
                 };
                 let trait_scope = trait_name
@@ -3114,7 +3119,7 @@ pub fn backend_method_definition_ids(
                 ];
                 for method in methods {
                     if let Statement::Function { name, .. } = method {
-                        let key = (type_name.clone(), name.clone());
+                        let key = (type_name.to_string(), name.clone());
                         let candidate = Id::scoped(
                             module.name.clone(),
                             scope.clone(),
@@ -3609,7 +3614,7 @@ pub fn hir_type_registry(project: &Project) -> crate::hir::HirTypeRegistry {
                             .iter()
                             .map(|field| HirTypeField {
                                 name: field.name.clone(),
-                                type_name: field.type_name.clone(),
+                                type_name: field.type_name.to_string(),
                             })
                             .collect(),
                         derives: derives.clone(),
@@ -3623,7 +3628,7 @@ pub fn hir_type_registry(project: &Project) -> crate::hir::HirTypeRegistry {
                             .iter()
                             .map(|variant| HirTypeVariant {
                                 name: variant.name.clone(),
-                                fields: variant.fields.clone(),
+                                fields: variant.fields.iter().map(ToString::to_string).collect(),
                             })
                             .collect(),
                     },
@@ -3875,7 +3880,7 @@ pub fn validate_hir_type_references(project: &Project) -> Result<(), String> {
         match &definition.shape {
             crate::hir::HirTypeShape::Struct { fields, .. } => {
                 for field in fields {
-                    references.push((field.name.clone(), field.type_name.clone()));
+                    references.push((field.name.clone(), field.type_name.to_string()));
                 }
             }
             crate::hir::HirTypeShape::Enum { variants } => {
@@ -3902,43 +3907,6 @@ pub fn validate_hir_type_references(project: &Project) -> Result<(), String> {
     Ok(())
 }
 
-/// Replace every function type in `expr` by `unknown`, first passing each parameter and return
-/// type of every function type to `check`. The HIR passes model function values as `unknown`.
-fn erase_function_types(
-    expr: &crate::type_expr::TypeExpr,
-    check: &mut dyn FnMut(&crate::type_expr::TypeExpr) -> Result<(), String>,
-) -> Result<crate::type_expr::TypeExpr, String> {
-    use crate::type_expr::TypeExpr as X;
-    Ok(match expr {
-        X::Function { params, ret } => {
-            for param in params {
-                check(param)?;
-            }
-            check(ret)?;
-            X::named("unknown")
-        }
-        X::Named { name, args } => X::Named {
-            name: name.clone(),
-            args: args
-                .iter()
-                .map(|arg| erase_function_types(arg, check))
-                .collect::<Result<Vec<_>, _>>()?,
-        },
-        X::Array(inner) => X::Array(Box::new(erase_function_types(inner, check)?)),
-        X::Tuple(items) => X::Tuple(
-            items
-                .iter()
-                .map(|item| erase_function_types(item, check))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        X::Reference { mutable, inner } => X::Reference {
-            mutable: *mutable,
-            inner: Box::new(erase_function_types(inner, check)?),
-        },
-        X::OpaquePointer => X::OpaquePointer,
-    })
-}
-
 fn validate_hir_type_spelling(
     project: &Project,
     module: &str,
@@ -3948,128 +3916,74 @@ fn validate_hir_type_spelling(
     if name.is_empty() {
         return Err("empty type name".into());
     }
-    if name.contains("->") {
-        // A type that mentions a function type: validate the function's parameter and return
-        // types, then validate the rest of the spelling with each function type read as `unknown`.
-        let expr = crate::type_expr::TypeExpr::parse(name).map_err(|error| error.to_string())?;
-        let erased = erase_function_types(&expr, &mut |part| {
-            validate_hir_type_spelling(project, module, &part.to_string())
-        })?;
-        return validate_hir_type_spelling(project, module, &erased.to_string());
-    }
+    let expression = crate::type_expr::TypeExpr::parse(name)
+        .map_err(|error| format!("invalid type '{}': {}", name, error))?;
+    validate_hir_type_expr(project, module, &expression)
+}
 
-    const BUILTINS: &[&str] = &[
-        "num",
-        "float",
-        "bool",
-        "string",
-        "void",
-        "unknown",
-        "File",
-        "TcpStream",
-        "i8",
-        "i16",
-        "i32",
-        "i64",
-        "i128",
-        "u8",
-        "u16",
-        "u32",
-        "u64",
-        "u128",
-        "isize",
-        "usize",
-        "f32",
-        "f64",
-    ];
-    if BUILTINS.contains(&name) {
-        return Ok(());
-    }
-
-    if let Some(inner) = name.strip_suffix("[]") {
-        return validate_hir_type_spelling(project, module, inner);
-    }
-
-    if name.starts_with('(') && name.ends_with(')') {
-        let parts = split_hir_type_arguments(&name[1..name.len() - 1]);
-        if parts.len() < 2 {
-            return Err(format!(
-                "tuple type '{}' must contain at least two elements",
-                name
-            ));
-        }
-        for part in parts {
-            validate_hir_type_spelling(project, module, part)?;
-        }
-        return Ok(());
-    }
-
-    if let Some(open) = name.find('<') {
-        if !name.ends_with('>') {
-            return Err(format!("malformed generic type '{}'", name));
-        }
-        let constructor = &name[..open];
-        let args = split_hir_type_arguments(&name[open + 1..name.len() - 1]);
-        let expected = match constructor {
-            "Array" | "Iterator" | "Option" | "Task" => Some(1),
-            "HashMap" | "Result" => Some(2),
-            // User-defined nominal constructors are accepted here. Their declaration arity and
-            // argument substitution are intentionally deferred to generic-user-types checking,
-            // but validating each nested argument now prevents malformed/unknown types from
-            // slipping through merely because the outer constructor is generic.
-            _ => None,
-        };
-        if let Some(expected) = expected {
-            if args.len() != expected {
-                return Err(format!(
-                    "{} requires {} type argument(s), found {}",
-                    constructor,
-                    expected,
-                    args.len()
-                ));
+fn validate_hir_type_expr(
+    project: &Project,
+    module: &str,
+    expression: &crate::type_expr::TypeExpr,
+) -> Result<(), String> {
+    use crate::type_expr::TypeExpr as X;
+    match expression {
+        X::OpaquePointer => Ok(()),
+        X::Reference { inner, .. } => validate_hir_type_expr(project, module, inner),
+        X::Array(inner) => validate_hir_type_expr(project, module, inner),
+        X::Tuple(items) => {
+            if items.len() < 2 {
+                return Err("tuple types must contain at least two elements".into());
             }
-        } else if resolve_hir_type_name(project, module, constructor)?.is_none() {
-            return Err(format!(
-                "unknown generic type constructor '{}'",
-                constructor
-            ));
+            for item in items {
+                validate_hir_type_expr(project, module, item)?;
+            }
+            Ok(())
         }
-        for arg in args {
-            validate_hir_type_spelling(project, module, arg)?;
+        X::Function { params, ret } => {
+            for parameter in params {
+                validate_hir_type_expr(project, module, parameter)?;
+            }
+            validate_hir_type_expr(project, module, ret)
         }
-        return Ok(());
-    }
-
-    match resolve_hir_type_name(project, module, name)? {
-        Some(_) => Ok(()),
-        None => Err(format!("unknown type '{}'", name)),
+        X::Named { name, args } => {
+            const BUILTINS: &[&str] = &[
+                "num", "int", "float", "bool", "string", "str", "void", "unit",
+                "unknown", "File", "TcpStream", "i8", "i16", "i32", "i64", "i128",
+                "u8", "u16", "u32", "u64", "u128", "isize", "usize", "f32", "f64",
+            ];
+            if args.is_empty() && BUILTINS.contains(&name.as_str()) {
+                return Ok(());
+            }
+            let expected = match name.as_str() {
+                "Array" | "Iterator" | "Option" | "Task" => Some(1),
+                "HashMap" | "Result" => Some(2),
+                _ => None,
+            };
+            if let Some(expected) = expected {
+                if args.len() != expected {
+                    return Err(format!(
+                        "{} requires {} type argument(s), found {}",
+                        name, expected, args.len()
+                    ));
+                }
+            } else if !args.is_empty()
+                && resolve_hir_type_name(project, module, name)?.is_none()
+            {
+                return Err(format!("unknown generic type constructor '{}'", name));
+            } else if args.is_empty()
+                && resolve_hir_type_name(project, module, name)?.is_none()
+            {
+                return Err(format!("unknown type '{}'", name));
+            }
+            for argument in args {
+                validate_hir_type_expr(project, module, argument)?;
+            }
+            Ok(())
+        }
     }
 }
 
-fn split_hir_type_arguments(source: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut angle_depth = 0usize;
-    let mut paren_depth = 0usize;
-    let mut start = 0usize;
-    for (index, ch) in source.char_indices() {
-        match ch {
-            '<' => angle_depth += 1,
-            '>' => angle_depth = angle_depth.saturating_sub(1),
-            '(' => paren_depth += 1,
-            ')' => paren_depth = paren_depth.saturating_sub(1),
-            ',' if angle_depth == 0 && paren_depth == 0 => {
-                parts.push(source[start..index].trim());
-                start = index + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    let tail = source[start..].trim();
-    if !tail.is_empty() {
-        parts.push(tail);
-    }
-    parts
-}
 
 /// Resolve a struct field through the module-aware type registry.
 ///
@@ -5276,7 +5190,7 @@ fn collect_resolved_calls_in_statements(
                                     nested.insert(parameter.name.clone(), identity);
                                 }
                             } else if let Some(type_name) = &parameter.type_name {
-                                if type_name == "Self" {
+                                if type_name.as_str() == "Self" {
                                     continue;
                                 }
                                 if let Some(identity) =
@@ -5553,6 +5467,7 @@ fn collect_resolved_calls_in_expression(
                         argument_types,
                         return_type: None,
                         generic_parameters: signature.generic_parameters.clone(),
+                        explicit_generic_arguments: generic_arguments.iter().map(|ty| ty.expression().clone()).collect(),
                         is_async: false,
                         receiver_hir_type: None,
                         parameter_hir_types: vec![
@@ -5653,7 +5568,7 @@ fn collect_resolved_calls_in_expression(
             for (generic, explicit) in generic_parameters.iter().zip(generic_arguments.iter()) {
                 generic_bindings.insert(
                     generic.clone(),
-                    resolve_hir_type_spelling(project, module, Some(explicit), &[])?,
+                    resolve_hir_explicit_generic_type_expr(project, module, explicit.expression())?,
                 );
             }
             let parameter_hir_types = parameters
@@ -5715,6 +5630,7 @@ fn collect_resolved_calls_in_expression(
                 argument_types,
                 return_type: resolved_return,
                 generic_parameters: generic_parameters.clone(),
+                explicit_generic_arguments: generic_arguments.iter().map(|ty| ty.expression().clone()).collect(),
                 is_async: *is_async,
                 receiver_hir_type: None,
                 parameter_hir_types,
@@ -5871,7 +5787,7 @@ fn collect_resolved_calls_in_expression(
                 for (generic, explicit) in generic_parameters.iter().zip(generic_arguments.iter()) {
                     generic_bindings.insert(
                         generic.clone(),
-                        resolve_hir_type_spelling(project, module, Some(explicit), &[])?,
+                        resolve_hir_explicit_generic_type_expr(project, module, explicit.expression())?,
                     );
                 }
                 let parameter_hir_types = user_parameters
@@ -5937,6 +5853,7 @@ fn collect_resolved_calls_in_expression(
                     argument_types,
                     return_type: resolved_return,
                     generic_parameters: generic_parameters.clone(),
+                    explicit_generic_arguments: generic_arguments.iter().map(|ty| ty.expression().clone()).collect(),
                     is_async: *is_async,
                     receiver_hir_type: Some(crate::hir::HirType::Nominal(receiver_type.clone())),
                     parameter_hir_types,
@@ -5957,146 +5874,174 @@ fn resolve_hir_type_spelling(
     spelling: Option<&str>,
     generics: &[String],
 ) -> Result<crate::hir::HirType, String> {
-    use crate::hir::HirType as T;
     let Some(raw) = spelling else {
-        return Ok(T::Unknown);
+        return Ok(crate::hir::HirType::Unknown);
     };
-    let name = raw.trim();
-    if generics.iter().any(|g| g == name) {
-        return Ok(T::Generic(name.to_string()));
-    }
-    if name.contains("->") {
-        // Function types are opaque to the HIR passes (`unknown`).
-        let expr = crate::type_expr::TypeExpr::parse(name).map_err(|error| error.to_string())?;
-        let erased = erase_function_types(&expr, &mut |_| Ok(()))?;
-        return resolve_hir_type_spelling(project, module, Some(&erased.to_string()), generics);
-    }
-    if let Some(inner) = name.strip_suffix("[]") {
-        return Ok(T::Array(Box::new(resolve_hir_type_spelling(
-            project,
-            module,
-            Some(inner),
-            generics,
-        )?)));
-    }
-    if name.starts_with('(') && name.ends_with(')') {
-        let inner = &name[1..name.len() - 1];
-        let parts = split_hir_type_arguments_owned(inner);
-        if parts.len() == 1 && parts[0].trim().is_empty() {
-            return Ok(T::Tuple(Vec::new()));
-        }
-        return Ok(T::Tuple(
-            parts
-                .iter()
-                .map(|p| resolve_hir_type_spelling(project, module, Some(p), generics))
-                .collect::<Result<Vec<_>, _>>()?,
-        ));
-    }
-    let (base, args) = if let Some(open) = name.find('<') {
-        if !name.ends_with('>') {
-            return Err(format!("malformed type expression '{}'", name));
-        }
-        (
-            &name[..open],
-            split_hir_type_arguments_owned(&name[open + 1..name.len() - 1]),
-        )
-    } else {
-        (name, Vec::new())
-    };
-    // HIR currently models Fusion numeric values with the width-neutral
-    // Num/Float categories. Keep the exact C ABI widths in ForeignAbiType;
-    // this mapping is only for structural type resolution and call checking.
-    let primitive = match base.trim() {
-        "num" | "int" | "i8" | "i16" | "i32" | "i64" | "i128"
-        | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize" => Some(T::Num),
-        "float" | "f32" | "f64" => Some(T::Float),
-        "*opaque" => return Ok(T::Generic("*opaque".to_string())),
-        "bool" => Some(T::Bool),
-        "string" | "str" => Some(T::String),
-        "void" | "unit" => Some(T::Void),
-        "File" => Some(T::File),
-        "TcpStream" => Some(T::TcpStream),
-        _ => None,
-    };
-    if let Some(t) = primitive {
-        if args.is_empty() {
-            return Ok(t);
-        }
-    }
-    let nested = |i: usize| -> Result<T, String> {
-        let arg = args
-            .get(i)
-            .ok_or_else(|| format!("type '{}' is missing generic argument {}", name, i + 1))?;
-        resolve_hir_type_spelling(project, module, Some(arg), generics)
-    };
-    match base.trim() {
-        "Iterator" if args.len() == 1 => return Ok(T::Iterator(Box::new(nested(0)?))),
-        "Option" if args.len() == 1 => return Ok(T::Option(Box::new(nested(0)?))),
-        "Task" if args.len() == 1 => return Ok(T::Task(Box::new(nested(0)?))),
-        "HashMap" if args.len() == 2 => {
-            return Ok(T::HashMap(Box::new(nested(0)?), Box::new(nested(1)?)))
-        }
-        "Result" if args.len() == 2 => {
-            return Ok(T::Result(Box::new(nested(0)?), Box::new(nested(1)?)))
-        }
-        "Iterator" | "Option" | "Task" | "HashMap" | "Result" => {
-            return Err(format!(
-                "type '{}' has an invalid number of generic arguments",
-                name
-            ))
-        }
-        _ => {}
-    }
-    let id = resolve_hir_type_name(project, module, base.trim())?;
-    if let Some(id) = id {
-        let constructor = T::Nominal(id);
-        if args.is_empty() {
-            return Ok(constructor);
-        }
-        let resolved_args = args
-            .iter()
-            .map(|arg| resolve_hir_type_spelling(project, module, Some(arg), generics))
-            .collect::<Result<Vec<_>, _>>()?;
-        return Ok(T::Applied {
-            constructor: Box::new(constructor),
-            arguments: resolved_args,
-        });
-    }
-    if !args.is_empty() {
-        return Err(format!(
-            "unknown generic type constructor '{}'",
-            base.trim()
-        ));
-    }
-    if name == "unknown" {
-        return Ok(T::Unknown);
-    }
-    Err(format!(
-        "in module '{}': unresolved type '{}'",
-        module, name
-    ))
+    let expression = crate::type_expr::TypeExpr::parse(raw.trim())
+        .map_err(|error| format!("invalid type '{}': {}", raw, error))?;
+    resolve_hir_type_expr(project, module, &expression, generics)
 }
 
-fn split_hir_type_arguments_owned(input: &str) -> Vec<String> {
-    let mut result = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (i, ch) in input.char_indices() {
-        match ch {
-            '<' | '(' | '[' => depth += 1,
-            '>' | ')' | ']' => depth -= 1,
-            ',' if depth == 0 => {
-                result.push(input[start..i].trim().to_string());
-                start = i + 1;
+/// Resolve an explicit call-site type argument. A bare unresolved name is retained
+/// as a generic variable here because its declaration may belong to the enclosing
+/// generic function; the ordinary type checker validates whether that variable is
+/// actually in scope before code generation.
+fn resolve_hir_explicit_generic_type_expr(
+    project: &Project,
+    module: &str,
+    expression: &crate::type_expr::TypeExpr,
+) -> Result<crate::hir::HirType, String> {
+    fn collect_unresolved_names(
+        project: &Project,
+        module: &str,
+        expression: &crate::type_expr::TypeExpr,
+        names: &mut Vec<String>,
+    ) -> Result<(), String> {
+        use crate::type_expr::TypeExpr as X;
+        match expression {
+            X::Named { name, args } => {
+                if args.is_empty() {
+                    let known_builtin = matches!(
+                        name.as_str(),
+                        "num" | "int" | "i8" | "i16" | "i32" | "i64" | "i128"
+                            | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize"
+                            | "float" | "f32" | "f64" | "bool" | "string" | "str"
+                            | "void" | "unit" | "File" | "TcpStream" | "unknown"
+                    );
+                    if !known_builtin
+                        && resolve_hir_type_name(project, module, name)?.is_none()
+                        && !names.contains(name)
+                    {
+                        names.push(name.clone());
+                    }
+                }
+                for argument in args {
+                    collect_unresolved_names(project, module, argument, names)?;
+                }
             }
-            _ => {}
+            X::Array(inner) | X::Reference { inner, .. } => {
+                collect_unresolved_names(project, module, inner, names)?;
+            }
+            X::Tuple(items) => {
+                for item in items {
+                    collect_unresolved_names(project, module, item, names)?;
+                }
+            }
+            X::Function { params, ret } => {
+                for param in params {
+                    collect_unresolved_names(project, module, param, names)?;
+                }
+                collect_unresolved_names(project, module, ret, names)?;
+            }
+            X::OpaquePointer => {}
+        }
+        Ok(())
+    }
+
+    let mut generic_names = Vec::new();
+    collect_unresolved_names(project, module, expression, &mut generic_names)?;
+    resolve_hir_type_expr(project, module, expression, &generic_names)
+}
+
+fn resolve_hir_type_expr(
+    project: &Project,
+    module: &str,
+    expression: &crate::type_expr::TypeExpr,
+    generics: &[String],
+) -> Result<crate::hir::HirType, String> {
+    use crate::hir::HirType as T;
+    use crate::type_expr::TypeExpr as X;
+    match expression {
+        X::OpaquePointer => Ok(T::Generic("*opaque".to_string())),
+        X::Reference { mutable, inner } => Ok(T::Reference {
+            mutable: *mutable,
+            inner: Box::new(resolve_hir_type_expr(project, module, inner, generics)?),
+        }),
+        X::Array(inner) => Ok(T::Array(Box::new(resolve_hir_type_expr(
+            project, module, inner, generics,
+        )?))),
+        X::Tuple(items) => Ok(T::Tuple(
+            items
+                .iter()
+                .map(|item| resolve_hir_type_expr(project, module, item, generics))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        X::Function { params, ret } => Ok(T::Function {
+            parameters: params
+                .iter()
+                .map(|param| resolve_hir_type_expr(project, module, param, generics))
+                .collect::<Result<Vec<_>, _>>()?,
+            return_type: Box::new(resolve_hir_type_expr(project, module, ret, generics)?),
+        }),
+        X::Named { name, args } => {
+            if args.is_empty() && generics.iter().any(|generic| generic == name) {
+                return Ok(T::Generic(name.clone()));
+            }
+            let primitive = match name.as_str() {
+                "num" | "int" | "i8" | "i16" | "i32" | "i64" | "i128"
+                | "u8" | "u16" | "u32" | "u64" | "u128" | "isize" | "usize" => Some(T::Num),
+                "float" | "f32" | "f64" => Some(T::Float),
+                "bool" => Some(T::Bool),
+                "string" | "str" => Some(T::String),
+                "void" | "unit" => Some(T::Void),
+                "File" => Some(T::File),
+                "TcpStream" => Some(T::TcpStream),
+                "unknown" => Some(T::Unknown),
+                _ => None,
+            };
+            if let Some(primitive) = primitive {
+                if args.is_empty() {
+                    return Ok(primitive);
+                }
+            }
+            let nested = |index: usize| -> Result<T, String> {
+                let argument = args.get(index).ok_or_else(|| {
+                    format!("type '{}' is missing generic argument {}", name, index + 1)
+                })?;
+                resolve_hir_type_expr(project, module, argument, generics)
+            };
+            match (name.as_str(), args.len()) {
+                ("Array", 1) => return Ok(T::Array(Box::new(nested(0)?))),
+                ("Iterator", 1) => return Ok(T::Iterator(Box::new(nested(0)?))),
+                ("Option", 1) => return Ok(T::Option(Box::new(nested(0)?))),
+                ("Task", 1) => return Ok(T::Task(Box::new(nested(0)?))),
+                ("HashMap", 2) => {
+                    return Ok(T::HashMap(Box::new(nested(0)?), Box::new(nested(1)?)))
+                }
+                ("Result", 2) => {
+                    return Ok(T::Result(Box::new(nested(0)?), Box::new(nested(1)?)))
+                }
+                ("Array" | "Iterator" | "Option" | "Task", _) => {
+                    return Err(format!("type '{}' requires exactly one generic argument", name))
+                }
+                ("HashMap" | "Result", _) => {
+                    return Err(format!("type '{}' requires exactly two generic arguments", name))
+                }
+                _ => {}
+            }
+            let id = resolve_hir_type_name(project, module, name)?;
+            if let Some(id) = id {
+                let constructor = T::Nominal(id);
+                if args.is_empty() {
+                    return Ok(constructor);
+                }
+                let resolved_args = args
+                    .iter()
+                    .map(|argument| resolve_hir_type_expr(project, module, argument, generics))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(T::Applied {
+                    constructor: Box::new(constructor),
+                    arguments: resolved_args,
+                });
+            }
+            if !args.is_empty() {
+                return Err(format!("unknown generic type constructor '{}'", name));
+            }
+            Err(format!("in module '{}': unresolved type '{}'", module, name))
         }
     }
-    if start < input.len() || !input.trim().is_empty() {
-        result.push(input[start..].trim().to_string());
-    }
-    result
 }
+
 
 fn unify_hir_call_type(
     expected: &crate::hir::HirType,
@@ -6126,6 +6071,18 @@ fn unify_hir_call_type(
                     .zip(b)
                     .all(|(x, y)| unify_hir_call_type(x, y, bindings))
         }
+        (
+            T::Function { parameters: ap, return_type: ar },
+            T::Function { parameters: bp, return_type: br },
+        ) => {
+            ap.len() == bp.len()
+                && ap.iter().zip(bp).all(|(a, b)| unify_hir_call_type(a, b, bindings))
+                && unify_hir_call_type(ar, br, bindings)
+        }
+        (
+            T::Reference { mutable: am, inner: ai },
+            T::Reference { mutable: bm, inner: bi },
+        ) => am == bm && unify_hir_call_type(ai, bi, bindings),
         (
             T::Applied {
                 constructor: ac,
@@ -6185,6 +6142,14 @@ fn substitute_hir_generics(
                 .map(|x| substitute_hir_generics(x, bindings))
                 .collect(),
         ),
+        T::Function { parameters, return_type } => T::Function {
+            parameters: parameters.into_iter().map(|x| substitute_hir_generics(x, bindings)).collect(),
+            return_type: Box::new(substitute_hir_generics(*return_type, bindings)),
+        },
+        T::Reference { mutable, inner } => T::Reference {
+            mutable,
+            inner: Box::new(substitute_hir_generics(*inner, bindings)),
+        },
         T::Applied {
             constructor,
             arguments,
@@ -6394,7 +6359,7 @@ fn collect_hir_structural_locals(
             S::Impl {
                 type_name, methods, ..
             } => {
-                let receiver = resolve_hir_type_spelling(project, module, Some(type_name), &[])?;
+                let receiver = resolve_hir_type_spelling(project, module, Some(type_name.as_str()), &[])?;
                 for method in methods {
                     if let S::Function {
                         generic_parameters: generics,
@@ -6701,7 +6666,7 @@ fn infer_hir_structural_type_with_locals(
             }
         }
         E::Conversion { target_type, .. } => {
-            resolve_hir_type_spelling(project, module, Some(target_type), &[])
+            resolve_hir_type_expr(project, module, target_type.expression(), &[])
         }
         E::Property { object, name, .. } => {
             match infer_hir_structural_type_with_locals(project, module, object, environment)? {
@@ -6775,7 +6740,7 @@ fn infer_hir_structural_type_with_locals(
                 for (generic, explicit) in generics.iter().zip(generic_arguments.iter()) {
                     bindings.insert(
                         generic.clone(),
-                        resolve_hir_type_spelling(project, module, Some(explicit), &[])?,
+                        resolve_hir_explicit_generic_type_expr(project, module, explicit.expression())?,
                     );
                 }
                 for (parameter, argument) in parameters.iter().zip(arguments) {
@@ -6916,7 +6881,7 @@ fn infer_hir_structural_type_with_locals(
                     for (generic, explicit) in generic_parameters.iter().zip(generic_arguments) {
                         bindings.insert(
                             generic.clone(),
-                            resolve_hir_type_spelling(project, module, Some(explicit), &[])?,
+                            resolve_hir_explicit_generic_type_expr(project, module, explicit.expression())?,
                         );
                     }
                     for (parameter, argument) in user_parameters.iter().zip(arguments) {
@@ -7053,7 +7018,7 @@ fn infer_hir_structural_type(
             }
         }
         E::Conversion { target_type, .. } => {
-            resolve_hir_type_spelling(project, module, Some(target_type), &[])?
+            resolve_hir_type_expr(project, module, target_type.expression(), &[])?
         }
         E::Await { expression, .. } => {
             match infer_hir_structural_type(project, module, expression, environment)? {
@@ -7137,7 +7102,7 @@ fn infer_hir_function_call_return_type(
     module: &str,
     name: &str,
     arguments: &[crate::ast::Expression],
-    generic_arguments: &[String],
+    generic_arguments: &[crate::ast::TypeAnnotation],
     environment: &HashMap<String, crate::hir::HirDefinitionId>,
 ) -> Result<crate::hir::HirType, String> {
     let Some(identity) = resolve_function_identity(project, module, name)? else {
@@ -7186,7 +7151,7 @@ fn infer_hir_function_call_return_type(
     for (generic, explicit) in generics.iter().zip(generic_arguments.iter()) {
         bindings.insert(
             generic.clone(),
-            resolve_hir_type_spelling(project, module, Some(explicit), &[])?,
+            resolve_hir_explicit_generic_type_expr(project, module, explicit.expression())?,
         );
     }
     for (parameter, argument) in parameters.iter().zip(arguments.iter()) {
@@ -7216,7 +7181,7 @@ fn infer_hir_method_call_return_type(
     object: &crate::ast::Expression,
     method: &str,
     arguments: &[crate::ast::Expression],
-    generic_arguments: &[String],
+    generic_arguments: &[crate::ast::TypeAnnotation],
     environment: &HashMap<String, crate::hir::HirDefinitionId>,
 ) -> Result<crate::hir::HirType, String> {
     let Some(receiver) = infer_hir_expression_type(project, module, object, environment)? else {
@@ -7307,7 +7272,7 @@ fn infer_hir_method_call_return_type(
             for (generic, explicit) in generic_parameters.iter().zip(generic_arguments.iter()) {
                 bindings.insert(
                     generic.clone(),
-                    resolve_hir_type_spelling(project, module, Some(explicit), &[])?,
+                    resolve_hir_explicit_generic_type_expr(project, module, explicit.expression())?,
                 );
             }
             for (parameter, argument) in user_parameters.iter().zip(arguments.iter()) {
@@ -8790,6 +8755,37 @@ mod hir_type_registry_tests {
     }
 
     #[test]
+    fn hir_type_resolution_preserves_function_and_reference_shapes() {
+        let temp = TempProject::new();
+        temp.write("main.fusion", "struct Pair<T> { value: T }\nmain:\n    print(1)\n");
+        let project = load_project_with_metadata(temp.0.join("main.fusion")).unwrap();
+
+        let function = crate::type_expr::TypeExpr::parse(
+            "fn(T, Option<num>) -> Pair<T, string>",
+        )
+        .unwrap();
+        let resolved = resolve_hir_type_expr(&project, &project.entry_module, &function, &["T".into()]).unwrap();
+        let pair_id = resolve_hir_type_name(&project, &project.entry_module, "Pair").unwrap().unwrap();
+        assert_eq!(resolved, crate::hir::HirType::Function {
+            parameters: vec![
+                crate::hir::HirType::Generic("T".into()),
+                crate::hir::HirType::Option(Box::new(crate::hir::HirType::Num)),
+            ],
+            return_type: Box::new(crate::hir::HirType::Applied {
+                constructor: Box::new(crate::hir::HirType::Nominal(pair_id)),
+                arguments: vec![crate::hir::HirType::Generic("T".into()), crate::hir::HirType::String],
+            }),
+        });
+
+        let reference = crate::type_expr::TypeExpr::parse("&mut T[]").unwrap();
+        let resolved = resolve_hir_type_expr(&project, &project.entry_module, &reference, &["T".into()]).unwrap();
+        assert_eq!(resolved, crate::hir::HirType::Reference {
+            mutable: true,
+            inner: Box::new(crate::hir::HirType::Array(Box::new(crate::hir::HirType::Generic("T".into())))),
+        });
+    }
+
+    #[test]
     fn registry_captures_struct_fields_enum_variants_and_visibility() {
         let temp = TempProject::new();
         temp.write("main.fusion", "import geometry\nmain:\n    print(1)\n");
@@ -9601,7 +9597,6 @@ mod backend_type_identity_tests {
                     private_symbols: Vec::new(),
                 },
             ],
-            type_annotations: Vec::new(),
         };
 
         let identities = backend_type_definition_ids(&program);
@@ -9713,6 +9708,19 @@ mod hir_structural_type_tests {
     }
 
     #[test]
+    fn explicit_generic_arguments_resolve_to_structural_hir_types() {
+        use crate::hir::HirType as T;
+        let project = empty_project();
+        let annotation = crate::type_expr::TypeExpr::parse("Option<fn(T, num) -> bool>[]")
+            .unwrap();
+        let resolved = resolve_hir_explicit_generic_type_expr(&project, "main", &annotation).unwrap();
+        assert_eq!(resolved, T::Array(Box::new(T::Option(Box::new(T::Function {
+            parameters: vec![T::Generic("T".into()), T::Num],
+            return_type: Box::new(T::Bool),
+        })))));
+    }
+
+    #[test]
     fn generic_unification_rejects_inconsistent_repeated_parameters() {
         use crate::hir::HirType as T;
         let expected = T::Tuple(vec![T::Generic("T".into()), T::Generic("T".into())]);
@@ -9725,14 +9733,25 @@ mod hir_structural_type_tests {
     }
 
     fn empty_project() -> Project {
+        let module = ModuleUnit {
+            name: "main".into(),
+            path: PathBuf::new(),
+            imports: Vec::new(),
+            public_symbols: HashSet::new(),
+            local_public_symbols: HashSet::new(),
+            function_symbols: HashSet::new(),
+            private_symbols: HashSet::new(),
+            statements: Vec::new(),
+            statement_start: 0,
+            statement_end: 0,
+        };
         Project {
             entry_module: "main".into(),
-            modules: Vec::new(),
+            modules: vec![module],
             program: crate::ast::Program {
                 statements: Vec::new(),
                 span: crate::span::Span::default(),
                 modules: Vec::new(),
-            type_annotations: Vec::new(),
             },
         }
     }
@@ -9790,6 +9809,45 @@ mod hir_structural_type_tests {
     }
 
     #[test]
+    fn generic_function_call_return_type_uses_explicit_structured_argument() {
+        use crate::ast::{Expression as E, Program, Statement as S};
+        use crate::hir::HirType as T;
+        use crate::span::Span;
+        let span = Span::default();
+        let function = S::Function {
+            name: "empty_value".into(),
+            generic_parameters: vec!["Item".into()],
+            parameters: Vec::new(),
+            return_type: Some("Item".into()),
+            body: Vec::new(),
+            is_async: false,
+            foreign_abi: None,
+            link_name: None,
+            span,
+        };
+        let module = ModuleUnit {
+            name: "main".into(), path: PathBuf::new(), imports: Vec::new(),
+            public_symbols: HashSet::new(), local_public_symbols: HashSet::new(),
+            function_symbols: HashSet::from(["empty_value".to_string()]),
+            private_symbols: HashSet::new(), statements: vec![function],
+            statement_start: 0, statement_end: 1,
+        };
+        let project = Project {
+            entry_module: "main".into(), modules: vec![module],
+            program: Program { statements: Vec::new(), span, modules: Vec::new() },
+        };
+        let call = E::Call {
+            name: "empty_value".into(), arguments: Vec::new(),
+            generic_arguments: vec![crate::ast::TypeAnnotation::parse("Option<num>").unwrap()],
+            span,
+        };
+        assert_eq!(
+            infer_hir_structural_type(&project, "main", &call, &HashMap::new()).unwrap(),
+            T::Option(Box::new(T::Num)),
+        );
+    }
+
+    #[test]
     fn generic_function_call_return_type_uses_inferred_argument_binding() {
         use crate::ast::{Expression as E, Parameter, Program, Statement as S};
         use crate::hir::HirType as T;
@@ -9830,7 +9888,6 @@ mod hir_structural_type_tests {
                 statements: Vec::new(),
                 span,
                 modules: Vec::new(),
-            type_annotations: Vec::new(),
             },
         };
         let call = E::Call {

@@ -656,7 +656,7 @@ impl BodyBuilder<'_> {
                 path.push(0);
                 self.walk_expression(expression, path, env, types, references);
                 path.pop();
-                match target_type.as_str() {
+                match target_type.to_string().as_str() {
                     "Num" | "num" => HirType::Num,
                     "Float" | "float" => HirType::Float,
                     "Bool" | "bool" => HirType::Bool,
@@ -1131,6 +1131,7 @@ mod tests {
             argument_types: vec![None],
             return_type: None,
             generic_parameters: Vec::new(),
+            explicit_generic_arguments: Vec::new(),
             is_async: false,
             receiver_hir_type: None,
             parameter_hir_types: vec![HirType::Num],
@@ -1199,6 +1200,7 @@ mod tests {
             argument_types: Vec::new(),
             return_type: None,
             generic_parameters: Vec::new(),
+            explicit_generic_arguments: Vec::new(),
             is_async: false,
             receiver_hir_type: None,
             parameter_hir_types: Vec::new(),

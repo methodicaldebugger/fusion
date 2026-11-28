@@ -39,7 +39,7 @@ pub struct Parser {
     seen_main: bool,
     require_main: bool,
     pending_block_styles: Vec<BlockStyle>,
-    current_function_return_type: Option<Option<String>>,
+    current_function_return_type: Option<Option<TypeAnnotation>>,
     function_depth: usize,
     loop_depth: usize,
     /// Additional declarations produced by a single `extern` block.
@@ -309,13 +309,14 @@ impl Parser {
         Ok(name)
     }
 
-    /// Parse a type annotation and return its canonical source spelling.
-    ///
-    /// The AST still stores type annotations as strings (see `type_expr`), but they are always
-    /// the `Display` form of a structurally parsed `TypeExpr`, never hand-assembled text.
-    fn parse_type(&mut self) -> Result<String, ParseError> {
-        let expr = self.parse_type_expr()?;
-        Ok(expr.erase_generics(&self.erased_type_parameters).to_string())
+    /// Parse a type annotation directly into the AST's structured representation.
+    /// Generic declaration parameters are still erased to `unknown` until semantic
+    /// generic user types are implemented; the surrounding type tree is retained.
+    fn parse_type(&mut self) -> Result<TypeAnnotation, ParseError> {
+        let expression = self.parse_type_expr()?;
+        Ok(TypeAnnotation::new(
+            expression.erase_generics(&self.erased_type_parameters),
+        ))
     }
 
     /// Parse an optional `<T, U>` list of type parameters after a struct, enum or impl type
@@ -2363,7 +2364,7 @@ impl Parser {
             let return_type = if self.consume(&Token::Arrow) {
                 Some(self.parse_type()?)
             } else {
-                Some("void".to_string())
+                Some(TypeAnnotation::from("void"))
             };
 
             if !self.consume(&Token::Semicolon) {
@@ -2480,7 +2481,7 @@ impl Parser {
                             _ => unreachable!(),
                         };
 
-                        (parameter_name, Some(first))
+                        (parameter_name, Some(TypeAnnotation::from(first.as_str())))
                     } else {
                         // Plain `name` = untyped parameter.
                         (first, None)
@@ -2889,7 +2890,7 @@ impl Parser {
 
         Ok(Statement::Impl {
             trait_name,
-            type_name,
+            type_name: type_name.into(),
             methods,
             span: self.span_from(start),
         })
@@ -2904,69 +2905,51 @@ impl Parser {
             return false;
         }
 
-        let mut position = self.position + 1;
-
-        // There must be at least one generic type argument.
-        if position >= self.tokens.len() {
-            return false;
-        }
-
-        loop {
-            let token = match self.peek_at(position) {
-                Some(token) => token,
-                None => return false,
-            };
-
+        // Find the matching outer `>` while allowing nested generic applications,
+        // function-type parentheses, tuples, arrays and reference syntax. A `<`
+        // is treated as a call-site generic list only when the matching `>` is
+        // immediately followed by `(`, which keeps ordinary comparisons intact.
+        let mut angle_depth = 0usize;
+        let mut position = self.position;
+        while let Some(token) = self.peek_at(position) {
             match token {
-                Token::NumType
-                | Token::FloatType
-                | Token::BoolType
-                | Token::StringType
-                | Token::Identifier(_) => {
-                    position += 1;
+                Token::Less => angle_depth += 1,
+                Token::Greater => {
+                    if angle_depth == 0 {
+                        return false;
+                    }
+                    angle_depth -= 1;
+                    if angle_depth == 0 {
+                        return matches!(self.peek_at(position + 1), Some(Token::LeftParen));
+                    }
                 }
-
-                _ => return false,
+                Token::Eof | Token::NewLine | Token::Semicolon => return false,
+                _ => {}
             }
-
-            match self.peek_at(position) {
-                Some(Token::Comma) => {
-                    position += 1;
-                }
-
-                Some(Token::Greater) => {
-                    position += 1;
-                    break;
-                }
-
-                _ => return false,
-            }
+            position += 1;
         }
-
-        matches!(self.peek_at(position), Some(Token::LeftParen))
+        false
     }
 
-    fn parse_generic_arguments(&mut self) -> Result<Vec<String>, ParseError> {
+    fn parse_generic_arguments(&mut self) -> Result<Vec<TypeAnnotation>, ParseError> {
         if !self.consume(&Token::Less) {
             return self.error("Expected '<'");
         }
 
         let mut arguments = Vec::new();
-
         loop {
-            arguments.push(self.parse_type()?);
-
+            // Explicit call-site arguments are types in the caller's generic scope.
+            // Do not apply declaration-parameter erasure here: `identity<T>(x)`
+            // must retain `T` as a type variable in the AST.
+            arguments.push(TypeAnnotation::new(self.parse_type_expr()?));
             if self.consume(&Token::Comma) {
                 continue;
             }
-
             break;
         }
-
         if !self.consume(&Token::Greater) {
             return self.error("Expected '>' after generic arguments");
         }
-
         Ok(arguments)
     }
 
@@ -3377,7 +3360,7 @@ impl Parser {
             function_parameters.push(Parameter {
                 name: hidden_name.clone(),
                 name_span: span,
-                type_name: Some("unknown".to_string()),
+                type_name: Some(TypeAnnotation::from("unknown")),
                 span,
             });
             function_body.push(Statement::VariableDeclarations {
@@ -3494,7 +3477,7 @@ impl Parser {
                         return Ok(Expression::Conversion {
                             kind,
                             expression: Box::new(arguments.into_iter().next().unwrap()),
-                            target_type: name,
+                            target_type: name.into(),
                             span: self.span_from(start),
                         });
                     }
@@ -3591,7 +3574,7 @@ impl Parser {
                 Expression::Conversion {
                     kind,
                     expression: Box::new(arguments.into_iter().next().unwrap()),
-                    target_type,
+                    target_type: target_type.into(),
                     span: self.span_from(start),
                 }
             }
@@ -3830,12 +3813,10 @@ impl Parser {
             statements,
             span: Span::new(program_start, program_end),
             modules: Vec::new(),
-            type_annotations: Vec::new(),
         };
         let mut expanded = crate::trait_defaults::expand_trait_defaults(
             crate::derive_expansion::expand_derives(program),
         );
-        expanded.rebuild_type_annotations();
         Ok(expanded)
     }
 }
@@ -3944,20 +3925,65 @@ main:
         assert!(parser.parse().is_err());
     }
     #[test]
+    fn explicit_generic_call_arguments_remain_structured_and_preserve_generic_names() {
+        let source = "fn relay<T>(value: T) -> T:
+    return identity<T>(value)
+main:
+    print(identity<Pair<Option<num>, string>>(1))
+";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("generic-call source should lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("generic-call source should parse");
+
+        let Statement::Function { body, .. } = &program.statements[0] else {
+            panic!("expected relay function");
+        };
+        let Statement::Return {
+            value: Some(Expression::Call { generic_arguments, .. }),
+            ..
+        } = &body[0] else {
+            panic!("expected generic identity call in relay");
+        };
+        assert_eq!(generic_arguments.len(), 1);
+        assert_eq!(generic_arguments[0].expression().to_string(), "T");
+
+        let main = program
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Main { body, .. } => Some(body),
+                _ => None,
+            })
+            .expect("main declaration should exist");
+        let Statement::Expression {
+            expression: Expression::Call { arguments, .. },
+            ..
+        } = &main[0] else {
+            panic!("expected print call");
+        };
+        let Expression::Call { generic_arguments, .. } = &arguments[0] else {
+            panic!("expected nested generic identity call");
+        };
+        assert_eq!(
+            generic_arguments[0].expression().to_string(),
+            "Pair<Option<num>, string>"
+        );
+    }
+
+    #[test]
     fn ast_retains_structured_nested_function_and_reference_types() {
         let source = "fn inspect(value: Pair<Option<num>, fn(string) -> bool>) -> &mut num:\n    return 1\nmain:\n    print(1)\n";
         let mut lexer = Lexer::new(source, BlockMode::Unknown);
         let tokens = lexer.tokenize().expect("source should lex");
         let mut parser = Parser::new(tokens);
         let program = parser.parse().expect("structured annotations should parse");
-        assert!(program.type_annotations.iter().any(|annotation| {
-            matches!(&annotation.role, crate::ast::TypeAnnotationRole::Parameter { .. })
-                && annotation.expression.to_string() == "Pair<Option<num>, fn(string) -> bool>"
-        }));
-        assert!(program.type_annotations.iter().any(|annotation| {
-            matches!(&annotation.role, crate::ast::TypeAnnotationRole::Return { .. })
-                && annotation.expression.to_string() == "&mut num"
-        }));
+        let (parameters, return_type) = program.statements.iter().find_map(|statement| match statement {
+            Statement::Function { parameters, return_type, .. } => Some((parameters, return_type)),
+            _ => None,
+        }).expect("function declaration should remain in the AST");
+        assert_eq!(parameters[0].type_name.as_ref().unwrap().expression.to_string(), "Pair<Option<num>, fn(string) -> bool>");
+        assert_eq!(return_type.as_ref().unwrap().expression.to_string(), "&mut num");
     }
 
 }

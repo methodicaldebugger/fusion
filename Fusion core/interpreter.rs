@@ -375,7 +375,7 @@ impl Interpreter {
         }
     }
 
-    fn check_value_type(&self, context: &str, expected: Option<&String>, value: &Value) {
+    fn check_value_type(&self, context: &str, expected: Option<&str>, value: &Value) {
         let Some(expected) = expected else {
             return;
         };
@@ -525,7 +525,7 @@ impl Interpreter {
         };
 
         // Generic types are compile-time only.
-        if generic_parameters.iter().any(|name| name == expected) {
+        if generic_parameters.iter().any(|name| name == expected.as_str()) {
             return;
         }
 
@@ -543,7 +543,7 @@ impl Interpreter {
         &mut self,
         name: &str,
         arguments: &[Expression],
-        _generic_arguments: &[String],
+        _generic_arguments: &[crate::ast::TypeAnnotation],
     ) -> Value {
         match name {
             "input" => {
@@ -1382,7 +1382,7 @@ impl Interpreter {
                     name.clone(),
                     Function {
                         parameters: parameters.clone(),
-                        return_type: return_type.clone(),
+                        return_type: return_type.as_deref().map(str::to_owned),
                         body: body.clone(),
                         generic_parameters: generic_parameters.clone(),
                         is_async: *is_async,
@@ -1417,14 +1417,14 @@ impl Interpreter {
                     {
                         let function = Function {
                             parameters: parameters.clone(),
-                            return_type: return_type.clone(),
+                            return_type: return_type.as_deref().map(str::to_owned),
                             body: body.clone(),
                             generic_parameters: generic_parameters.clone(),
                             is_async: *is_async,
                         };
                         self.methods
-                            .insert((type_name.clone(), name.clone()), function.clone());
-                        if let Some(type_id) = self.type_definition_ids.get(type_name).cloned() {
+                            .insert((type_name.to_string(), name.clone()), function.clone());
+                        if let Some(type_id) = self.type_definition_ids.get(type_name.as_str()).cloned() {
                             let key = (type_id, name.clone());
                             let is_inherent = trait_name.is_none();
                             let replace = method_dispatch_priorities
@@ -1493,7 +1493,7 @@ impl Interpreter {
 
                         self.check_value_type(
                             &format!("Variable '{}' type error", declaration.name),
-                            declaration.declared_type.as_ref(),
+                            declaration.declared_type.as_deref(),
                             &value,
                         );
 
@@ -1518,7 +1518,7 @@ impl Interpreter {
 
                 self.check_value_type(
                     &format!("Constant '{}' type error", name),
-                    declared_type.as_ref(),
+                    declared_type.as_deref(),
                     &result,
                 );
 
@@ -1939,7 +1939,7 @@ impl Interpreter {
                     name.clone(),
                     Function {
                         parameters: parameters.clone(),
-                        return_type: return_type.clone(),
+                        return_type: return_type.as_deref().map(str::to_owned),
                         body: body.clone(),
                         generic_parameters: generic_parameters.clone(),
                         is_async: *is_async,
@@ -3658,7 +3658,7 @@ impl Interpreter {
         };
 
         // Generic return types are compile-time information.
-        if generic_parameters.iter().any(|name| name == expected) {
+        if generic_parameters.iter().any(|name| name == expected.as_str()) {
             return;
         }
 

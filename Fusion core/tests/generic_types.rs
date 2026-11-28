@@ -154,3 +154,10 @@ main:
     assert!(result.is_ok(), "{:?}", result.err());
     assert_eq!(run_as_project(source), vec!["1"]);
 }
+
+#[test]
+fn explicit_generic_arguments_preserve_nested_types_and_forward_generic_parameters() {
+    let source = "fn identity<T>(value: T) -> T:\n    return value\n\nfn relay<T>(value: T) -> T:\n    return identity<T>(value)\n\nmain:\n    print(relay<num>(42))\n";
+    assert_eq!(run_single_file(source), vec!["42"]);
+    assert_eq!(run_as_project(source), vec!["42"]);
+}

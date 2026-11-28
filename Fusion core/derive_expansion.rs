@@ -13,7 +13,7 @@ fn parameter(name: &str, ty: &str, span: Span) -> Parameter {
     Parameter {
         name: name.to_string(),
         name_span: span,
-        type_name: Some(ty.to_string()),
+        type_name: Some(ty.into()),
         span,
     }
 }
@@ -22,7 +22,7 @@ fn trait_method(name: &str, params: Vec<Parameter>, return_type: &str, span: Spa
     TraitMethod {
         name: name.to_string(),
         parameters: params,
-        return_type: Some(return_type.to_string()),
+        return_type: Some(return_type.into()),
         default_body: None,
         span,
     }
@@ -90,7 +90,7 @@ fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
         name: method_name.into(),
         generic_parameters: Vec::new(),
         parameters,
-        return_type: Some(return_type),
+        return_type: Some(return_type.into()),
         body: vec![Statement::Return {
             value: Some(value),
             span,
@@ -102,7 +102,7 @@ fn generated_impl(trait_name: &str, type_name: &str, span: Span) -> Statement {
     };
     Statement::Impl {
         trait_name: Some(trait_name.to_string()),
-        type_name: type_name.to_string(),
+        type_name: type_name.into(),
         methods: vec![function],
         span,
     }

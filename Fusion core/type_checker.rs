@@ -82,6 +82,8 @@ pub struct TypeChecker {
     current_function: Option<FunctionContext>,
     /// Symbol of the function whose body is being checked; function values resolve relative to it.
     current_function_symbol: Option<String>,
+    /// Generic type variables visible at the current source function body.
+    current_generic_parameters: Vec<String>,
     loop_depth: usize,
 }
 
@@ -240,6 +242,7 @@ impl TypeChecker {
             },
             current_function: None,
             current_function_symbol: None,
+            current_generic_parameters: Vec::new(),
             loop_depth: 0,
         }
     }
@@ -550,6 +553,9 @@ impl TypeChecker {
         allow_self: bool,
         span: Span,
     ) -> Result<Type, FusionError> {
+        // String conversion remains only at non-AST compatibility boundaries (for example,
+        // HIR metadata and explicit conversion expressions). AST annotations use the direct
+        // TypeAnnotation conversion helpers below.
         match TypeExpr::parse(name) {
             Ok(expr) => self.convert_type_expr(&expr, generic_parameters, allow_self, span),
             Err(error) => Err(FusionError::Syntax {
@@ -557,6 +563,23 @@ impl TypeChecker {
                 span,
             }),
         }
+    }
+
+    fn convert_annotation(
+        &self,
+        annotation: &TypeAnnotation,
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        self.convert_type_expr(&annotation.expression, &[], false, span)
+    }
+
+    fn convert_annotation_with_generics(
+        &self,
+        annotation: &TypeAnnotation,
+        generic_parameters: &[String],
+        span: Span,
+    ) -> Result<Type, FusionError> {
+        self.convert_type_expr(&annotation.expression, generic_parameters, true, span)
     }
 
     fn convert_type_expr(
@@ -1510,7 +1533,7 @@ impl TypeChecker {
                 span,
             } => {
                 let source = self.infer_expression(expression)?;
-                let target = self.convert_type(target_type, *span)?;
+                let target = self.convert_annotation(target_type, *span)?;
                 let primitive_conversion = match (&source, &target) {
                     (Type::Num, Type::Float)
                     | (Type::Float, Type::Num)
@@ -1897,7 +1920,7 @@ impl TypeChecker {
         &mut self,
         name: &str,
         arguments: &[Expression],
-        generic_arguments: &[String],
+        generic_arguments: &[TypeAnnotation],
         span: Span,
     ) -> Result<Type, FusionError> {
         // Foreign functions have already been validated and registered with their
@@ -2062,8 +2085,11 @@ impl TypeChecker {
         for (generic_name, generic_argument) in
             function.generic_parameters.iter().zip(generic_arguments)
         {
-            let generic_type = self.convert_type(generic_argument, span)?;
-
+            let generic_type = self.convert_annotation_with_generics(
+                generic_argument,
+                &self.current_generic_parameters,
+                span,
+            )?;
             substitutions.insert(generic_name.clone(), generic_type);
         }
 
@@ -2085,7 +2111,7 @@ impl TypeChecker {
         object: &Expression,
         method: &str,
         arguments: &[Expression],
-        generic_arguments: &[String],
+        generic_arguments: &[TypeAnnotation],
         span: Span,
     ) -> Result<Type, FusionError> {
         let object_type = self.infer_expression(object)?;
@@ -2996,7 +3022,7 @@ impl TypeChecker {
             Statement::VariableDeclarations { declarations, .. } => {
                 for declaration in declarations {
                     let declared_type = match &declaration.declared_type {
-                        Some(type_name) => Some(self.convert_type(type_name, declaration.span)?),
+                        Some(type_name) => Some(self.convert_annotation(type_name, declaration.span)?),
                         None => None,
                     };
 
@@ -3062,7 +3088,7 @@ impl TypeChecker {
 
                 let final_type = match declared_type {
                     Some(type_name) => {
-                        let declared = self.convert_type(type_name, *span)?;
+                        let declared = self.convert_annotation(type_name, *span)?;
                         self.check_fixed_literal_range(&declared, value, *span)?;
 
                         if !self.types_compatible(&declared, &value_type) {
@@ -3710,7 +3736,7 @@ impl TypeChecker {
         name: &str,
         generic_parameters: &[String],
         parameters: &[Parameter],
-        return_type: Option<&String>,
+        return_type: Option<&TypeAnnotation>,
         body: &[Statement],
         is_async: bool,
         span: Span,
@@ -3728,7 +3754,7 @@ impl TypeChecker {
 
         let declared_return_type = match return_type {
             Some(type_name) => {
-                Some(self.convert_type_with_generics(type_name, generic_parameters, span)?)
+                Some(self.convert_annotation_with_generics(type_name, generic_parameters, span)?)
             }
 
             None => None,
@@ -3736,6 +3762,10 @@ impl TypeChecker {
 
         let previous_function = self.current_function.take();
         let previous_function_symbol = self.current_function_symbol.replace(name.to_string());
+        let previous_generic_parameters = std::mem::replace(
+            &mut self.current_generic_parameters,
+            generic_parameters.to_vec(),
+        );
 
         self.current_function = Some(FunctionContext {
             declared_return_type,
@@ -3748,7 +3778,7 @@ impl TypeChecker {
         let result = (|| {
             for parameter in parameters {
                 let parameter_type = match &parameter.type_name {
-                    Some(type_name) => self.convert_type_with_generics(
+                    Some(type_name) => self.convert_annotation_with_generics(
                         type_name,
                         generic_parameters,
                         parameter.span,
@@ -3810,6 +3840,7 @@ impl TypeChecker {
         self.pop_scope();
         self.current_function = previous_function;
         self.current_function_symbol = previous_function_symbol;
+        self.current_generic_parameters = previous_generic_parameters;
 
         if let Err(error) = result {
             return Err(error);
@@ -3849,12 +3880,12 @@ impl TypeChecker {
             }
 
             if let Some(type_name) = &parameter.type_name {
-                self.convert_type_with_generics(type_name, generic_parameters, parameter.span)?;
+                self.convert_annotation_with_generics(type_name, generic_parameters, parameter.span)?;
             }
         }
 
         if let Some(return_type) = &method.return_type {
-            self.convert_type_with_generics(return_type, generic_parameters, method.span)?;
+            self.convert_annotation_with_generics(return_type, generic_parameters, method.span)?;
         }
 
         Ok(())
@@ -3916,13 +3947,13 @@ impl TypeChecker {
                         .iter()
                         .map(|p| match &p.type_name {
                             Some(t) => {
-                                self.convert_type_with_generics(t, generic_parameters, p.span)
+                                self.convert_annotation_with_generics(t, generic_parameters, p.span)
                             }
                             None => Ok(Type::Unknown),
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let ret = match return_type {
-                        Some(t) => self.convert_type_with_generics(t, generic_parameters, *span)?,
+                        Some(t) => self.convert_annotation_with_generics(t, generic_parameters, *span)?,
                         None => Type::Void,
                     };
                     let signature = FunctionType {
@@ -4133,7 +4164,7 @@ impl TypeChecker {
                         });
                     }
 
-                    let field_type = self.convert_type(&field.type_name, field.span)?;
+                    let field_type = self.convert_annotation(&field.type_name, field.span)?;
 
                     resolved_fields.push((field.name.clone(), field_type));
                 }
@@ -4172,7 +4203,7 @@ impl TypeChecker {
                     let mut resolved_fields = Vec::new();
 
                     for field_type_name in &variant.fields {
-                        resolved_fields.push(self.convert_type(field_type_name, variant.span)?);
+                        resolved_fields.push(self.convert_annotation(field_type_name, variant.span)?);
                     }
 
                     resolved_variants.insert(
@@ -4411,7 +4442,7 @@ impl TypeChecker {
                     }
 
                     let parameter_type = match &parameter.type_name {
-                        Some(type_name) => self.convert_type_with_generics(
+                        Some(type_name) => self.convert_annotation_with_generics(
                             type_name,
                             generic_parameters,
                             parameter.span,
@@ -4428,9 +4459,9 @@ impl TypeChecker {
                 // statements.  A function with no return statements is later
                 // normalized to `Void`.
                 let base_return_type = match return_type {
-                    Some(type_name) if foreign_abi.is_some() && type_name == "void" => Type::Void,
+                    Some(type_name) if foreign_abi.is_some() && type_name.as_str() == "void" => Type::Void,
                     Some(type_name) => {
-                        self.convert_type_with_generics(type_name, generic_parameters, *span)?
+                        self.convert_annotation_with_generics(type_name, generic_parameters, *span)?
                     }
                     // An omitted foreign return annotation is the C `void` return,
                     // unlike an ordinary Fusion function whose return may be inferred.
@@ -4684,7 +4715,6 @@ mod hir_nominal_identity_tests {
             statements: Vec::new(),
             span: Span::default(),
             modules: Vec::new(),
-            type_annotations: Vec::new(),
         };
 
         assert!(checker
@@ -4716,7 +4746,6 @@ mod hir_nominal_identity_tests {
             }],
             span: Span::default(),
             modules: Vec::new(),
-            type_annotations: Vec::new(),
         };
 
         checker
@@ -5244,4 +5273,12 @@ mod type_expression_conversion_tests {
         assert!(parse("fn f(x: num[) -> num:\n    return 1\n").is_err());
         assert!(parse("fn f(x: (num)) -> num:\n    return 1\n").is_err());
     }
+    #[test]
+    fn checker_converts_ast_type_annotations_without_reparsing_spellings() {
+        let checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        let annotation = TypeAnnotation::new(TypeExpr::named("num"));
+        assert_eq!(checker.convert_annotation(&annotation, span).unwrap(), Type::Num);
+    }
+
 }

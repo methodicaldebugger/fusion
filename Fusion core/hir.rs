@@ -225,6 +225,8 @@ pub struct HirResolvedCall {
     pub argument_types: Vec<Option<HirDefinitionId>>,
     pub return_type: Option<HirDefinitionId>,
     pub generic_parameters: Vec<String>,
+    /// Explicit call-site type arguments retained as structured syntax trees.
+    pub explicit_generic_arguments: Vec<crate::type_expr::TypeExpr>,
     pub is_async: bool,
     /// Complete structural signature types. The legacy nominal-only fields above
     /// remain during migration and are derived from these where possible.
@@ -257,6 +259,14 @@ pub enum HirType {
     TcpStream,
     Array(Box<HirType>),
     Tuple(Vec<HirType>),
+    Function {
+        parameters: Vec<HirType>,
+        return_type: Box<HirType>,
+    },
+    Reference {
+        mutable: bool,
+        inner: Box<HirType>,
+    },
     Iterator(Box<HirType>),
     HashMap(Box<HirType>, Box<HirType>),
     Option(Box<HirType>),
@@ -526,14 +536,14 @@ pub enum HirExpression {
         object: Box<HirExpression>,
         method: String,
         arguments: Vec<HirExpression>,
-        generic_arguments: Vec<String>,
+        generic_arguments: Vec<crate::type_expr::TypeExpr>,
         span: Span,
     },
 
     Call {
         name: String,
         arguments: Vec<HirExpression>,
-        generic_arguments: Vec<String>,
+        generic_arguments: Vec<crate::type_expr::TypeExpr>,
         span: Span,
     },
 
@@ -542,7 +552,7 @@ pub enum HirExpression {
     Conversion {
         kind: HirConversionKind,
         expression: Box<HirExpression>,
-        target_type: String,
+        target_type: crate::type_expr::TypeExpr,
     },
 
     StructConstructor {

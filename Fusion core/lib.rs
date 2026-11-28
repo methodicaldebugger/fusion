@@ -102,7 +102,6 @@ fn compile_project_graph_with_package_roots(
         &mut compatibility_program,
     )
     .map_err(|e| format!("module trait/constant namespace lowering: {}", e))?;
-    compatibility_program.rebuild_type_annotations();
     let registry = module_system::hir_type_registry(&project);
     project.program = compile_project_program(compatibility_program, &registry)?;
     Ok(project)
@@ -4252,7 +4251,7 @@ main:
         for trait_name in ["Debug", "PartialEq", "Clone"] {
             assert!(program.statements.iter().any(|statement| matches!(statement,
                 ast::Statement::Impl { trait_name: Some(found), type_name, methods, .. }
-                if found == trait_name && type_name == "Point" && methods.iter().any(|method| matches!(method, ast::Statement::Function { .. }))
+                if found == trait_name && type_name.as_str() == "Point" && methods.iter().any(|method| matches!(method, ast::Statement::Function { .. }))
             )), "derive should expand into a regular impl of {} for Point", trait_name);
             assert!(
                 program

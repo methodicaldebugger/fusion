@@ -24,13 +24,9 @@
 use std::collections::HashMap;
 
 use crate::ast::{Parameter, Program, Statement, TraitMethod};
-use crate::type_expr::TypeExpr;
 
-fn substitute_self(annotation: &str, type_name: &str) -> String {
-    match TypeExpr::parse(annotation) {
-        Ok(expr) => expr.substitute_name("Self", type_name).to_string(),
-        Err(_) => annotation.to_string(),
-    }
+fn substitute_self(annotation: &crate::ast::TypeAnnotation, type_name: &str) -> crate::ast::TypeAnnotation {
+    crate::ast::TypeAnnotation::new(annotation.expression.substitute_name("Self", type_name))
 }
 
 /// Build the impl method for `type_name` from a trait's default method.
