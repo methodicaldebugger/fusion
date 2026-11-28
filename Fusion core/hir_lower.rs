@@ -185,7 +185,7 @@ impl HirLowerer {
                 self.declare(&parameter.name);
                 HirParameter {
                     name: parameter.name.clone(),
-                    type_name: parameter.type_name.as_deref().map(str::to_owned),
+                    type_name: parameter.type_name.clone().map(HirTypeAnnotation::from),
                     span: parameter.span,
                 }
             })
@@ -197,7 +197,7 @@ impl HirLowerer {
             name: name.to_string(),
             generic_parameters: generic_parameters.to_vec(),
             parameters: lowered_parameters,
-            return_type: return_type.as_deref().map(str::to_owned),
+            return_type: return_type.clone().map(HirTypeAnnotation::from),
             is_async,
             body: lowered_body?,
             span,
@@ -272,7 +272,7 @@ impl HirLowerer {
                         self.declare(&declaration.name);
                         HirStatement::VariableDeclaration {
                             name: declaration.name.clone(),
-                            declared_type: declaration.declared_type.as_deref().map(str::to_owned),
+                            declared_type: declaration.declared_type.clone().map(HirTypeAnnotation::from),
                             value,
                             span: declaration.span,
                         }
@@ -280,7 +280,7 @@ impl HirLowerer {
                         self.declare(&declaration.name);
                         HirStatement::UninitializedVariable {
                             name: declaration.name.clone(),
-                            declared_type: declaration.declared_type.as_deref().map(str::to_owned),
+                            declared_type: declaration.declared_type.clone().map(HirTypeAnnotation::from),
                             span: declaration.span,
                         }
                     };
@@ -307,7 +307,7 @@ impl HirLowerer {
                 Ok(HirStatement::ConstDeclaration {
                     identity: self.identity(name, HirDefinitionKind::Constant),
                     name: name.clone(),
-                    declared_type: declared_type.as_deref().map(str::to_owned),
+                    declared_type: declared_type.clone().map(HirTypeAnnotation::from),
                     value,
                     span: *span,
                 })
@@ -364,7 +364,7 @@ impl HirLowerer {
                             )
                         }),
                         name: field.name.clone(),
-                        type_name: field.type_name.to_string(),
+                        type_name: HirTypeAnnotation::from(field.type_name.clone()),
                         span: field.span,
                     })
                     .collect(),
@@ -390,7 +390,7 @@ impl HirLowerer {
                             )
                         }),
                         name: variant.name.clone(),
-                        fields: variant.fields.iter().map(ToString::to_string).collect(),
+                        fields: variant.fields.iter().cloned().map(HirTypeAnnotation::from).collect(),
                         span: variant.span,
                     })
                     .collect(),
@@ -419,11 +419,11 @@ impl HirLowerer {
                             .iter()
                             .map(|parameter| HirParameter {
                                 name: parameter.name.clone(),
-                                type_name: parameter.type_name.as_deref().map(str::to_owned),
+                                type_name: parameter.type_name.clone().map(HirTypeAnnotation::from),
                                 span: parameter.span,
                             })
                             .collect(),
-                        return_type: method.return_type.as_deref().map(str::to_owned),
+                        return_type: method.return_type.clone().map(HirTypeAnnotation::from),
                         span: method.span,
                     })
                     .collect();
@@ -488,7 +488,7 @@ impl HirLowerer {
                 }
                 Ok(HirStatement::Impl {
                     trait_name: trait_name.clone(),
-                    type_name: type_name.to_string(),
+                    type_name: HirTypeAnnotation::from(type_name.clone()),
                     methods: lowered_methods,
                     span: *span,
                 })

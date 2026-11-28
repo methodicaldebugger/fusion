@@ -3614,7 +3614,7 @@ pub fn hir_type_registry(project: &Project) -> crate::hir::HirTypeRegistry {
                             .iter()
                             .map(|field| HirTypeField {
                                 name: field.name.clone(),
-                                type_name: field.type_name.to_string(),
+                                type_name: crate::hir::HirTypeAnnotation::from(field.type_name.expression.clone()),
                             })
                             .collect(),
                         derives: derives.clone(),
@@ -3628,7 +3628,7 @@ pub fn hir_type_registry(project: &Project) -> crate::hir::HirTypeRegistry {
                             .iter()
                             .map(|variant| HirTypeVariant {
                                 name: variant.name.clone(),
-                                fields: variant.fields.iter().map(ToString::to_string).collect(),
+                                fields: variant.fields.iter().map(|field| crate::hir::HirTypeAnnotation::from(field.expression.clone())).collect(),
                             })
                             .collect(),
                     },
@@ -3876,11 +3876,11 @@ pub fn resolve_hir_type_name(
 pub fn validate_hir_type_references(project: &Project) -> Result<(), String> {
     let registry = hir_type_registry(project);
     for definition in registry.definitions.values() {
-        let mut references: Vec<(String, String)> = Vec::new();
+        let mut references: Vec<(String, crate::hir::HirTypeAnnotation)> = Vec::new();
         match &definition.shape {
             crate::hir::HirTypeShape::Struct { fields, .. } => {
                 for field in fields {
-                    references.push((field.name.clone(), field.type_name.to_string()));
+                    references.push((field.name.clone(), field.type_name.clone()));
                 }
             }
             crate::hir::HirTypeShape::Enum { variants } => {
@@ -4309,7 +4309,7 @@ fn resolve_expression_type_expressions(
                 definition,
                 kind: HirResolvedTypeExpressionKind::EnumVariant {
                     variant: variant.clone(),
-                    payload_types: variant_data.fields,
+                    payload_types: variant_data.fields.iter().map(ToString::to_string).collect(),
                 },
             });
         }
@@ -4760,7 +4760,7 @@ fn validate_and_record_pattern(
                 kind: HirResolvedPatternKind::EnumVariant {
                     variant: variant_name.to_string(),
                     binding_count: bindings.len(),
-                    payload_types: variant.fields,
+                    payload_types: variant.fields.iter().map(ToString::to_string).collect(),
                 },
             });
             for binding in bindings {
@@ -6678,7 +6678,7 @@ fn infer_hir_structural_type_with_locals(
                                 return resolve_hir_type_spelling(
                                     project,
                                     &id.module,
-                                    Some(&field.type_name),
+                                    Some(&*field.type_name),
                                     &[],
                                 );
                             }
@@ -7010,7 +7010,7 @@ fn infer_hir_structural_type(
                     resolve_hir_type_spelling(
                         project,
                         &receiver.module,
-                        Some(&field.type_name),
+                        Some(&*field.type_name),
                         &[],
                     )?
                 }
@@ -8988,7 +8988,7 @@ mod hir_member_resolution_tests {
             id,
             HirDefinitionId::new("geometry", "Color", HirDefinitionKind::Enum)
         );
-        assert_eq!(variant.fields, vec!["u8", "u8", "u8"]);
+        assert_eq!(variant.fields.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["u8", "u8", "u8"]);
     }
 
     #[test]

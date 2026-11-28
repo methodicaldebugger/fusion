@@ -24,6 +24,71 @@ Source code often contains convenient syntax
 
 use crate::span::Span;
 
+/// Structured source type retained by source-preserving HIR declarations.
+/// `spelling` is a compatibility view for existing diagnostics and consumers;
+/// `expression` is the authoritative representation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HirTypeAnnotation {
+    pub expression: crate::type_expr::TypeExpr,
+    spelling: String,
+}
+
+impl HirTypeAnnotation {
+    pub fn new(expression: crate::type_expr::TypeExpr) -> Self {
+        let spelling = expression.to_string();
+        Self { expression, spelling }
+    }
+
+    pub fn parse(source: &str) -> Self {
+        match crate::type_expr::TypeExpr::parse(source) {
+            Ok(expression) => Self::new(expression),
+            Err(_) => Self::new(crate::type_expr::TypeExpr::named(source)),
+        }
+    }
+
+    pub fn as_type_expr(&self) -> &crate::type_expr::TypeExpr {
+        &self.expression
+    }
+}
+
+impl From<&str> for HirTypeAnnotation {
+    fn from(value: &str) -> Self { Self::parse(value) }
+}
+
+impl From<String> for HirTypeAnnotation {
+    fn from(value: String) -> Self { Self::parse(&value) }
+}
+
+impl From<crate::type_expr::TypeExpr> for HirTypeAnnotation {
+    fn from(value: crate::type_expr::TypeExpr) -> Self { Self::new(value) }
+}
+
+impl From<crate::ast::TypeAnnotation> for HirTypeAnnotation {
+    fn from(value: crate::ast::TypeAnnotation) -> Self {
+        Self::new(value.expression)
+    }
+}
+
+impl std::ops::Deref for HirTypeAnnotation {
+    type Target = str;
+    fn deref(&self) -> &Self::Target { &self.spelling }
+}
+
+impl std::fmt::Display for HirTypeAnnotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.spelling)
+    }
+}
+
+impl PartialEq<str> for HirTypeAnnotation {
+    fn eq(&self, other: &str) -> bool { self.spelling == other }
+}
+
+impl PartialEq<&str> for HirTypeAnnotation {
+    fn eq(&self, other: &&str) -> bool { self.spelling == *other }
+}
+
+
 #[derive(Debug, Clone)]
 pub struct HirProgram {
     pub statements: Vec<HirStatement>,
@@ -292,7 +357,7 @@ pub struct HirImport {
 #[derive(Debug, Clone)]
 pub struct HirParameter {
     pub name: String,
-    pub type_name: Option<String>,
+    pub type_name: Option<HirTypeAnnotation>,
     pub span: Span,
 }
 
@@ -302,7 +367,7 @@ pub struct HirFunction {
     pub name: String,
     pub generic_parameters: Vec<String>,
     pub parameters: Vec<HirParameter>,
-    pub return_type: Option<String>,
+    pub return_type: Option<HirTypeAnnotation>,
     pub is_async: bool,
     pub body: Vec<HirStatement>,
     pub span: Span,
@@ -313,7 +378,7 @@ pub struct HirTraitMethod {
     pub identity: Option<HirDefinitionId>,
     pub name: String,
     pub parameters: Vec<HirParameter>,
-    pub return_type: Option<String>,
+    pub return_type: Option<HirTypeAnnotation>,
     pub span: Span,
 }
 
@@ -321,21 +386,21 @@ pub struct HirTraitMethod {
 pub enum HirStatement {
     VariableDeclaration {
         name: String,
-        declared_type: Option<String>,
+        declared_type: Option<HirTypeAnnotation>,
         value: HirExpression,
         span: Span,
     },
 
     UninitializedVariable {
         name: String,
-        declared_type: Option<String>,
+        declared_type: Option<HirTypeAnnotation>,
         span: Span,
     },
 
     ConstDeclaration {
         identity: Option<HirDefinitionId>,
         name: String,
-        declared_type: Option<String>,
+        declared_type: Option<HirTypeAnnotation>,
         value: HirExpression,
         span: Span,
     },
@@ -362,7 +427,7 @@ pub enum HirStatement {
 
     Impl {
         trait_name: Option<String>,
-        type_name: String,
+        type_name: HirTypeAnnotation,
         methods: Vec<HirFunction>,
         span: Span,
     },
@@ -457,7 +522,7 @@ pub enum HirStatement {
 pub struct HirStructField {
     pub identity: Option<HirDefinitionId>,
     pub name: String,
-    pub type_name: String,
+    pub type_name: HirTypeAnnotation,
     pub span: Span,
 }
 
@@ -465,7 +530,7 @@ pub struct HirStructField {
 pub struct HirEnumVariant {
     pub identity: Option<HirDefinitionId>,
     pub name: String,
-    pub fields: Vec<String>,
+    pub fields: Vec<HirTypeAnnotation>,
     pub span: Span,
 }
 
@@ -700,13 +765,13 @@ pub struct HirTypeField {
     pub name: String,
     /// Source type spelling; this becomes a `HirDefinitionId` during type-name
     /// resolution rather than being guessed while the module graph is loaded.
-    pub type_name: String,
+    pub type_name: HirTypeAnnotation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirTypeVariant {
     pub name: String,
-    pub fields: Vec<String>,
+    pub fields: Vec<HirTypeAnnotation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -823,5 +888,27 @@ mod type_registry_tests {
             }
         );
         assert!(!registry.get(&graphics).unwrap().is_public);
+    }
+}
+
+#[cfg(test)]
+mod structured_declaration_type_tests {
+    use super::*;
+    use crate::type_expr::TypeExpr;
+
+    #[test]
+    fn hir_type_annotations_preserve_nested_function_reference_and_generic_shapes() {
+        let source = "HashMap<string, (fn(&mut Item) -> Option<Result<num, string>>)[]>";
+        let annotation = HirTypeAnnotation::parse(source);
+        let expected = TypeExpr::parse(source).unwrap();
+        assert_eq!(annotation.expression, expected);
+        assert_eq!(annotation.to_string(), source);
+    }
+
+    #[test]
+    fn hir_type_annotation_keeps_generic_parameter_names() {
+        let annotation = HirTypeAnnotation::parse("Stack<T>");
+        assert_eq!(annotation.expression, TypeExpr::parse("Stack<T>").unwrap());
+        assert_eq!(annotation.to_string(), "Stack<T>");
     }
 }
