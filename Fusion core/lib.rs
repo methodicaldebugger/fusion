@@ -102,6 +102,7 @@ fn compile_project_graph_with_package_roots(
         &mut compatibility_program,
     )
     .map_err(|e| format!("module trait/constant namespace lowering: {}", e))?;
+    compatibility_program.rebuild_type_annotations();
     let registry = module_system::hir_type_registry(&project);
     project.program = compile_project_program(compatibility_program, &registry)?;
     Ok(project)

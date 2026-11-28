@@ -568,6 +568,10 @@ impl TypeChecker {
     ) -> Result<Type, FusionError> {
         match expr {
             TypeExpr::OpaquePointer => Ok(Type::Generic("*opaque".to_string())),
+            TypeExpr::Reference { .. } => Err(FusionError::Syntax {
+                message: "Reference types are parsed but are not yet supported by the semantic type system".into(),
+                span,
+            }),
             TypeExpr::Array(inner) => Ok(Type::Array(Box::new(self.convert_type_expr(
                 inner,
                 generic_parameters,
@@ -4680,6 +4684,7 @@ mod hir_nominal_identity_tests {
             statements: Vec::new(),
             span: Span::default(),
             modules: Vec::new(),
+            type_annotations: Vec::new(),
         };
 
         assert!(checker
@@ -4711,6 +4716,7 @@ mod hir_nominal_identity_tests {
             }],
             span: Span::default(),
             modules: Vec::new(),
+            type_annotations: Vec::new(),
         };
 
         checker

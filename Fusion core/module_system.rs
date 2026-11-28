@@ -473,14 +473,17 @@ pub fn load_project_with_package_roots(
             }
         })
         .collect();
+    let mut program = Program {
+        statements: loader.statements,
+        span,
+        modules: module_info,
+        type_annotations: Vec::new(),
+    };
+    program.rebuild_type_annotations();
     Ok(Project {
         entry_module: "crate".into(),
         modules: loader.modules,
-        program: Program {
-            statements: loader.statements,
-            span,
-            modules: module_info,
-        },
+        program,
     })
 }
 
@@ -3928,6 +3931,10 @@ fn erase_function_types(
                 .map(|item| erase_function_types(item, check))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
+        X::Reference { mutable, inner } => X::Reference {
+            mutable: *mutable,
+            inner: Box::new(erase_function_types(inner, check)?),
+        },
         X::OpaquePointer => X::OpaquePointer,
     })
 }
@@ -9594,6 +9601,7 @@ mod backend_type_identity_tests {
                     private_symbols: Vec::new(),
                 },
             ],
+            type_annotations: Vec::new(),
         };
 
         let identities = backend_type_definition_ids(&program);
@@ -9724,6 +9732,7 @@ mod hir_structural_type_tests {
                 statements: Vec::new(),
                 span: crate::span::Span::default(),
                 modules: Vec::new(),
+            type_annotations: Vec::new(),
             },
         }
     }
@@ -9821,6 +9830,7 @@ mod hir_structural_type_tests {
                 statements: Vec::new(),
                 span,
                 modules: Vec::new(),
+            type_annotations: Vec::new(),
             },
         };
         let call = E::Call {

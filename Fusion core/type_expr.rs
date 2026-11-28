@@ -18,7 +18,8 @@
 //! type     := primary ( "[" "]" )*
 //! primary  := "*opaque"
 //!           | "(" type ("," type)+ [","] ")"        tuple (two or more elements)
-//!           | "(" function-type ")"                 grouping, so that arrays of functions can be written
+//!           | "(" function-or-reference-type ")"  grouping for compound postfix types
+//!           | "&" ["mut"] type
 //!           | "fn" "(" [type ("," type)* [","]] ")" [ "->" type ]
 //!           | name [ "<" type ("," type)* ">" ]     name may be dotted: geometry.Point
 //! ```
@@ -37,11 +38,13 @@ pub enum TypeExpr {
     Array(Box<TypeExpr>),
     /// `(A, B, ...)` with at least two elements.
     Tuple(Vec<TypeExpr>),
-    /// `fn(A, B) -> R`.  Parsed and printed, but not yet accepted by the type checker.
+    /// `fn(A, B) -> R`, used as a first-class function signature.
     Function {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
     },
+    /// `&T` or `&mut T`. This is type syntax only; borrow semantics are a later stage.
+    Reference { mutable: bool, inner: Box<TypeExpr> },
     /// `*opaque`, the only pointer type allowed at a foreign boundary.
     OpaquePointer,
 }
@@ -107,11 +110,12 @@ impl TypeExpr {
         Ok(expr)
     }
 
-    /// Resolve a parenthesised list of types.  Shared by the token parser and the string parser
-    /// so both apply the same rule: two or more elements form a tuple, and a single function
-    /// type is plain grouping.
+    /// Resolve a parenthesised list of types. Shared by both parsers: two or more
+    /// elements form a tuple; a single function or reference type is grouping.
     pub fn from_parenthesized(mut items: Vec<TypeExpr>) -> Result<TypeExpr, &'static str> {
-        if items.len() == 1 && matches!(items[0], TypeExpr::Function { .. }) {
+        if items.len() == 1
+            && matches!(items[0], TypeExpr::Function { .. } | TypeExpr::Reference { .. })
+        {
             return Ok(items.remove(0));
         }
         if items.len() < 2 {
@@ -147,6 +151,10 @@ impl TypeExpr {
                     .map(|param| param.substitute_name(from, to))
                     .collect(),
                 ret: Box::new(ret.substitute_name(from, to)),
+            },
+            TypeExpr::Reference { mutable, inner } => TypeExpr::Reference {
+                mutable: *mutable,
+                inner: Box::new(inner.substitute_name(from, to)),
             },
             TypeExpr::OpaquePointer => TypeExpr::OpaquePointer,
         }
@@ -189,6 +197,10 @@ impl TypeExpr {
                     .collect(),
                 ret: Box::new(ret.erase_generics(parameters)),
             },
+            TypeExpr::Reference { mutable, inner } => TypeExpr::Reference {
+                mutable: *mutable,
+                inner: Box::new(inner.erase_generics(parameters)),
+            },
             TypeExpr::OpaquePointer => TypeExpr::OpaquePointer,
         }
     }
@@ -204,6 +216,7 @@ impl TypeExpr {
             TypeExpr::Function { params, ret } => {
                 params.iter().any(|param| param.mentions(symbol)) || ret.mentions(symbol)
             }
+            TypeExpr::Reference { inner, .. } => inner.mentions(symbol),
             TypeExpr::OpaquePointer => false,
         }
     }
@@ -232,7 +245,7 @@ impl fmt::Display for TypeExpr {
                 Ok(())
             }
             TypeExpr::Array(inner) => {
-                if matches!(**inner, TypeExpr::Function { .. }) {
+                if matches!(**inner, TypeExpr::Function { .. } | TypeExpr::Reference { .. }) {
                     write!(f, "({})[]", inner)
                 } else {
                     write!(f, "{}[]", inner)
@@ -247,6 +260,9 @@ impl fmt::Display for TypeExpr {
                 f.write_str("fn(")?;
                 write_joined(f, params)?;
                 write!(f, ") -> {}", ret)
+            }
+            TypeExpr::Reference { mutable, inner } => {
+                if *mutable { write!(f, "&mut {}", inner) } else { write!(f, "&{}", inner) }
             }
             TypeExpr::OpaquePointer => f.write_str("*opaque"),
         }
@@ -268,13 +284,14 @@ enum Tok {
     LBracket,
     RBracket,
     Star,
+    Ampersand,
     Arrow,
 }
 
 fn is_word_stop(chars: &[char], index: usize) -> bool {
     let c = chars[index];
     c.is_whitespace()
-        || matches!(c, '<' | '>' | ',' | '(' | ')' | '[' | ']' | '*')
+        || matches!(c, '<' | '>' | ',' | '(' | ')' | '[' | ']' | '*' | '&')
         || (c == '-' && index + 1 < chars.len() && chars[index + 1] == '>')
 }
 
@@ -319,6 +336,10 @@ fn tokenize(source: &str) -> Result<Vec<Tok>, TypeParseError> {
             }
             '*' => {
                 tokens.push(Tok::Star);
+                index += 1;
+            }
+            '&' => {
+                tokens.push(Tok::Ampersand);
                 index += 1;
             }
             '-' if index + 1 < chars.len() && chars[index + 1] == '>' => {
@@ -379,6 +400,13 @@ impl StringTypeParser {
 
     fn parse_primary(&mut self) -> Result<TypeExpr, TypeParseError> {
         match self.peek().cloned() {
+            Some(Tok::Ampersand) => {
+                self.position += 1;
+                let mutable = matches!(self.peek(), Some(Tok::Word(word)) if word == "mut");
+                if mutable { self.position += 1; }
+                let inner = self.parse_type()?;
+                Ok(TypeExpr::Reference { mutable, inner: Box::new(inner) })
+            }
             Some(Tok::Star) => {
                 self.position += 1;
                 match self.peek().cloned() {

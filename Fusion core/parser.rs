@@ -386,6 +386,12 @@ impl Parser {
     }
 
     fn parse_type_primary(&mut self) -> Result<TypeExpr, ParseError> {
+        if self.consume(&Token::Ampersand) {
+            let mutable = matches!(self.current(), Token::Identifier(name) if name == "mut");
+            if mutable { self.advance(); }
+            let inner = self.parse_type_expr()?;
+            return Ok(TypeExpr::Reference { mutable, inner: Box::new(inner) });
+        }
         if self.consume(&Token::Star) {
             return match self.current() {
                 Token::Identifier(name) if name == "opaque" => {
@@ -3824,10 +3830,13 @@ impl Parser {
             statements,
             span: Span::new(program_start, program_end),
             modules: Vec::new(),
+            type_annotations: Vec::new(),
         };
-        Ok(crate::trait_defaults::expand_trait_defaults(
+        let mut expanded = crate::trait_defaults::expand_trait_defaults(
             crate::derive_expansion::expand_derives(program),
-        ))
+        );
+        expanded.rebuild_type_annotations();
+        Ok(expanded)
     }
 }
 
@@ -3934,4 +3943,21 @@ main:
         let mut parser = Parser::new(tokens);
         assert!(parser.parse().is_err());
     }
+    #[test]
+    fn ast_retains_structured_nested_function_and_reference_types() {
+        let source = "fn inspect(value: Pair<Option<num>, fn(string) -> bool>) -> &mut num:\n    return 1\nmain:\n    print(1)\n";
+        let mut lexer = Lexer::new(source, BlockMode::Unknown);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().expect("structured annotations should parse");
+        assert!(program.type_annotations.iter().any(|annotation| {
+            matches!(&annotation.role, crate::ast::TypeAnnotationRole::Parameter { .. })
+                && annotation.expression.to_string() == "Pair<Option<num>, fn(string) -> bool>"
+        }));
+        assert!(program.type_annotations.iter().any(|annotation| {
+            matches!(&annotation.role, crate::ast::TypeAnnotationRole::Return { .. })
+                && annotation.expression.to_string() == "&mut num"
+        }));
+    }
+
 }

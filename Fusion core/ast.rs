@@ -11,6 +11,7 @@ Real ASTs often also contain source locations, which help produce useful error m
 */
 
 use crate::span::Span;
+use crate::type_expr::TypeExpr;
 
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -19,6 +20,246 @@ pub struct Program {
     /// Project module metadata retained alongside the compatibility flattened AST.
     /// Ranges refer to `statements[start..end]`; standalone source has no module entries.
     pub modules: Vec<ModuleInfo>,
+    /// Structured type syntax collected from legacy annotation fields. This is the
+    /// migration bridge: consumers can use parsed trees without reparsing strings.
+    pub type_annotations: Vec<StructuredTypeAnnotation>,
+}
+
+
+/// Identifies the role of a source-level type annotation in the AST.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeAnnotationRole {
+    Parameter { owner: String, name: String },
+    Return { owner: String },
+    Variable { name: String },
+    Constant { name: String },
+    StructField { owner: String, name: String },
+    EnumPayload { owner: String, variant: String, index: usize },
+    TraitParameter { trait_name: String, method: String, name: String },
+    TraitReturn { trait_name: String, method: String },
+    ImplTarget { owner: String },
+}
+
+/// A structured type annotation retained in the AST with its source location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructuredTypeAnnotation {
+    pub role: TypeAnnotationRole,
+    pub span: Span,
+    pub expression: TypeExpr,
+}
+
+impl Program {
+    /// Rebuild the structured annotation index from compatibility AST fields.
+    /// Invalid spellings are skipped here because the parser/type checker report them
+    /// through their normal diagnostics; successfully parsed source annotations are
+    /// represented exactly once per AST occurrence.
+    pub fn rebuild_type_annotations(&mut self) {
+        let mut annotations = Vec::new();
+        collect_statement_type_annotations(&self.statements, &mut annotations);
+        self.type_annotations = annotations;
+    }
+
+    /// Find a structured annotation by its role and source span.
+    pub fn type_annotation(
+        &self,
+        role: &TypeAnnotationRole,
+        span: Span,
+    ) -> Option<&StructuredTypeAnnotation> {
+        self.type_annotations
+            .iter()
+            .find(|item| item.role == *role && item.span == span)
+    }
+}
+
+fn push_type_annotation(
+    output: &mut Vec<StructuredTypeAnnotation>,
+    role: TypeAnnotationRole,
+    span: Span,
+    source: &str,
+) {
+    if let Ok(expression) = TypeExpr::parse(source) {
+        output.push(StructuredTypeAnnotation {
+            role,
+            span,
+            expression,
+        });
+    }
+}
+
+fn collect_statement_type_annotations(
+    statements: &[Statement],
+    output: &mut Vec<StructuredTypeAnnotation>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclarations { declarations, .. } => {
+                for declaration in declarations {
+                    if let Some(ty) = declaration.declared_type.as_deref() {
+                        push_type_annotation(
+                            output,
+                            TypeAnnotationRole::Variable {
+                                name: declaration.name.clone(),
+                            },
+                            declaration.span,
+                            ty,
+                        );
+                    }
+                }
+            }
+            Statement::ConstDeclaration {
+                name,
+                declared_type,
+                span,
+                ..
+            } => {
+                if let Some(ty) = declared_type.as_deref() {
+                    push_type_annotation(
+                        output,
+                        TypeAnnotationRole::Constant { name: name.clone() },
+                        *span,
+                        ty,
+                    );
+                }
+            }
+            Statement::Function {
+                name,
+                parameters,
+                return_type,
+                body,
+                span,
+                ..
+            } => {
+                for parameter in parameters {
+                    if let Some(ty) = parameter.type_name.as_deref() {
+                        push_type_annotation(
+                            output,
+                            TypeAnnotationRole::Parameter {
+                                owner: name.clone(),
+                                name: parameter.name.clone(),
+                            },
+                            parameter.span,
+                            ty,
+                        );
+                    }
+                }
+                if let Some(ty) = return_type.as_deref() {
+                    push_type_annotation(
+                        output,
+                        TypeAnnotationRole::Return { owner: name.clone() },
+                        *span,
+                        ty,
+                    );
+                }
+                collect_statement_type_annotations(body, output);
+            }
+            Statement::Struct { name, fields, .. } => {
+                for field in fields {
+                    push_type_annotation(
+                        output,
+                        TypeAnnotationRole::StructField {
+                            owner: name.clone(),
+                            name: field.name.clone(),
+                        },
+                        field.span,
+                        &field.type_name,
+                    );
+                }
+            }
+            Statement::Enum { name, variants, .. } => {
+                for variant in variants {
+                    for (index, ty) in variant.fields.iter().enumerate() {
+                        push_type_annotation(
+                            output,
+                            TypeAnnotationRole::EnumPayload {
+                                owner: name.clone(),
+                                variant: variant.name.clone(),
+                                index,
+                            },
+                            variant.span,
+                            ty,
+                        );
+                    }
+                }
+            }
+            Statement::Trait { name, methods, .. } => {
+                for method in methods {
+                    for parameter in &method.parameters {
+                        if let Some(ty) = parameter.type_name.as_deref() {
+                            push_type_annotation(
+                                output,
+                                TypeAnnotationRole::TraitParameter {
+                                    trait_name: name.clone(),
+                                    method: method.name.clone(),
+                                    name: parameter.name.clone(),
+                                },
+                                parameter.span,
+                                ty,
+                            );
+                        }
+                    }
+                    if let Some(ty) = method.return_type.as_deref() {
+                        push_type_annotation(
+                            output,
+                            TypeAnnotationRole::TraitReturn {
+                                trait_name: name.clone(),
+                                method: method.name.clone(),
+                            },
+                            method.span,
+                            ty,
+                        );
+                    }
+                    if let Some(body) = &method.default_body {
+                        collect_statement_type_annotations(body, output);
+                    }
+                }
+            }
+            Statement::Impl {
+                type_name,
+                methods,
+                span,
+                ..
+            } => {
+                push_type_annotation(
+                    output,
+                    TypeAnnotationRole::ImplTarget {
+                        owner: type_name.clone(),
+                    },
+                    *span,
+                    type_name,
+                );
+                collect_statement_type_annotations(methods, output);
+            }
+            Statement::Main { body, .. } => {
+                collect_statement_type_annotations(body, output);
+            }
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    collect_statement_type_annotations(&arm.body, output);
+                }
+            }
+            Statement::If {
+                body, else_body, ..
+            } => {
+                collect_statement_type_annotations(body, output);
+                if let Some(body) = else_body {
+                    collect_statement_type_annotations(body, output);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::For { body, .. }
+            | Statement::ForEach { body, .. } => {
+                collect_statement_type_annotations(body, output);
+            }
+            Statement::Assignment { .. }
+            | Statement::Import { .. }
+            | Statement::Defer { .. }
+            | Statement::Return { .. }
+            | Statement::Break { .. }
+            | Statement::Continue { .. }
+            | Statement::Expression { .. }
+            | Statement::Call { .. } => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

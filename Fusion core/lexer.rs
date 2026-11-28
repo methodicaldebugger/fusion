@@ -91,6 +91,7 @@ pub enum Token {
     Greater,
     GreaterEqual,
     AndAnd,
+    Ampersand,
     OrOr,
     Pipe,
     Bang,
@@ -839,7 +840,7 @@ impl Lexer {
                         self.advance();
                         return Ok(Spanned::new(Token::AndAnd, start, self.position));
                     }
-                    return self.error("expected `&&`");
+                    return Ok(Spanned::new(Token::Ampersand, start, self.position));
                 }
                 '@' => {
                     self.advance();

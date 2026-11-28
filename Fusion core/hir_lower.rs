@@ -917,6 +917,7 @@ mod tests {
             statements: statements.clone(),
             span,
             modules: vec![],
+            type_annotations: Vec::new(),
         };
         let project = crate::module_system::Project {
             entry_module: "crate".into(),
@@ -1040,6 +1041,7 @@ mod tests {
             }],
             span,
             modules: vec![],
+            type_annotations: Vec::new(),
         };
         let mut lowerer = HirLowerer::new();
         let hir = lowerer.lower_program(&program).unwrap();
@@ -1092,6 +1094,7 @@ mod tests {
                 statements: vec![function],
                 span,
                 modules: vec![],
+                type_annotations: Vec::new(),
             },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
@@ -1190,6 +1193,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
+                type_annotations: Vec::new(),
             },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
@@ -1262,6 +1266,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
+                type_annotations: Vec::new(),
             },
         };
         let error = HirLowerer::lower_project(&project).unwrap_err();
@@ -1350,6 +1355,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
+                type_annotations: Vec::new(),
             },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
@@ -1399,6 +1405,7 @@ mod tests {
                 statements,
                 span,
                 modules: vec![],
+                type_annotations: Vec::new(),
             },
         };
         let lowered = HirLowerer::lower_project(&project).unwrap();
