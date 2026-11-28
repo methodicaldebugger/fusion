@@ -5,9 +5,11 @@
 //! prefix tests.  That made the grammar impossible to extend (function types, `Option<T>[]`,
 //! `T[][]`) and meant every consumer carried its own slightly different parser.
 //!
-//! `TypeExpr` is the single structural representation of a written type.  The canonical source
-//! spelling (what the AST still stores in its `String` type fields) is `TypeExpr`'s `Display`
-//! output, and `TypeExpr::parse` reads that spelling back, so
+//! `TypeExpr` is the parser and semantic front-end's structural representation of a written
+//! type. The compatibility AST still stores its canonical `Display` spelling in legacy String
+//! fields; this module is the single grammar used to produce and consume those spellings. The
+//! staged AST migration will replace those compatibility fields with `TypeExpr` directly.
+//!
 //! `TypeExpr::parse(&expr.to_string()) == Ok(expr)` for every expression the parser can build.
 //!
 //! Grammar (postfix `[]` binds tighter than anything else):
@@ -150,15 +152,12 @@ impl TypeExpr {
         }
     }
 
-    /// Erase user-level generics so the rest of the compiler only sees ordinary types:
+    /// Replace declaration-local type parameters with `unknown` while preserving the complete
+    /// written type structure, including arguments to user-defined generic types.
     ///
-    /// * a bare name listed in `parameters` (the enclosing struct/enum/impl's type parameters)
-    ///   becomes `unknown`, the dynamically-typed escape hatch every pass already accepts;
-    /// * generic arguments on any name that is not a built-in constructor are dropped, so
-    ///   `Stack<num>` becomes `Stack`.
-    ///
-    /// Built-in constructors (`Option`, `HashMap`, ...) keep their arguments, which are erased
-    /// recursively.
+    /// This is still a compatibility operation: generic user types are not yet represented as
+    /// parameterized semantic `Type` values, so the checker currently resolves their nominal
+    /// constructor while retaining the arguments in the AST spelling for later generic checking.
     pub fn erase_generics(&self, parameters: &[String]) -> TypeExpr {
         match self {
             TypeExpr::Named { name, args } => {
@@ -168,16 +167,12 @@ impl TypeExpr {
                 if args.is_empty() {
                     return self.clone();
                 }
-                if BUILTIN_GENERIC_CONSTRUCTORS.contains(&name.as_str()) {
-                    TypeExpr::Named {
-                        name: name.clone(),
-                        args: args
-                            .iter()
-                            .map(|arg| arg.erase_generics(parameters))
-                            .collect(),
-                    }
-                } else {
-                    TypeExpr::named(name)
+                TypeExpr::Named {
+                    name: name.clone(),
+                    args: args
+                        .iter()
+                        .map(|arg| arg.erase_generics(parameters))
+                        .collect(),
                 }
             }
             TypeExpr::Array(inner) => TypeExpr::Array(Box::new(inner.erase_generics(parameters))),
@@ -569,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn erase_generics_replaces_parameters_and_drops_user_type_arguments() {
+    fn erase_generics_replaces_parameters_and_preserves_user_type_arguments() {
         let params = vec!["T".to_string(), "E".to_string()];
         let erase = |source: &str| {
             TypeExpr::parse(source)
@@ -580,14 +575,14 @@ mod tests {
         assert_eq!(erase("T"), "unknown");
         assert_eq!(erase("T[]"), "unknown[]");
         assert_eq!(erase("num"), "num");
-        assert_eq!(erase("Stack<num>"), "Stack");
-        assert_eq!(erase("Stack<Option<T>>[]"), "Stack[]");
-        // Built-in constructors keep their (erased) arguments.
+        assert_eq!(erase("Stack<num>"), "Stack<num>");
+        assert_eq!(erase("Stack<Option<T>>[]"), "Stack<Option<unknown>>[]");
+        // Both built-in and user-defined constructors preserve recursively transformed args.
         assert_eq!(erase("Option<T>"), "Option<unknown>");
         assert_eq!(erase("Result<T, E>"), "Result<unknown, unknown>");
-        assert_eq!(erase("HashMap<string, Stack<T>>"), "HashMap<string, Stack>");
-        assert_eq!(erase("(T, Pair<T, E>)"), "(unknown, Pair)");
-        assert_eq!(erase("fn(T) -> Stack<T>"), "fn(unknown) -> Stack");
+        assert_eq!(erase("HashMap<string, Stack<T>>"), "HashMap<string, Stack<unknown>>");
+        assert_eq!(erase("(T, Pair<T, E>)"), "(unknown, Pair<unknown, unknown>)");
+        assert_eq!(erase("fn(T) -> Stack<T>"), "fn(unknown) -> Stack<unknown>");
         // Names that are not parameters are untouched.
         assert_eq!(erase("Item"), "Item");
     }

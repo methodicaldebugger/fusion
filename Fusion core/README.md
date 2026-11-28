@@ -339,12 +339,14 @@ impl Stack<T>:
 Type parameters follow the struct, enum or impl type name (`struct Name<T, U>`, `enum Name<T>`,
 `impl Name<T>` and `impl Trait for Name<T>`), in both indentation and brace style.
 
-**Generics are erased, not checked.** The parser spells each parameter `unknown` inside its declaration
-(`first: unknown`) and drops type arguments on user types wherever they are written (`Pair<num, string>`
-becomes `Pair`), so the type checker, HIR passes and interpreter only ever see ordinary types. Built-in
-constructors (`Option`, `Result`, `HashMap`, `Array`, `Iterator`, `Task`) keep their arguments. Consequences:
+**Generic user types are not yet semantically checked.** The parser still spells each declaration
+parameter as `unknown` inside its declaration (`first: unknown`), but it now preserves type arguments
+on user-defined types (`Pair<num, string>`) in the canonical AST annotation spelling, including when
+nested inside built-in constructors. The compatibility checker resolves the nominal constructor but
+does not yet validate its declared arity or substitute its arguments. Built-in constructors (`Option`,
+`Result`, `HashMap`, `Array`, `Iterator`, `Task`) continue to validate their own argument counts. Consequences:
 
-- `Pair<num, string>` is documentation only: `Pair(first: "x", second: 1)` is accepted for it.
+- `Pair<num, string>` is retained as written but is still documentation-only: `Pair(first: "x", second: 1)` is accepted for it.
 - Values read from an erased field have type `unknown`, which the checker accepts everywhere.
 - Explicit constructor arguments (`Stack<num>(items: [])`) are not supported; write `Stack(items: [])`.
 - Generic traits (`trait Name<T>`) and generic default methods are not supported.

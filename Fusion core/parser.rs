@@ -44,8 +44,8 @@ pub struct Parser {
     loop_depth: usize,
     /// Additional declarations produced by a single `extern` block.
     pending_statements: Vec<Statement>,
-    /// Type parameters of the struct, enum or impl being parsed. They are erased to `unknown`
-    /// wherever they appear in a type annotation (see `TypeExpr::erase_generics`).
+    /// Type parameters of the struct, enum or impl being parsed. Their bare uses are currently
+    /// lowered to `unknown` for compatibility, while nested type applications are preserved.
     erased_type_parameters: Vec<String>,
     /// Anonymous function bodies are hoisted, while closure expressions retain capture metadata.
     hoisted_functions: Vec<Statement>,
@@ -319,12 +319,8 @@ impl Parser {
     }
 
     /// Parse an optional `<T, U>` list of type parameters after a struct, enum or impl type
-    /// name. Returns an empty list when there is none.
-    ///
-    /// Generic declarations are *erased*: inside the declaration each parameter is spelled
-    /// `unknown`, and type arguments on user types (`Stack<num>`) are dropped wherever they are
-    /// written. The arguments are accepted for readability and documentation but are not
-    /// checked; see the README section "Generic structs and enums".
+    /// name. Returns an empty list when there is none. The current checker still treats declaration
+    /// parameters as dynamically typed, but written type applications are retained in annotations.
     fn parse_type_parameter_list(&mut self) -> Result<Vec<String>, ParseError> {
         let mut parameters: Vec<String> = Vec::new();
         if !self.consume(&Token::Less) {

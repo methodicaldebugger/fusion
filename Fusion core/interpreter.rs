@@ -352,13 +352,26 @@ impl Interpreter {
                 }
             }
 
-            type_name => match value {
-                Value::Struct { name, .. } => self.nominal_type_symbols_match(type_name, name),
-                Value::Enum { enum_name, .. } => {
-                    self.nominal_type_symbols_match(type_name, enum_name)
+            type_name => {
+                // Generic user-defined applications are represented by their canonical
+                // spelling in annotations (for example `Pair<num, string>`), while runtime
+                // Struct/Enum values still carry only the nominal constructor name. Compare
+                // that constructor here; generic argument validation belongs to static
+                // checking until runtime values retain type arguments themselves.
+                let nominal_name = match crate::type_expr::TypeExpr::parse(type_name) {
+                    Ok(crate::type_expr::TypeExpr::Named { name, .. }) => name,
+                    _ => type_name.to_string(),
+                };
+                match value {
+                    Value::Struct { name, .. } => {
+                        self.nominal_type_symbols_match(&nominal_name, name)
+                    }
+                    Value::Enum { enum_name, .. } => {
+                        self.nominal_type_symbols_match(&nominal_name, enum_name)
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
+            }
         }
     }
 
@@ -2706,10 +2719,22 @@ impl Interpreter {
             // argument compatibility is checked by the type checker.
             Type::Struct(expected_name) if expected_name == "unknown" => true,
 
-            Type::Struct(expected_name) => match value {
-                Value::Struct { name, .. } => self.nominal_type_symbols_match(expected_name, name),
-                _ => false,
-            },
+            Type::Struct(expected_name) => {
+                // `Type::Struct` is also the compatibility representation for user-defined
+                // generic applications. Runtime values currently retain only the nominal
+                // constructor, so compare the outer type name and leave argument checking to
+                // the static type checker.
+                let nominal_name = match crate::type_expr::TypeExpr::parse(expected_name) {
+                    Ok(crate::type_expr::TypeExpr::Named { name, .. }) => name,
+                    _ => expected_name.clone(),
+                };
+                match value {
+                    Value::Struct { name, .. } => {
+                        self.nominal_type_symbols_match(&nominal_name, name)
+                    }
+                    _ => false,
+                }
+            }
 
             _ => false,
         }

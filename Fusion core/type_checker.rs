@@ -682,6 +682,17 @@ impl TypeChecker {
                 message: format!("{} requires one type argument", name),
                 span,
             }),
+            // Preserve compatibility with the current nominal-only representation while the
+            // parser/AST migration retains user-defined generic arguments. The nominal identity
+            // is checked here; validating arity and substituting the arguments belongs to the
+            // generic-user-types stage. Nested applications such as Option<Stack<num>> therefore
+            // remain parseable without pretending that Stack's parameters are already checked.
+            _ if self.environment.structs.contains_key(name) => {
+                Ok(Type::Struct(name.to_string()))
+            }
+            _ if self.environment.enums.contains_key(name) => {
+                Ok(Type::Enum(name.to_string()))
+            }
             _ => Err(FusionError::Syntax {
                 message: format!("Unknown type '{}'", expr),
                 span,

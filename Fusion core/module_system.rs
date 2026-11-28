@@ -4004,21 +4004,27 @@ fn validate_hir_type_spelling(
         let constructor = &name[..open];
         let args = split_hir_type_arguments(&name[open + 1..name.len() - 1]);
         let expected = match constructor {
-            "Array" | "Iterator" | "Option" | "Task" => 1,
-            "HashMap" | "Result" => 2,
-            _ => {
-                return Err(format!(
-                    "unsupported generic type constructor '{}'",
-                    constructor
-                ))
-            }
+            "Array" | "Iterator" | "Option" | "Task" => Some(1),
+            "HashMap" | "Result" => Some(2),
+            // User-defined nominal constructors are accepted here. Their declaration arity and
+            // argument substitution are intentionally deferred to generic-user-types checking,
+            // but validating each nested argument now prevents malformed/unknown types from
+            // slipping through merely because the outer constructor is generic.
+            _ => None,
         };
-        if args.len() != expected {
+        if let Some(expected) = expected {
+            if args.len() != expected {
+                return Err(format!(
+                    "{} requires {} type argument(s), found {}",
+                    constructor,
+                    expected,
+                    args.len()
+                ));
+            }
+        } else if resolve_hir_type_name(project, module, constructor)?.is_none() {
             return Err(format!(
-                "{} requires {} type argument(s), found {}",
-                constructor,
-                expected,
-                args.len()
+                "unknown generic type constructor '{}'",
+                constructor
             ));
         }
         for arg in args {
@@ -6130,6 +6136,19 @@ fn unify_hir_call_type(
                     .zip(ba)
                     .all(|(x, y)| unify_hir_call_type(x, y, bindings))
         }
+        // Some project-pipeline environments currently retain only the nominal identity
+        // of a local generic value (e.g. `Pair`) rather than its applied arguments
+        // (`Pair<num, string>`). Accept that information-loss case only when the
+        // constructors are identical. When both sides carry arguments, the branch above
+        // still checks arity and recursively unifies every argument.
+        (
+            T::Applied { constructor, .. },
+            T::Nominal(_),
+        ) => unify_hir_call_type(constructor, actual, bindings),
+        (
+            T::Nominal(_),
+            T::Applied { constructor, .. },
+        ) => unify_hir_call_type(expected, constructor, bindings),
         _ => expected == actual,
     }
 }

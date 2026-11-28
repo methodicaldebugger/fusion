@@ -1,6 +1,6 @@
-//! Generic structs and enums. Type parameters are erased (see README, "Generic structs and
-//! enums"): inside a declaration each parameter is `unknown`, and type arguments written on user
-//! types are accepted but not checked.
+//! Generic struct and enum syntax preservation. Declaration parameters are still dynamically
+//! typed and applications are not yet semantically checked, but nested user-type arguments must
+//! survive parsing and type conversion rather than being erased from the AST spelling.
 
 use std::fs;
 use std::path::PathBuf;
@@ -134,4 +134,23 @@ fn unclosed_type_parameter_list_is_rejected() {
     let error = fusion::compile_source("struct Bad<T:\n    x: T\n\nmain:\n    print(1)\n")
         .expect_err("an unclosed parameter list must be rejected");
     assert!(error.contains("Expected '>' after type parameters"), "{error}");
+}
+
+#[test]
+fn nested_user_generic_type_arguments_are_preserved_and_accepted() {
+    let source = "struct Stack<T>:
+    items: T[]
+
+struct Holder:
+    stack: Option<Stack<num>>
+
+fn accept(value: Stack<Option<num>>):
+    return
+
+main:
+    print(1)
+";
+    let result = fusion::compile_source(source);
+    assert!(result.is_ok(), "{:?}", result.err());
+    assert_eq!(run_as_project(source), vec!["1"]);
 }
